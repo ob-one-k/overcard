@@ -1,4 +1,4 @@
-# RedCard
+# OverCard
 
 A sales pitch deck training platform. Build structured call flows with branching response paths, practice sessions with real-time card navigation, and review performance with analytics and peer feedback.
 
@@ -59,7 +59,7 @@ Builds the frontend and serves everything on http://localhost:3000
 
 ```
 React 19 (Vite)  ──▶  Express REST API  ──▶  SQLite (better-sqlite3)
-   SPA frontend          server/              data/redcard.db
+   SPA frontend          server/              data/overcard.db
    src/App.jsx           index.js
                          routes/
                          db.js
@@ -74,7 +74,7 @@ React 19 (Vite)  ──▶  Express REST API  ──▶  SQLite (better-sqlite3)
 ## Project Structure
 
 ```
-redcard/
+overcard/
 ├── index.html              # Vite entry HTML
 ├── package.json            # Dependencies and scripts
 ├── vite.config.js          # Vite config with API proxy
@@ -107,7 +107,7 @@ redcard/
 │       ├── sessionRoutes.js # Sessions, feedback, sharing
 │       └── adminRoutes.js  # User and team management
 └── data/
-    └── redcard.db          # SQLite database (created on first run)
+    └── overcard.db         # SQLite database (created on first run)
 ```
 
 ## Database

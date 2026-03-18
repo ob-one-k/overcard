@@ -29,7 +29,7 @@ No test framework is configured.
 
 **Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined in `src/lib/styles.js` (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
 
-**Backend:** Express REST API with SQLite database at `data/redcard.db`.
+**Backend:** Express REST API with SQLite database at `data/overcard.db`.
 - `server/index.js` — Express entry, middleware, route mounting, static file serving
 - `server/db.js` — Schema, migrations, all database query functions (50+ exports)
 - `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, auth middleware

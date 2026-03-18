@@ -842,6 +842,7 @@ export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onIniti
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginBottom:2}}>
               <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>{s.name}</span>
               {s.sold && <span style={{fontSize:9,fontWeight:700,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>sold</span>}
+              {s.outcome==="not_contacted" && <span style={{fontSize:9,fontWeight:700,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.14)",color:"rgba(255,255,255,.4)",padding:"1px 7px",borderRadius:99}}>📵 no contact</span>}
               {s._shared && <span style={{fontSize:9,color:"rgba(255,255,255,.32)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 7px",borderRadius:99}}>shared</span>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
@@ -1080,7 +1081,9 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
   var completedSess = sessions.filter(function(s){return s.endTs;});
   var avgSec = completedSess.length ? Math.round(completedSess.reduce(function(sum,s){return sum+sessionDurSec(s);},0)/completedSess.length) : 0;
 
-  var hadIntro  = live.filter(function(s){return sessionVisits(s).some(function(v){return !v.isObjCard&&(v.cardType==="pitch"||v.cardType==="discovery");});}).length;
+  var notContacted = live.filter(function(s){return s.outcome==="not_contacted";}).length;
+  var contacted    = live.length - notContacted;
+  var contactRate  = live.length ? Math.round(contacted/live.length*100) : 0;
   var pastIntro = live.filter(function(s){return sessionVisits(s).some(function(v){return v.cardType==="discovery"&&!v.isObjCard;});}).length;
   var reachedClose = live.filter(function(s){return sessionVisits(s).some(function(v){return v.cardType==="close"&&!v.isObjCard;});}).length;
 
@@ -1109,8 +1112,12 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
             <StatBox value={sold.length+"/"+live.length} label="Sold / Live" color="#A8FF3E"/>
             <StatBox value={fmtSec(avgSec)||"—"} label="Avg duration" color={SESS_COLOR}/>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
+            <StatBox value={contactRate+"%"} label="Contact rate" color="#FFD54F"/>
+            <StatBox value={notContacted} label="No contact" color="rgba(255,255,255,.4)"/>
             <StatBox value={intPct+"%"} label="Intended path" color="#66BB6A"/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
             <StatBox value={topObjCount||"—"} label={"Top obj: "+(topObjLabel.length>10?topObjLabel.slice(0,10)+"…":topObjLabel)} color={OBJ_COLOR}/>
           </div>
         </div>
@@ -1138,8 +1145,12 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
           <StatBox value={fmtSec(avgSec)||"—"} label="Avg duration" color={SESS_COLOR}/>
           <StatBox value={intPct+"%"} label="Intended path" color="#66BB6A"/>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
           <StatBox value={cr+"%"} label="Close rate" color="#66BB6A"/>
+          <StatBox value={contactRate+"%"} label="Contact rate" color="#FFD54F"/>
+          <StatBox value={notContacted} label="No contact" color="rgba(255,255,255,.4)"/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
           <StatBox value={topObjCount||"—"} label={"Top objection"} color={OBJ_COLOR}/>
         </div>
       </div>
@@ -1189,10 +1200,10 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
         {/* Funnel — only for live/all */}
         {fType !== "practice" && (
           <div style={{marginBottom:14}}>
-            <SectionHdr>Call funnel — live calls</SectionHdr>
+            <SectionHdr>Live funnel</SectionHdr>
             <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"13px 14px"}}>
-              <BarRow label="Reached intro"   value={hadIntro}      denom={live.length}    color={SESS_COLOR}/>
-              <BarRow label="Into discovery"  value={pastIntro}     denom={hadIntro}       color="#00B4FF"/>
+              <BarRow label="Contacted"       value={contacted}     denom={live.length}    color={SESS_COLOR}/>
+              <BarRow label="Into discovery"  value={pastIntro}     denom={contacted}      color="#00B4FF"/>
               <BarRow label="Reached close"   value={reachedClose}  denom={pastIntro}      color="#66BB6A"/>
               <BarRow label="Sold"            value={sold.length}   denom={reachedClose}   color="#A8FF3E"/>
             </div>

@@ -64,9 +64,13 @@ function computeStats(sessions, decks) {
     }
   });
 
-  // Live call funnel
-  var hadIntro    = live.filter(function(s){ return sessionVisits(s).some(function(v){ return !v.isObjCard && (v.cardType==="pitch"||v.cardType==="discovery"); }); }).length;
-  var pastIntro   = live.filter(function(s){ return sessionVisits(s).some(function(v){ return v.cardType==="discovery" && !v.isObjCard; }); }).length;
+  // Contact rate (live only — not_contacted means no one answered)
+  var notContacted  = live.filter(function(s){ return s.outcome === "not_contacted"; }).length;
+  var contacted     = live.length - notContacted;
+  var contactRate   = live.length > 0 ? Math.round(contacted / live.length * 100) : null;
+
+  // Live funnel (contacted is the first stage, replacing "reached intro")
+  var pastIntro    = live.filter(function(s){ return sessionVisits(s).some(function(v){ return v.cardType==="discovery" && !v.isObjCard; }); }).length;
   var reachedClose = live.filter(function(s){ return sessionVisits(s).some(function(v){ return v.cardType==="close" && !v.isObjCard; }); }).length;
 
   // Recent sessions (last 5)
@@ -79,9 +83,10 @@ function computeStats(sessions, decks) {
     total, live: live.length, practice: practice.length,
     sold: sold.length, winRate,
     intPct, avgSec,
+    notContacted, contacted, contactRate,
     topClose, topObj, allObjEntries,
     deckStats: Object.values(deckStatsMap),
-    hadIntro, pastIntro, reachedClose,
+    pastIntro, reachedClose,
     totalObjVisits,
     recent,
   };
@@ -94,6 +99,9 @@ function OutcomeBadge({ session }) {
   var sold = session.sold || outcome === "sold";
   if (mode === "practice") {
     return <span style={{fontSize:9,background:"rgba(0,180,255,.12)",border:"1px solid rgba(0,180,255,.25)",color:"#00B4FF",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Practice</span>;
+  }
+  if (outcome === "not_contacted") {
+    return <span style={{fontSize:9,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.14)",color:"rgba(255,255,255,.4)",padding:"2px 7px",borderRadius:99,fontWeight:700}}>📵 No Contact</span>;
   }
   if (sold) {
     return <span style={{fontSize:9,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"2px 7px",borderRadius:99,fontWeight:700}}>✓ Sold</span>;
@@ -287,11 +295,52 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
                 <StatBox value={stats.winRate !== null ? stats.winRate+"%" : "—"} label="Close rate" color="#66BB6A"/>
                 <StatBox value={stats.intPct !== null ? stats.intPct+"%" : "—"} label="On-path" color="#00B4FF"/>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:18}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
                 <StatBox value={stats.live} label="Live" color={SESS_COLOR}/>
                 <StatBox value={stats.practice} label="Practice" color="#00B4FF"/>
                 <StatBox value={stats.avgSec !== null ? fmtSec(stats.avgSec) : "—"} label="Avg time" color="#FFD54F"/>
               </div>
+              {stats.live > 0 && (
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
+                  <StatBox value={stats.contactRate !== null ? stats.contactRate+"%" : "—"} label="Contact rate" color="#FFD54F"/>
+                  <StatBox value={stats.notContacted} label="No contact" color="rgba(255,255,255,.4)"/>
+                </div>
+              )}
+
+              {/* Deck Performance — right below key metrics */}
+              {decksWithSessions.length > 0 && (
+                <div style={{marginBottom:18}}>
+                  <SectionHdr>Deck Performance</SectionHdr>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {decksWithSessions.map(function(ds){
+                      var deckWinRate = ds.live > 0 ? Math.round(ds.sold / ds.live * 100) : null;
+                      var deckObj = decks ? decks.find(function(d){ return d.id === ds.deckId; }) : null;
+                      var dColor = ds.deckColor || (deckObj && deckObj.color) || "#F5A623";
+                      var dIcon  = ds.deckIcon  || (deckObj && deckObj.icon)  || "💼";
+                      var dName  = ds.deckName  || (deckObj && deckObj.name)  || "Unknown Deck";
+                      return (
+                        <div key={ds.deckId} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+dColor,borderRadius:"0 14px 14px 0",padding:"12px 14px",display:"flex",alignItems:"center",gap:12}}>
+                          <div style={{width:34,height:34,borderRadius:9,background:dColor+"22",border:"1.5px solid "+dColor+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{dIcon}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}}>{dName}</div>
+                            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                              <span style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{ds.total} session{ds.total!==1?"s":""}</span>
+                              {ds.live > 0 && <span style={{fontSize:10,color:"rgba(168,255,62,.65)"}}>{deckWinRate}% close</span>}
+                              {ds.practice > 0 && <span style={{fontSize:10,color:"rgba(0,180,255,.55)"}}>{ds.practice} practice</span>}
+                            </div>
+                          </div>
+                          {onSwitchDeckAndPlay && deckObj && (
+                            <button onClick={function(){ onSwitchDeckAndPlay(ds.deckId); }}
+                              style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 11px",cursor:"pointer",fontSize:11,color:"rgba(255,255,255,.7)",fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
+                              Play →
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Performance Highlights */}
               {(stats.topClose || stats.topObj) && (
@@ -332,50 +381,15 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
                 </div>
               )}
 
-              {/* Live Call Funnel */}
+              {/* Live Funnel */}
               {stats.live > 0 && (
                 <div style={{marginBottom:18}}>
-                  <SectionHdr>Live Call Funnel</SectionHdr>
+                  <SectionHdr>Live Funnel</SectionHdr>
                   <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"14px 15px"}}>
-                    <BarRow label="Reached intro"  value={stats.hadIntro}      denom={stats.live}          color={SESS_COLOR}/>
-                    <BarRow label="Into discovery" value={stats.pastIntro}     denom={stats.hadIntro}      color="#00B4FF"/>
+                    <BarRow label="Contacted"      value={stats.contacted}     denom={stats.live}          color={SESS_COLOR}/>
+                    <BarRow label="Into discovery" value={stats.pastIntro}     denom={stats.contacted}     color="#00B4FF"/>
                     <BarRow label="Reached close"  value={stats.reachedClose}  denom={stats.pastIntro}     color="#66BB6A"/>
                     <BarRow label="Sold"           value={stats.sold}          denom={stats.reachedClose}  color="#A8FF3E"/>
-                  </div>
-                </div>
-              )}
-
-              {/* Deck Performance */}
-              {decksWithSessions.length > 0 && (
-                <div style={{marginBottom:18}}>
-                  <SectionHdr>Deck Performance</SectionHdr>
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    {decksWithSessions.map(function(ds){
-                      var deckWinRate = ds.live > 0 ? Math.round(ds.sold / ds.live * 100) : null;
-                      var deckObj = decks ? decks.find(function(d){ return d.id === ds.deckId; }) : null;
-                      var dColor = ds.deckColor || (deckObj && deckObj.color) || "#F5A623";
-                      var dIcon  = ds.deckIcon  || (deckObj && deckObj.icon)  || "💼";
-                      var dName  = ds.deckName  || (deckObj && deckObj.name)  || "Unknown Deck";
-                      return (
-                        <div key={ds.deckId} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+dColor,borderRadius:"0 14px 14px 0",padding:"12px 14px",display:"flex",alignItems:"center",gap:12}}>
-                          <div style={{width:34,height:34,borderRadius:9,background:dColor+"22",border:"1.5px solid "+dColor+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{dIcon}</div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}}>{dName}</div>
-                            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                              <span style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{ds.total} session{ds.total!==1?"s":""}</span>
-                              {ds.live > 0 && <span style={{fontSize:10,color:"rgba(168,255,62,.65)"}}>{deckWinRate}% close</span>}
-                              {ds.practice > 0 && <span style={{fontSize:10,color:"rgba(0,180,255,.55)"}}>{ds.practice} practice</span>}
-                            </div>
-                          </div>
-                          {onSwitchDeckAndPlay && deckObj && (
-                            <button onClick={function(){ onSwitchDeckAndPlay(ds.deckId); }}
-                              style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 11px",cursor:"pointer",fontSize:11,color:"rgba(255,255,255,.7)",fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
-                              Play →
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
                   </div>
                 </div>
               )}

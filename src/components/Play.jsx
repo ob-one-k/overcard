@@ -375,7 +375,13 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
             <div style={{fontSize:13,color:"#fff",fontWeight:700,lineHeight:1.2}}>{activeSession.name}</div>
             {activeSession.description && <div style={{fontSize:10,color:"rgba(255,255,255,.4)",marginTop:1}}>{activeSession.description}</div>}
           </div>
-          <div style={{display:"flex",gap:7}}>
+          <div style={{display:"flex",gap:6}}>
+            {activeSession.mode === "live" && navDepth === 1 && !navInObj && (
+              <button onClick={function(){finishSession(false, null, "not_contacted");}} disabled={saving}
+                style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.18)",borderRadius:9,color:"rgba(255,255,255,.55)",fontSize:11,fontWeight:700,padding:"7px 10px",cursor:"pointer",fontFamily:"inherit"}}>
+                📵 No Contact
+              </button>
+            )}
             <button onClick={function(){finishSession(true, null);}} disabled={saving}
               style={{background:"#66BB6A",border:"none",borderRadius:9,color:"#000",fontSize:11,fontWeight:700,padding:"7px 13px",cursor:"pointer",fontFamily:"inherit"}}>
               ✓ Sold
@@ -386,7 +392,7 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
             </button>
           </div>
         </div>
-        <Navigator deck={deck} sessionMode={true} onEvent={handleEvent}/>
+        <Navigator deck={deck} sessionMode={true} onEvent={handleEvent} onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); }}/>
       </div>
     );
   }
