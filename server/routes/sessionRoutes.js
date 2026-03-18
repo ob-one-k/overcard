@@ -10,6 +10,14 @@ const { requireAuth } = require("../auth");
 
 router.use(requireAuth);
 
+// GET /api/sessions/org-users — all authenticated users can fetch their org's user list (for sharing)
+router.get("/org-users", function(req, res) {
+  var users = getOrgUsers(req.user.orgId);
+  res.json(users.map(function(u) {
+    return { id: u.id, displayName: u.displayName, email: u.email, role: u.role };
+  }));
+});
+
 // Parse scope query param for admins:
 //   ?scope=self | user:{id} | users:{id,id,...} | team:{id} | org
 function parseScope(scopeStr) {
@@ -90,6 +98,7 @@ router.post("/:id/feedback", function(req, res) {
 
   const { text, cardId, cardTitle } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
+  if (text.trim().length > 5000) return res.status(400).json({ error: "Feedback text must be 5000 characters or less" });
 
   const fb = createFeedback({
     sessionId: session.id,
@@ -110,6 +119,7 @@ router.put("/:id/feedback/:fid", function(req, res) {
   if (fb.authorId !== req.user.id) return res.status(403).json({ error: "Access denied" });
   const { text, cardId, cardTitle } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
+  if (text.trim().length > 5000) return res.status(400).json({ error: "Feedback text must be 5000 characters or less" });
   const updated = updateFeedback(fb.id, text.trim(), cardId || null, cardTitle || null, req.user.id);
   res.json(updated);
 });
@@ -133,16 +143,18 @@ router.delete("/:id/feedback/:fid", function(req, res) {
 router.post("/:id/share", function(req, res) {
   const session = getSessionById(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found" });
-  if (session.userId !== req.user.id) return res.status(403).json({ error: "Only the session owner can share" });
+
+  // Session owner OR admin in the same org can share
+  const canShare = session.userId === req.user.id ||
+    (req.user.role === "admin" && session.orgId === req.user.orgId);
+  if (!canShare) return res.status(403).json({ error: "Access denied" });
 
   const { toUserId, context } = req.body;
   if (!toUserId) return res.status(400).json({ error: "toUserId is required" });
 
-  // Target must be a non-admin user in the same org
   const orgUsers = getOrgUsers(req.user.orgId);
   const target = orgUsers.find(function(u) { return u.id === toUserId; });
   if (!target) return res.status(400).json({ error: "User not found in org" });
-  if (target.role === "admin") return res.status(400).json({ error: "Cannot share with admins" });
   if (target.id === req.user.id) return res.status(400).json({ error: "Cannot share with yourself" });
 
   const share = createShare({ sessionId: session.id, fromUserId: req.user.id, toUserId, context: context || null });

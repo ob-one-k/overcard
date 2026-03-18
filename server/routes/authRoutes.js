@@ -1,10 +1,38 @@
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const router  = express.Router();
-const { findUserByEmail, updateLastLogin, findUserById, getTeamById } = require("../db");
+const { findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams } = require("../db");
 const { jwtSign, checkPassword, setCookie, clearCookie, requireAuth } = require("../auth");
 
+var loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many login attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+function buildUserResponse(user) {
+  const team = user.teamId ? getTeamById(user.teamId) : null;
+  const teamIds = getUserTeams(user.id);
+  const teams = teamIds.map(function(tid) {
+    var t = getTeamById(tid);
+    return t ? { id: t.id, name: t.name } : null;
+  }).filter(Boolean);
+  return {
+    id:          user.id,
+    email:       user.email,
+    displayName: user.displayName,
+    role:        user.role,
+    orgId:       user.orgId,
+    teamId:      user.teamId,
+    teamName:    team ? team.name : null,
+    teams:       teams,
+  };
+}
+
 // POST /api/auth/login
-router.post("/login", function(req, res) {
+router.post("/login", loginLimiter, function(req, res) {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: "Email and password are required" });
@@ -22,16 +50,7 @@ router.post("/login", function(req, res) {
   const token = jwtSign({ sub: user.id, role: user.role, orgId: user.orgId });
   setCookie(res, token);
 
-  const team = user.teamId ? getTeamById(user.teamId) : null;
-  res.json({
-    id:          user.id,
-    email:       user.email,
-    displayName: user.displayName,
-    role:        user.role,
-    orgId:       user.orgId,
-    teamId:      user.teamId,
-    teamName:    team ? team.name : null,
-  });
+  res.json(buildUserResponse(user));
 });
 
 // POST /api/auth/logout
@@ -51,16 +70,7 @@ router.post("/refresh", requireAuth, function(req, res) {
 router.get("/me", requireAuth, function(req, res) {
   const user = findUserById(req.user.id);
   if (!user) return res.status(401).json({ error: "User not found" });
-  const team = user.teamId ? getTeamById(user.teamId) : null;
-  res.json({
-    id:          user.id,
-    email:       user.email,
-    displayName: user.displayName,
-    role:        user.role,
-    orgId:       user.orgId,
-    teamId:      user.teamId,
-    teamName:    team ? team.name : null,
-  });
+  res.json(buildUserResponse(user));
 });
 
 module.exports = router;

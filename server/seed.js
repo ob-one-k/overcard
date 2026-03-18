@@ -1,15 +1,21 @@
 // node server/seed.js  — idempotent: skips if org already exists
+if (process.env.NODE_ENV === "production") {
+  console.error("ERROR: seed.js must not be run in production.");
+  process.exit(1);
+}
 const {
   db, uid,
   createOrg, findOrgById,
   createTeam, setTeamAdmins,
   createUser, findUserByEmail,
+  setUserTeams,
   createDeck, updateDeck,
+  setDeckAccess,
   insertSession,
 } = require("./db");
 const { hashPassword } = require("./auth");
 
-const PW_HASH = hashPassword("Redcard2025!");
+const PW_HASH = hashPassword("Overcard2025!");
 
 // ─── UTILITIES ───────────────────────────────────────────────────────────────
 var DAY = 24 * 60 * 60 * 1000;
@@ -188,6 +194,8 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
     var daysBack  = Math.floor(Math.pow(Math.random(), 0.85) * 90) + 1;
     var isLive    = Math.random() > persona.practiceRatio;
     var mode      = isLive ? "live" : "practice";
+    var account_  = isLive ? rnd(ACCOUNTS) : "";
+    var contact_  = isLive ? rnd(CONTACTS) : "";
     var deckCfg   = rnd(deckConfigs);
 
     // Pick a path based on persona bias and whether they'll hit an objection
@@ -245,9 +253,9 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
       deckName:      deckCfg.name,
       deckColor:     deckCfg.color,
       deckIcon:      deckCfg.icon,
-      name:          (isLive ? "Live · " : "Practice · ") + new Date(startTs).toLocaleDateString(),
-      account:       isLive ? rnd(ACCOUNTS) : "",
-      contact:       isLive ? rnd(CONTACTS) : "",
+      name:          isLive ? account_ + " · " + contact_ : "Practice run",
+      account:       account_,
+      contact:       contact_,
       mode:          mode,
       status:        "completed",
       outcome:       outcome,
@@ -319,6 +327,7 @@ const USERS = [
 USERS.forEach(function(u) {
   db.prepare(`INSERT INTO users (id,orgId,teamId,email,passwordHash,displayName,role,createdAt)
     VALUES (?,?,?,?,?,?,'user',?)`).run(u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now());
+  setUserTeams(u.id, [u.teamId]);
 });
 
 // ─── DECKS ────────────────────────────────────────────────────────────────────
@@ -328,8 +337,8 @@ const now    = Date.now();
 
 const ENT_CARDS = {
   "ec0":  { id:"ec0",  title:"Cold Open",         type:"pitch",     prompt:"*Hey [Name]*[Warm] — quick one. I help sales teams cut ramp time by 40%. **Worth 90 seconds?**",                                                         overview:["Short, punchy opener","Watch their energy"],    intendedPath:true,  answers:[{id:"ea0",label:"Sure, go ahead",next:"ec1"},{id:"ea1",label:"Not interested / busy",next:"ec2"},{id:"ea2",label:"Who are you?",next:"ec0b"}] },
-  "ec0b": { id:"ec0b", title:"Re-intro",           type:"pitch",     prompt:"*Totally fair*[Empathetic] — I'm [Name] from RedCard. We help SDR teams stay on script under pressure. **30 seconds?**",                                 overview:["Brief re-anchor","Stay confident"],             intendedPath:false, answers:[{id:"ea3",label:"Fine, go ahead",next:"ec1"},{id:"ea4",label:"Still not interested",next:"ec2"}] },
-  "ec1":  { id:"ec1",  title:"Value Hook",         type:"pitch",     prompt:"We noticed most reps *forget 60% of their script*[Pause] within the first 30 seconds of objections. **RedCard keeps them on track — live, in the call.**", overview:["Land the stat","Short silence after"],          intendedPath:true,  answers:[{id:"ea5",label:"Interesting — how?",next:"ec3"},{id:"ea6",label:"We have training already",next:"eo_train"},{id:"ea7",label:"Not a priority",next:"ec2"}] },
+  "ec0b": { id:"ec0b", title:"Re-intro",           type:"pitch",     prompt:"*Totally fair*[Empathetic] — I'm [Name] from OverCard. We help SDR teams stay on script under pressure. **30 seconds?**",                                 overview:["Brief re-anchor","Stay confident"],             intendedPath:false, answers:[{id:"ea3",label:"Fine, go ahead",next:"ec1"},{id:"ea4",label:"Still not interested",next:"ec2"}] },
+  "ec1":  { id:"ec1",  title:"Value Hook",         type:"pitch",     prompt:"We noticed most reps *forget 60% of their script*[Pause] within the first 30 seconds of objections. **OverCard keeps them on track — live, in the call.**", overview:["Land the stat","Short silence after"],          intendedPath:true,  answers:[{id:"ea5",label:"Interesting — how?",next:"ec3"},{id:"ea6",label:"We have training already",next:"eo_train"},{id:"ea7",label:"Not a priority",next:"ec2"}] },
   "ec2":  { id:"ec2",  title:"Soft Exit",          type:"close",     prompt:"*No worries at all*[Empathetic] — *when would be a better time?*[Question]",                                                                              overview:["Low pressure close","Always leave the door open"],intendedPath:false, answers:[{id:"ea8",label:"Try next quarter",next:null},{id:"ea9",label:"Actually, keep going",next:"ec1"}] },
   "ec3":  { id:"ec3",  title:"Discovery — Pain",   type:"discovery", prompt:"*Quick question*[Pause] — how long does it take a new rep at your company to hit quota? And **how many are still struggling at 6 months?**",              overview:["Let them calculate","Don't rush the silence"],  intendedPath:true,  answers:[{id:"eaa",label:"Long ramp / high struggle",next:"ec4"},{id:"eab",label:"We're actually doing fine",next:"ec3b"},{id:"eac",label:"Not sure / varies",next:"ec4"}] },
   "ec3b": { id:"ec3b", title:"Reframe",             type:"discovery", prompt:"*That's great*[Warm] — even teams at 80% quota hit still leave 20% on the table. **What's that worth to you annually?**",                                overview:["Reframe from good to great","Let the math sink in"],intendedPath:false,answers:[{id:"ead",label:"Hmm, fair point",next:"ec4"},{id:"eae",label:"Still don't see the need",next:"ec2"}] },
@@ -365,8 +374,8 @@ const SMB_CARDS = {
   "sc0b":   { id:"sc0b",   title:"Source Bridge",   type:"pitch",     prompt:"*Fair question*[Sincere] — you came up through [Source]. I won't take much of your time. **30 seconds?**",                                           overview:[],                                               intendedPath:false, answers:[{id:"sa3",label:"Fine",next:"sc1"},{id:"sa4",label:"Take me off the list",next:null}] },
   "sc1":    { id:"sc1",    title:"Problem Probe",   type:"discovery", prompt:"*Quick question*[Pause] — **what's the #1 thing killing your close rate right now?** Objections? Pipeline? Inconsistency across reps?",              overview:["Open-ended","Let them name the pain"],          intendedPath:true,  answers:[{id:"sa5",label:"Objection handling",next:"sc2"},{id:"sa6",label:"Inconsistent reps",next:"sc2"},{id:"sa7",label:"We're doing fine",next:"sc1b"}] },
   "sc1b":   { id:"sc1b",   title:"Reframe",         type:"discovery", prompt:"*That's great*[Warm] — even teams hitting quota leave deals on the table. **How many reps do you have, and what's your average deal size?**",        overview:[],                                               intendedPath:false, answers:[{id:"sa8",label:"Small team, small deals",next:"sc2"},{id:"sa9",label:"Not sharing that",next:"sc_exit"}] },
-  "sc2":    { id:"sc2",    title:"Solution Bridge", type:"pitch",     prompt:"**That's exactly what RedCard solves** — your reps get a *live prompt system*[Confident] that keeps them on-script under pressure. No more winging it.", overview:["Keep it simple","One clear benefit"],           intendedPath:true,  answers:[{id:"saa",label:"Show me how",next:"sc3"},{id:"sab",label:"We have a playbook already",next:"sc2b"},{id:"sac",label:"Sounds complicated",next:"sc2c"}] },
-  "sc2b":   { id:"sc2b",   title:"Playbook Gap",    type:"pitch",     prompt:"*Playbooks are great*[Empathetic] — **the problem is reps don't use them in the moment.** RedCard puts it in their ear live.",                       overview:[],                                               intendedPath:false, answers:[{id:"sad",label:"True, that's our issue",next:"sc3"},{id:"sae",label:"Our reps are disciplined",next:"sc_exit"}] },
+  "sc2":    { id:"sc2",    title:"Solution Bridge", type:"pitch",     prompt:"**That's exactly what OverCard solves** — your reps get a *live prompt system*[Confident] that keeps them on-script under pressure. No more winging it.", overview:["Keep it simple","One clear benefit"],           intendedPath:true,  answers:[{id:"saa",label:"Show me how",next:"sc3"},{id:"sab",label:"We have a playbook already",next:"sc2b"},{id:"sac",label:"Sounds complicated",next:"sc2c"}] },
+  "sc2b":   { id:"sc2b",   title:"Playbook Gap",    type:"pitch",     prompt:"*Playbooks are great*[Empathetic] — **the problem is reps don't use them in the moment.** OverCard puts it in their ear live.",                       overview:[],                                               intendedPath:false, answers:[{id:"sad",label:"True, that's our issue",next:"sc3"},{id:"sae",label:"Our reps are disciplined",next:"sc_exit"}] },
   "sc2c":   { id:"sc2c",   title:"Simplicity Sell", type:"pitch",     prompt:"*It's actually the opposite*[Warm] — **3 taps and they're in the flow.** Most reps are live in under 5 minutes.",                                    overview:[],                                               intendedPath:false, answers:[{id:"saf",label:"Oh, that simple?",next:"sc3"},{id:"sag",label:"Still skeptical",next:"sc_exit"}] },
   "sc3":    { id:"sc3",    title:"Close — Trial",   type:"close",     prompt:"*Here's what I'd do*[Confident] — **let's set up a free 2-week trial with two of your reps.** No contract. Just results.",                           overview:["Low-risk ask","Specific and concrete"],         intendedPath:true,  answers:[{id:"sah",label:"Sure, let's try it",next:"sc4"},{id:"sai",label:"Need approval first",next:"sc3b"},{id:"saj",label:"Not ready",next:"sc_exit"}] },
   "sc3b":   { id:"sc3b",   title:"Approval Path",   type:"close",     prompt:"*Totally get it*[Empathetic] — **what does your approval process look like, and who's the decision maker?**",                                        overview:["Map the path","Don't get stuck"],               intendedPath:false, answers:[{id:"sak",label:"I can decide",next:"sc4"},{id:"sal",label:"Need to talk to my manager",next:null}] },
@@ -391,6 +400,19 @@ const SMB_OBJ_STACKS = [
 
 db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
   .run(SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0", JSON.stringify(SMB_CARDS), JSON.stringify(SMB_OBJ_STACKS), now, now);
+
+// ─── PRIVATE TEST DECK (Team Alpha only) ──────────────────────────────────────
+const PRIV_ID = uid("d");
+const PRIV_CARDS = {
+  "pc0": { id:"pc0", title:"Exec Opener",      type:"pitch",     prompt:"*[Name]*[Warm] — I'll keep this tight. **We help sales orgs compress their top-of-funnel by 35% without adding headcount.** Worth 2 minutes?",                  overview:["Executive-level energy","No fluff"],           intendedPath:true,  answers:[{id:"pa0",label:"Sure, go ahead",next:"pc1"},{id:"pa1",label:"Not now",next:"pc_exit"}] },
+  "pc1": { id:"pc1", title:"Strategic Pain",   type:"discovery", prompt:"*Quick one*[Pause] — **where's your biggest pipeline leak right now?** Top of funnel, mid-stage, or close?",                                                   overview:["Let them name it","Don't lead the witness"],   intendedPath:true,  answers:[{id:"pa2",label:"Top of funnel",next:"pc2"},{id:"pa3",label:"Mid-stage",next:"pc2"},{id:"pa4",label:"Close stage",next:"pc2"},{id:"pa5",label:"We're good",next:"pc_exit"}] },
+  "pc2": { id:"pc2", title:"Business Impact",  type:"discovery", prompt:"*At your scale*[Confident] — **what does a 10% improvement in that stage mean in closed revenue per quarter?** I want to make sure the math makes sense.",     overview:["Anchor to dollars","Let them calculate"],      intendedPath:true,  answers:[{id:"pa6",label:"Significant",next:"pc3"},{id:"pa7",label:"Not sure",next:"pc3"}] },
+  "pc3": { id:"pc3", title:"Close — Workshop", type:"close",     prompt:"*Here's what I'd propose*[Confident] — **a 30-minute executive walkthrough with your VP and two team leads.** We map your specific gaps and show the delta.", overview:["High-level ask","Name the attendees"],          intendedPath:true,  answers:[{id:"pa8",label:"Set it up",next:null},{id:"pa9",label:"Send info first",next:null},{id:"paa",label:"Not ready",next:"pc_exit"}] },
+  "pc_exit":{ id:"pc_exit", title:"Executive Exit", type:"close", prompt:"*Completely understand*[Empathetic] — *when would be a better quarter to revisit this?*[Question]",                                                           overview:["Leave the door open"],                          intendedPath:false, answers:[{id:"pab",label:"Next quarter",next:null},{id:"pac",label:"Not interested",next:null}] },
+};
+db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,visibility,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+  .run(PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0", JSON.stringify(PRIV_CARDS), JSON.stringify([]), "private", now, now);
+setDeckAccess(PRIV_ID, [{ entityType: "team", entityId: "team_alpha" }]);
 
 // ─── ENT PATH TEMPLATES ───────────────────────────────────────────────────────
 // Each template is an array of segments: [{cardIds[], isObjCard, stackLabel, stackId}]
@@ -482,10 +504,10 @@ USERS.forEach(function(u) {
 });
 
 console.log("✅ Apex Sales seeded:");
-console.log("   Teams: 3 | Admins: 3 | Users: 12 | Decks: 2 | Sessions: " + totalSessions);
+console.log("   Teams: 3 | Admins: 3 | Users: 12 | Decks: 3 (1 private: Executive Playbook → team_alpha) | Sessions: " + totalSessions);
 console.log("   Personas — star: Marcus, Kenji, Colt | solid: Priya, Dani, Leila");
 console.log("           — grinder: Tyler, Amara, Derek | newbie: Sofia, Ryan, Zara");
-console.log("   Password (all): Redcard2025!");
+console.log("   Password (all): [see seed.js]");
 
 } // end org_apex block
 
@@ -527,6 +549,7 @@ var M_USERS = [
 M_USERS.forEach(function(u) {
   db.prepare(`INSERT INTO users (id,orgId,teamId,email,passwordHash,displayName,role,createdAt)
     VALUES (?,?,?,?,?,?,'user',?)`).run(u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now());
+  setUserTeams(u.id, [u.teamId]);
 });
 
 // ─── MERIDIAN DECK ────────────────────────────────────────────────────────────
@@ -566,6 +589,19 @@ var M_OBJ_STACKS = [
 
 db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
   .run(M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0", JSON.stringify(M_CARDS), JSON.stringify(M_OBJ_STACKS), M_NOW, M_NOW);
+
+// ─── PRIVATE TEST DECK (Team North only) ──────────────────────────────────────
+var M_PRIV_ID = uid("d");
+var M_PRIV_CARDS = {
+  "mp0": { id:"mp0", title:"Partner Intro",    type:"pitch",     prompt:"*[Name]*[Warm] — quick intro. **Meridian's partner program gives your team white-label access to our structured call framework.** Got 90 seconds?",          overview:["Warm and direct","Partnership frame"],         intendedPath:true,  answers:[{id:"mpa0",label:"Sure",next:"mp1"},{id:"mpa1",label:"Not interested",next:"mp_exit"}] },
+  "mp1": { id:"mp1", title:"Channel Pain",     type:"discovery", prompt:"*Tell me*[Pause] — **what's the biggest friction point in your current partner channel?** Onboarding, pipeline quality, or rep consistency?",              overview:["Open question","Let them pick"],                intendedPath:true,  answers:[{id:"mpa2",label:"Onboarding",next:"mp2"},{id:"mpa3",label:"Pipeline quality",next:"mp2"},{id:"mpa4",label:"Consistency",next:"mp2"},{id:"mpa5",label:"We're solid",next:"mp_exit"}] },
+  "mp2": { id:"mp2", title:"Value Tie-In",     type:"pitch",     prompt:"**That's our core solve.** *Partners using our framework see 28% faster onboarding and 20% higher close rates within the first 60 days.*[Confident]",       overview:["Lead with outcomes","Specific numbers"],        intendedPath:true,  answers:[{id:"mpa6",label:"Interesting — tell me more",next:"mp3"},{id:"mpa7",label:"We have something similar",next:"mp_exit"}] },
+  "mp3": { id:"mp3", title:"Close — Pilot",    type:"close",     prompt:"*What I'd suggest*[Confident] — **a 30-day pilot with two of your top partners.** No fees upfront, just results.",                                         overview:["Low-commitment ask","Specific scope"],          intendedPath:true,  answers:[{id:"mpa8",label:"Let's do it",next:null},{id:"mpa9",label:"Need to check internally",next:null},{id:"mpaa",label:"Not right now",next:"mp_exit"}] },
+  "mp_exit":{ id:"mp_exit", title:"Graceful Exit", type:"close", prompt:"*No problem at all*[Empathetic] — *mind if I follow up next quarter when you're evaluating partner tools?*[Question]",                                        overview:["Keep the door open"],                           intendedPath:false, answers:[{id:"mpab",label:"Sure",next:null},{id:"mpac",label:"No thanks",next:null}] },
+};
+db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,visibility,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+  .run(M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0", JSON.stringify(M_PRIV_CARDS), JSON.stringify([]), "private", M_NOW, M_NOW);
+setDeckAccess(M_PRIV_ID, [{ entityType: "team", entityId: "team_north" }]);
 
 var M_OBJ_MAP = {};
 M_OBJ_STACKS.forEach(function(s){ M_OBJ_MAP[s.id] = s.cards; });
@@ -612,8 +648,8 @@ M_USERS.forEach(function(u) {
 });
 
 console.log("✅ Meridian Group seeded:");
-console.log("   Teams: 2 | Admins: 2 (casey, riley) | Users: 4 | Decks: 1 | Sessions: " + m_totalSessions);
+console.log("   Teams: 2 | Admins: 2 (casey, riley) | Users: 4 | Decks: 2 (1 private: Partner Channel Playbook → team_north) | Sessions: " + m_totalSessions);
 console.log("   Personas — star: Blake | solid: Fox | grinder: Shaw | newbie: Reed");
-console.log("   Password (all): Redcard2025!");
+console.log("   Password (all): [see seed.js]");
 
 } // end org_meridian block

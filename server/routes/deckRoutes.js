@@ -20,7 +20,7 @@ router.post("/", function(req, res) {
   if (req.user.role !== "admin") {
     return res.status(403).json({ error: "Only admins can create decks" });
   }
-  const { name, color, icon } = req.body || {};
+  const { name, color, icon, visibility, accessList } = req.body || {};
   if (!name || !name.trim()) {
     return res.status(400).json({ error: "Deck name is required" });
   }
@@ -30,7 +30,12 @@ router.post("/", function(req, res) {
     name:      name.trim(),
     color:     color || "#F5A623",
     icon:      icon  || "💼",
+    visibility: visibility || "public",
   });
+  if (accessList && accessList.length > 0) {
+    setDeckAccess(deck.id, accessList);
+    deck.accessList = accessList;
+  }
   res.status(201).json(deck);
 });
 
@@ -53,12 +58,18 @@ router.put("/:id", function(req, res) {
 // GET /api/decks/:id/access  (admin-only)
 router.get("/:id/access", function(req, res) {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  var deck = getDeckById(req.params.id);
+  if (!deck) return res.status(404).json({ error: "Deck not found" });
+  if (deck.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
   res.json(getDeckAccess(req.params.id));
 });
 
 // PUT /api/decks/:id/access  (admin-only)
 router.put("/:id/access", function(req, res) {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+  var deck = getDeckById(req.params.id);
+  if (!deck) return res.status(404).json({ error: "Deck not found" });
+  if (deck.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
   setDeckAccess(req.params.id, req.body.accessList || []);
   res.json({ ok: true });
 });

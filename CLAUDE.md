@@ -22,9 +22,12 @@ No test framework is configured.
 
 **Stack:** React 19 (Vite) frontend + Express backend + SQLite (better-sqlite3).
 
-**Single-file frontend:** All React code lives in `src/App.jsx` (~4400 lines, 40+ components). There are no separate component files — every view, context, and utility is defined inline in one file. This is by design.
+**Modular frontend:** `src/App.jsx` is the app shell (auth, tabs, autosave). Components are split into `src/components/` (8 files) and shared code into `src/lib/` (4 files):
 
-**Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined at the top of App.jsx (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
+- `src/components/` — `Cards.jsx`, `Editor.jsx`, `Panels.jsx`, `Play.jsx`, `Sessions.jsx`, `Tooltip.jsx`, `Viewer.jsx`, `ui.jsx`
+- `src/lib/` — `api.js`, `constants.js`, `richtext.js`, `styles.js`
+
+**Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined in `src/lib/styles.js` (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
 
 **Backend:** Express REST API with SQLite database at `data/redcard.db`.
 - `server/index.js` — Express entry, middleware, route mounting, static file serving
@@ -43,7 +46,7 @@ JWT-based authentication with HttpOnly cookies.
 - **JWT payload:** `{ sub: userId, role, orgId }` — 24h expiry by default
 - **Middleware:** `requireAuth` (validates JWT, attaches `req.user`) and `requireAdmin` (checks `role === "admin"`)
 - **Roles:** `admin` (full org access, deck CRUD, user management) and `user` (play sessions, view cards/objections read-only, share sessions)
-- **Dev login:** Uses hardcoded `DEV_ORGS` in LoginScreen with org picker and user quick-select
+- **Dev login:** Uses `DEV_ORGS` in LoginScreen (gated by `import.meta.env.DEV`) with org picker and user quick-select. Default credentials are configured in `server/seed.js` (development only).
 
 ## Database Schema
 
@@ -86,40 +89,23 @@ SQLite with WAL mode and foreign keys enabled. 10 tables:
 
 **Share** — Session sharing from owner to another user. Unique constraint on (sessionId, toUserId). Share recipients can view session and write feedback.
 
-## Frontend Organization (App.jsx Section Map)
+## Frontend Organization (File Map)
 
-The file is organized into clearly delimited sections:
-
-| Section | Description |
-|---------|-------------|
-| ID Generators | `uid()`, `aid()`, `osid()`, `sid()` |
-| Type Metadata | `TM`, `OBJ_COLOR`, `SESS_COLOR`, `STYPE`, `DECK_COLORS`, `DECK_ICONS`, `OBJ_ICONS` |
-| Inflection System | `INFLECTIONS[]`, `INFL_MAP`, `INFL_CATS` |
-| Rich Text | `parseRichText()`, `stripMarkup()` |
-| API Layer | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler` |
-| Style Helpers | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
-| Tiny Components | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow` |
-| Tooltip Context | `TipCtx`, `GlobalInflTooltip`, `InflWord`, `RichPromptDisplay`, `OverviewDisplay`, `OverviewEditor` |
-| Rich Prompt Editor | `RichPromptEditor` — contentEditable-based editor with inflection picker |
-| Card Editor Sheet | `CardEditorSheet` — Full card creation/editing form |
-| Obj Picker | `ObjPicker` — Modal for selecting objection stacks during play |
-| Navigator | `Navigator` — Core card navigation for live play mode |
-| Tree View | `TreeView` — Hierarchical card tree with collapse/expand and zoom |
-| Swimlane View | `SwimlaneView` — Column-based card flow visualization with SVG edges |
-| Play Tab | `PlayTab` — Session start/run interface |
-| Session Helpers | Duration/date formatters, visit/note extractors |
-| Share Modal | `ShareModal` — Share session with teammates |
-| Session Review | `SessionReview` — Four-tab session analysis (overview, path, notes, feedback) |
-| Sessions Tab | `SessionsTab` — Session list with filters, analytics, admin scope |
-| Session Analytics | `SessionAnalytics` — Aggregated session metrics dashboard |
-| Cards Tab | `CardsTab` — Card list/tree view with search, filter, edit (or read-only) |
-| Objections Tab | `ObjStackEditor` + `ObjectionsTab` — Objection stack management |
-| Deck Switcher | `DeckSwitcherSheet` — Deck selection, creation, editing |
-| Login | `LoginScreen` — Dev login with org picker |
-| Profile | `ProfileSheet` — User info and logout |
-| Admin Panel | `AdminPanel` — User and team CRUD |
-| Tab Config | `TAB_ACCENTS`, `USER_TABS`, `ADMIN_TABS` |
-| App | `App` (root with auth) + `MainApp` (authenticated shell with tabs, autosave) |
+| File | Exports |
+|------|---------|
+| `src/App.jsx` | `App` (root with auth), `MainApp` (authenticated shell with tabs, autosave) |
+| `src/lib/constants.js` | `uid`, `aid`, `osid`, `sid`, `TM`, `OBJ_COLOR`, `SESS_COLOR`, `STYPE`, `DECK_COLORS`, `DECK_ICONS`, `OBJ_ICONS`, `INFLECTIONS`, `INFL_MAP`, `INFL_CATS` |
+| `src/lib/richtext.js` | `parseRichText`, `stripMarkup` |
+| `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler` |
+| `src/lib/styles.js` | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
+| `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow` |
+| `src/components/Tooltip.jsx` | `TipCtx`, `GlobalInflTooltip`, `InflWord`, `RichPromptDisplay`, `OverviewDisplay`, `OverviewEditor` |
+| `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
+| `src/components/Play.jsx` | `ObjPicker`, `Navigator`, `PlayTab` |
+| `src/components/Viewer.jsx` | `TreeView`, `SwimlaneView` |
+| `src/components/Sessions.jsx` | `ShareModal`, `SessionReview`, `SessionsTab`, `SessionAnalytics` |
+| `src/components/Cards.jsx` | `CardsTab`, `ObjStackEditor`, `ObjectionsTab` |
+| `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` |
 
 ## API Endpoints
 
@@ -208,7 +194,7 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Immutable updates:** All state updates use `Object.assign({}, prev, changes)` pattern. No spread operator (ES5-style codebase).
 - **Inline styling:** All styles are JS objects. Helper functions for common patterns. No CSS classes.
 - **Auth flow:** JWT in HttpOnly cookie. `setUnauthHandler` sets a global 401 redirect. `apiGet/Put/Post/Del` check for 401 on every response.
-- **Dev login:** Hardcoded `DEV_ORGS` with preset orgs/teams/users. Default password: `Redcard2025!`
+- **Dev login:** `DEV_ORGS` gated by `import.meta.env.DEV` with preset orgs/teams/users. Default credentials are configured in `server/seed.js` (development only).
 - **Read-only mode:** CardsTab and ObjectionsTab accept a `readOnly` prop. Non-admin users see cards/objections but cannot edit.
 - **Feedback notifications:** `feedbackCount` and `latestFeedbackAt` returned per session by API. Frontend stores `fbSeenTs` in localStorage to track read state.
 
@@ -216,20 +202,29 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 
 | Constant | Location | Purpose |
 |----------|----------|---------|
-| `TM` | App.jsx top | Card type metadata (color, glow, icon, label) for pitch/discovery/close/objection |
-| `OBJ_COLOR` | App.jsx top | "#EF5350" — red accent for objections |
-| `SESS_COLOR` | App.jsx top | "#A8FF3E" — lime accent for sessions |
-| `STYPE` | App.jsx top | Session type metadata for live/practice |
-| `DECK_COLORS` | App.jsx top | 10 color options for deck picker |
-| `DECK_ICONS` | App.jsx top | 30 emoji options for deck picker |
-| `OBJ_ICONS` | App.jsx top | 30 emoji options for objection stack picker |
-| `INFLECTIONS` | App.jsx top | 20 delivery cue definitions |
-| `SL_CARD_W/H` | App.jsx swimlane section | Swimlane card dimensions (162x82) |
-| `SL_LANE_W` | App.jsx swimlane section | Swimlane column width (186) |
-| `SL_COL_GAP` | App.jsx swimlane section | Gap between swimlane columns (36) |
-| `TAB_ACCENTS` | App.jsx tab config section | Color accent per tab |
-| `USER_TABS` | App.jsx tab config section | Tabs for regular users: play, sessions, cards, objections |
-| `ADMIN_TABS` | App.jsx tab config section | Tabs for admins: play, sessions, cards, objections, admin |
+| `TM` | `src/lib/constants.js` | Card type metadata (color, glow, icon, label) for pitch/discovery/close/objection |
+| `OBJ_COLOR` | `src/lib/constants.js` | "#EF5350" — red accent for objections |
+| `SESS_COLOR` | `src/lib/constants.js` | "#A8FF3E" — lime accent for sessions |
+| `STYPE` | `src/lib/constants.js` | Session type metadata for live/practice |
+| `DECK_COLORS` | `src/lib/constants.js` | 10 color options for deck picker |
+| `DECK_ICONS` | `src/lib/constants.js` | 30 emoji options for deck picker |
+| `OBJ_ICONS` | `src/lib/constants.js` | 30 emoji options for objection stack picker |
+| `INFLECTIONS` | `src/lib/constants.js` | 20 delivery cue definitions |
+| `SL_CARD_W/H` | `src/components/Viewer.jsx` | Swimlane card dimensions (162x82) |
+| `SL_LANE_W` | `src/components/Viewer.jsx` | Swimlane column width (186) |
+| `SL_COL_GAP` | `src/components/Viewer.jsx` | Gap between swimlane columns (36) |
+| `TAB_ACCENTS` | `src/App.jsx` | Color accent per tab |
+| `USER_TABS` | `src/App.jsx` | Tabs for regular users: play, sessions, cards, objections |
+| `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: play, sessions, cards, objections, admin |
 
-# currentDate
-Today's date is 2026-03-16.
+## Security
+
+- **JWT secret:** Production requires `JWT_SECRET` env var — app refuses to start without it. Dev mode uses a hardcoded fallback.
+- **Rate limiting:** Login endpoint limited to 10 attempts per 15-minute window via `express-rate-limit`.
+- **Security headers:** `helmet` middleware sets standard security headers (CSP disabled in dev for Vite HMR).
+- **Password policy:** 8+ characters, at least one uppercase letter, at least one digit. Enforced on user creation and password reset.
+- **Org scoping:** All endpoints validate `orgId` to prevent cross-org data access (IDOR protection).
+- **XSS prevention:** `escH()` in `Editor.jsx` escapes all user content before innerHTML rendering in the contentEditable editor.
+- **Dev-only features:** `DEV_ORGS` and `DEV_PASSWORD` gated by `import.meta.env.DEV` — stripped from production bundles by Vite.
+- **Seed guard:** `server/seed.js` exits immediately if `NODE_ENV=production`.
+- **Feedback limits:** Feedback text capped at 5000 characters.

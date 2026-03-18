@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Outer dark navy fill circle -->
+  <circle cx="32" cy="32" r="32" fill="#060d1a"/>
+
+  <!-- Blue ring body - thick donut -->
+  <circle cx="32" cy="32" r="28" fill="#1246a0"/>
+  <!-- Ring bevel: lighter blue highlight on upper-left -->
+  <path d="M32 5 A27 27 0 0 0 8 27" stroke="#2979FF" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <!-- Ring teal accent bottom-right -->
+  <path d="M56 32 A27 27 0 0 1 40 57" stroke="#00BCD4" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <!-- Ring green-teal accent bottom-left -->
+  <path d="M40 57 A27 27 0 0 1 8 38" stroke="#26C6DA" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.8"/>
+
+  <!-- Gap at upper-right (small dark wedge to create the segmented look) -->
+  <path d="M32 5 A27 27 0 0 1 56 32" stroke="#060d1a" stroke-width="8" fill="none"/>
+
+  <!-- Inner white circle (center hole) -->
+  <circle cx="32" cy="32" r="17" fill="white"/>
+  <!-- Subtle inner ring shadow -->
+  <circle cx="32" cy="32" r="17" fill="none" stroke="rgba(0,0,0,0.08)" stroke-width="2"/>
+
+  <!-- Green diamond (plumbob / 4-pointed) -->
+  <polygon points="32,20 40,32 32,44 24,32" fill="#64DD17"/>
+  <!-- Diamond top facet highlight -->
+  <polygon points="32,20 40,32 32,31" fill="#B2FF59" opacity="0.7"/>
+  <!-- Diamond left facet shadow -->
+  <polygon points="32,20 24,32 32,31" fill="#33691E" opacity="0.4"/>
+</svg>

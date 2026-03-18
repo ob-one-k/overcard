@@ -36,7 +36,7 @@ npm install
 node server/seed.js
 ```
 
-Creates 2 organizations with teams, users, decks, and 300+ realistic sessions. Default password for all seeded users: `Redcard2025!`
+Creates 2 organizations with teams, users, decks, and 300+ realistic sessions. Default credentials are configured in `server/seed.js` (development only).
 
 ### Development
 
@@ -66,7 +66,7 @@ React 19 (Vite)  ──▶  Express REST API  ──▶  SQLite (better-sqlite3)
                          auth.js
 ```
 
-- **Frontend:** Single-file React app (`src/App.jsx`, ~4400 lines). All components, contexts, and utilities inline. All styling via JS objects — no CSS files.
+- **Frontend:** Modular React app. `src/App.jsx` is the shell; components in `src/components/` (8 files), shared code in `src/lib/` (4 files). All styling via JS objects — no CSS files.
 - **Backend:** Express with JWT cookie authentication, role-based authorization (admin/user), and SQLite database with WAL mode.
 - **Dev proxy:** Vite proxies `/api/*` to Express on port 3001 during development.
 - **Production:** Express serves the built `dist/` directory and handles API routes on a single port.
@@ -81,7 +81,21 @@ redcard/
 ├── CLAUDE.md               # Detailed codebase documentation
 ├── src/
 │   ├── main.jsx            # React entry point
-│   └── App.jsx             # Entire frontend (~4400 lines)
+│   ├── App.jsx             # App shell (auth, tabs, autosave)
+│   ├── components/
+│   │   ├── Cards.jsx       # CardsTab, ObjStackEditor, ObjectionsTab
+│   │   ├── Editor.jsx      # RichPromptEditor, CardEditorSheet
+│   │   ├── Panels.jsx      # DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel
+│   │   ├── Play.jsx        # ObjPicker, Navigator, PlayTab
+│   │   ├── Sessions.jsx    # ShareModal, SessionReview, SessionsTab, SessionAnalytics
+│   │   ├── Tooltip.jsx     # TipCtx, GlobalInflTooltip, InflWord, RichPromptDisplay
+│   │   ├── Viewer.jsx      # TreeView, SwimlaneView
+│   │   └── ui.jsx          # TypeBadge, Handle, IntendedBadge, SectionHdr, StatBox, BarRow
+│   └── lib/
+│       ├── api.js          # apiGet, apiPut, apiPost, apiDel, setUnauthHandler
+│       ├── constants.js    # TM, INFLECTIONS, DECK_COLORS, DECK_ICONS, etc.
+│       ├── richtext.js     # parseRichText, stripMarkup
+│       └── styles.js       # solidBtn, ghostBtn, ghostSm, iconBtn, etc.
 ├── server/
 │   ├── index.js            # Express app, middleware, route mounting
 │   ├── db.js               # SQLite schema, migrations, query functions
@@ -142,3 +156,20 @@ See `CLAUDE.md` for the complete endpoint reference.
 - **ES5-style code:** Uses `var`, `function`, `Object.assign` — no arrow functions, no spread operator, no destructuring in the frontend
 - **Rich text:** Card prompts support `**bold**`, `*italic*`, and `*text*[Inflection]` markup
 - **Polling:** Feedback and share modals poll every 5 seconds with proper cleanup on unmount
+
+## Production Deployment
+
+Required environment variables:
+- `NODE_ENV=production` — enables secure cookies, helmet CSP, JWT secret enforcement
+- `JWT_SECRET=<strong-random-value>` — required, app refuses to start without it
+
+Optional:
+- `PORT` — server port (default: 3000)
+
+```bash
+npm run build && NODE_ENV=production JWT_SECRET=your-secret-here node server/index.js
+```
+
+**Warning:** Do NOT run `node server/seed.js` in production — the script will exit with an error if `NODE_ENV=production`.
+
+**Recommendation:** Use a reverse proxy (nginx, Caddy) for HTTPS termination in production.

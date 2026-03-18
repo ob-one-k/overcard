@@ -2,8 +2,13 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 
-const DATA_DIR = path.join(__dirname, "..", "data");
-const DB_PATH  = path.join(DATA_DIR, "redcard.db");
+// Use OVERCARD_DATA env var, or fall back to ~/.overcard when the project
+// lives on a Windows NTFS mount (WSL /mnt/…) where SQLite cannot create files.
+var _defaultData = __dirname.startsWith("/mnt/")
+  ? path.join(process.env.HOME || "/tmp", ".overcard")
+  : path.join(__dirname, "..", "data");
+const DATA_DIR = process.env.OVERCARD_DATA || _defaultData;
+const DB_PATH  = path.join(DATA_DIR, "overcard.db");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -314,7 +319,9 @@ function getOrgDecks(orgId, userId, userTeamIds) {
 }
 
 function getDeckById(id) {
-  return parseDeck(db.prepare("SELECT * FROM decks WHERE id = ?").get(id));
+  var deck = parseDeck(db.prepare("SELECT * FROM decks WHERE id = ?").get(id));
+  if (deck) deck.accessList = getDeckAccess(id);
+  return deck;
 }
 
 function createDeck({ orgId, createdBy, name, color, icon, visibility }) {
@@ -439,6 +446,20 @@ function getSessions(scope, orgId, userId, filters) {
       s.feedbackCount = fbMap[s.id] ? fbMap[s.id].feedbackCount : 0;
       s.latestFeedbackAt = fbMap[s.id] ? fbMap[s.id].latestFeedbackAt : null;
     });
+
+    // Attach shareCount to owned sessions (not to sessions shared-with-me)
+    var ownIds = result.filter(function(s){ return !s._shared; }).map(function(s){ return s.id; });
+    if (ownIds.length > 0) {
+      var shrPh = ownIds.map(function(){ return "?"; }).join(",");
+      var shrRows = db.prepare(
+        "SELECT sessionId, COUNT(*) as shareCount FROM session_shares WHERE sessionId IN (" + shrPh + ") GROUP BY sessionId"
+      ).all(...ownIds);
+      var shrMap = {};
+      shrRows.forEach(function(r){ shrMap[r.sessionId] = r; });
+      result.forEach(function(s) {
+        if (!s._shared) s.shareCount = shrMap[s.id] ? shrMap[s.id].shareCount : 0;
+      });
+    }
   }
 
   return result;

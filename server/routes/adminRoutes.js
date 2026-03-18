@@ -7,6 +7,13 @@ const {
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
 
+function validatePassword(pw) {
+  if (!pw || pw.length < 8) return "Password must be at least 8 characters";
+  if (!/[A-Z]/.test(pw)) return "Password must contain at least one uppercase letter";
+  if (!/[0-9]/.test(pw)) return "Password must contain at least one digit";
+  return null;
+}
+
 router.use(requireAdmin);
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
@@ -24,6 +31,14 @@ router.post("/users", function(req, res) {
   }
   if (!["admin","user"].includes(role)) {
     return res.status(400).json({ error: "role must be 'admin' or 'user'" });
+  }
+  var pwErr = validatePassword(password);
+  if (pwErr) return res.status(400).json({ error: pwErr });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ error: "Invalid email format" });
+  }
+  if (displayName.length > 100) {
+    return res.status(400).json({ error: "Display name must be 100 characters or less" });
   }
   try {
     const user = createUser({
@@ -76,9 +91,8 @@ router.post("/users/:id/reset-password", function(req, res) {
     return res.status(404).json({ error: "User not found" });
   }
   const { password } = req.body || {};
-  if (!password || password.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters" });
-  }
+  var pwErr = validatePassword(password);
+  if (pwErr) return res.status(400).json({ error: pwErr });
   updateUser(req.params.id, req.user.orgId, { passwordHash: hashPassword(password) });
   res.json({ ok: true });
 });

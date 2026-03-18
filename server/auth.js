@@ -2,7 +2,10 @@ const jwt     = require("jsonwebtoken");
 const bcrypt  = require("bcrypt");
 const { findUserById } = require("./db");
 
-const JWT_SECRET  = process.env.JWT_SECRET  || "redcard-dev-secret-change-in-prod";
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required in production");
+}
+const JWT_SECRET  = process.env.JWT_SECRET  || "overcard-dev-secret-change-in-prod";
 const JWT_EXPIRES = process.env.JWT_EXPIRES || "24h";
 const COOKIE_NAME = "rc_token";
 const BCRYPT_ROUNDS = 12;

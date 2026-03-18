@@ -1,5 +1,6 @@
 const express      = require("express");
 const cors         = require("cors");
+const helmet       = require("helmet");
 const cookieParser = require("cookie-parser");
 const path         = require("path");
 const fs           = require("fs");
@@ -16,8 +17,10 @@ const DIST_DIR = path.join(__dirname, "..", "dist");
 // ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV !== "production";
 
+app.use(helmet({ contentSecurityPolicy: isDev ? false : undefined }));
+
 app.use(cors({
-  origin: isDev ? ["http://localhost:5173", "http://localhost:3000"] : false,
+  origin: isDev ? ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"] : false,
   credentials: true,
 }));
 
@@ -55,6 +58,6 @@ if (fs.existsSync(DIST_DIR)) {
 
 // ─── START ────────────────────────────────────────────────────────────────────
 app.listen(PORT, function() {
-  console.log("RedCard server listening on http://localhost:" + PORT);
+  console.log("OverCard server listening on http://localhost:" + PORT);
   console.log("Mode: " + (process.env.NODE_ENV || "development"));
 });
