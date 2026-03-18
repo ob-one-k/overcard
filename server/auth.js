@@ -27,17 +27,24 @@ function checkPassword(plain, hash) {
 }
 
 function setCookie(res, token) {
-  const isProd = process.env.NODE_ENV === "production";
+  const isProd    = process.env.NODE_ENV === "production";
+  const crossSite = isProd && !!process.env.CORS_ORIGIN;
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "strict",
+    sameSite: crossSite ? "none" : "strict",
     secure:   isProd,
     maxAge:   24 * 60 * 60 * 1000,  // 24 hours in ms
   });
 }
 
 function clearCookie(res) {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: "strict" });
+  const isProd    = process.env.NODE_ENV === "production";
+  const crossSite = isProd && !!process.env.CORS_ORIGIN;
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    sameSite: crossSite ? "none" : "strict",
+    secure:   isProd,
+  });
 }
 
 function requireAuth(req, res, next) {

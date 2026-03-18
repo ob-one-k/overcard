@@ -1,5 +1,6 @@
 // ─── API LAYER ────────────────────────────────────────────────────────────────
-export var API_BASE = "/api";
+var _apiUrl = import.meta.env.VITE_API_URL || "";
+export var API_BASE = _apiUrl + "/api";
 export var SAVE_DELAY = 800;
 
 var _onUnauth = null; // set by App shell to redirect to login on 401

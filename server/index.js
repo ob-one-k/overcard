@@ -19,8 +19,12 @@ const isDev = process.env.NODE_ENV !== "production";
 
 app.use(helmet({ contentSecurityPolicy: isDev ? false : undefined }));
 
+var corsOrigin = isDev
+  ? ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
+  : process.env.CORS_ORIGIN || false;
+
 app.use(cors({
-  origin: isDev ? ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"] : false,
+  origin: corsOrigin,
   credentials: true,
 }));
 
