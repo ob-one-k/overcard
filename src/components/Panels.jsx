@@ -274,12 +274,7 @@ export function LoginScreen({ onLogin }) {
     e.preventDefault();
     if (!email.trim() || !pass) { setErr("Email and password are required."); return; }
     setBusy(true); setErr("");
-    fetch("/api/auth/login", {
-      method:"POST", credentials:"include",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ email: email.trim(), password: pass }),
-    })
-      .then(function(r) { return r.ok ? r.json() : r.json().then(function(b){ throw new Error(b.error||"Login failed"); }); })
+    apiPost("/auth/login", { email: email.trim(), password: pass })
       .then(function(user) { setBusy(false); onLogin(user); })
       .catch(function(e) { setBusy(false); setErr(e.message || "Login failed"); });
   }
