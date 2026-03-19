@@ -20,7 +20,7 @@ No test framework is configured.
 
 ## Architecture
 
-**Stack:** React 19 (Vite) frontend + Express backend + SQLite (better-sqlite3).
+**Stack:** React 19 (Vite) frontend + Express backend + PostgreSQL (`pg` Pool, async).
 
 **Modular frontend:** `src/App.jsx` is the app shell (auth, tabs, autosave). Components are split into `src/components/` (8 files) and shared code into `src/lib/` (4 files):
 
@@ -29,10 +29,10 @@ No test framework is configured.
 
 **Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined in `src/lib/styles.js` (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
 
-**Backend:** Express REST API with SQLite database at `data/overcard.db`.
-- `server/index.js` — Express entry, middleware, route mounting, static file serving
-- `server/db.js` — Schema, migrations, all database query functions (50+ exports)
-- `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, auth middleware
+**Backend:** Express REST API with PostgreSQL database via async `pg` Pool (connection string from `DATABASE_URL`).
+- `server/index.js` — Express entry, middleware, route mounting, static file serving; calls `initSchema()` before `app.listen()`
+- `server/db.js` — PostgreSQL schema init (`initSchema`), async pool, `withTransaction` helper, all database query functions (50+ exports). BIGINT timestamp columns use a type parser to return JS numbers. JSONB columns (cards, objStacks, events, notes, metrics) are auto-serialized/deserialized by pg. All camelCase column names are double-quoted in SQL strings.
+- `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, async auth middleware
 - `server/routes/` — Route handlers (authRoutes, deckRoutes, sessionRoutes, adminRoutes)
 - `server/seed.js` — Database seeder (2 orgs, 6 teams, 20+ users, 3 decks, 300+ sessions)
 
@@ -50,24 +50,30 @@ JWT-based authentication with HttpOnly cookies.
 
 ## Database Schema
 
-SQLite with WAL mode and foreign keys enabled. 10 tables:
+PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE TABLE IF NOT EXISTS`. 10 tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
 | `orgs` | Organizations | id, name |
-| `teams` | Teams per org | id, orgId, name |
-| `team_admins` | Team admin assignments | teamId, userId |
-| `user_teams` | User-to-team membership (many-to-many) | userId, teamId |
-| `users` | User accounts with auth | id, orgId, teamId, email, passwordHash, displayName, role |
-| `decks` | Sales pitch decks | id, orgId, name, color, icon, rootCard, cards (JSON), objStacks (JSON), visibility |
-| `deck_access` | Deck visibility controls for private decks | deckId, entityType (team/user), entityId |
-| `sessions` | Practice/live session runs | id, orgId, userId, deckId, mode, outcome, events (JSON), notes (JSON), metrics (JSON) |
-| `session_feedback` | Feedback comments on sessions | id, sessionId, authorId, text, cardId |
-| `session_shares` | Session sharing between users | id, sessionId, fromUserId, toUserId, context |
+| `teams` | Teams per org | id, "orgId", name |
+| `team_admins` | Team admin assignments | "teamId", "userId" |
+| `user_teams` | User-to-team membership (many-to-many) | "userId", "teamId" |
+| `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", role |
+| `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility |
+| `deck_access` | Deck visibility controls for private decks | "deckId", "entityType" (team/user), "entityId" |
+| `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", mode, outcome, events (JSONB), notes (JSONB), metrics (JSONB) |
+| `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
+| `session_shares` | Session sharing between users | id, "sessionId", "fromUserId", "toUserId", context |
 
-**Migrations:** Applied inline after schema creation (e.g., `ALTER TABLE decks ADD COLUMN visibility`).
+**Column naming:** All camelCase column names are double-quoted in every SQL string throughout db.js to preserve case in PostgreSQL (e.g., `"orgId"`, `"userId"`, `"startTs"`).
 
-**Helper functions:** `parseDeck(row)` and `parseSession(row)` in db.js handle JSON field parsing on every read.
+**JSONB fields:** `cards`, `objStacks`, `events`, `notes`, `metrics` are stored as JSONB. The pg driver auto-serializes on write (pass JS objects directly — never `JSON.stringify`) and auto-deserializes on read (never `JSON.parse`).
+
+**BIGINT timestamps:** `"startTs"`, `"updatedAt"`, `"lastLoginAt"` are `BIGINT` storing Unix milliseconds. A type parser (`types.setTypeParser(20, ...)`) ensures these are returned as JS numbers, not strings.
+
+**Migrations:** Applied at end of `initSchema()` with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+
+**Helper functions:** `parseDeck(row)` and `parseSession(row)` in db.js set defaults for JSONB fields that may be null (no JSON parsing needed).
 
 ## Data Model
 
@@ -216,6 +222,37 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `TAB_ACCENTS` | `src/App.jsx` | Color accent per tab |
 | `USER_TABS` | `src/App.jsx` | Tabs for regular users: play, sessions, cards, objections |
 | `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: play, sessions, cards, objections, admin |
+
+## Environment Variables
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `DATABASE_URL` | Yes (production) | PostgreSQL connection string (e.g., `postgres://localhost/overcard_dev` locally; auto-wired on Render) |
+| `JWT_SECRET` | Yes (production) | App exits without it. Dev uses a hardcoded fallback. |
+| `NODE_ENV` | Yes (production) | Set to `production`. Enables secure cookies, helmet CSP, JWT secret enforcement. |
+| `CORS_ORIGIN` | Yes (production) | Frontend URL allowed for CORS (e.g., your Vercel URL) |
+| `PORT` | No | Default: 3000 |
+
+**Local dev:** Set `DATABASE_URL` in a `.env` file or shell: `export DATABASE_URL=postgres://localhost/overcard_dev`
+
+## Deployment
+
+**Platform:** Render (web service + managed PostgreSQL).
+
+`render.yaml` in the project root is a Render Blueprint that auto-provisions:
+- `overcard-api` — Node.js web service (`node server/index.js`)
+- `overcard-db` — Free-tier PostgreSQL instance
+
+Deploy steps:
+1. Push to GitHub
+2. Render dashboard → New → Blueprint → connect repo
+3. Render detects `render.yaml`, creates both services, auto-wires `DATABASE_URL`
+4. Set `CORS_ORIGIN` manually in the Render dashboard to your Vercel frontend URL
+5. Seed via Render Shell: `node server/seed.js`
+
+**Frontend** is deployed separately on Vercel. `buildCommand` in `render.yaml` is `npm install` only — Vite build runs on Vercel, not Render.
+
+> Render free PostgreSQL has 90-day data retention. Upgrade for production persistence.
 
 ## Security
 

@@ -19,17 +19,19 @@ router.use(requireAdmin);
 // ─── USERS ────────────────────────────────────────────────────────────────────
 
 // GET /api/admin/users
-router.get("/users", function(req, res) {
-  res.json(getOrgUsers(req.user.orgId));
+router.get("/users", async function(req, res, next) {
+  try {
+    res.json(await getOrgUsers(req.user.orgId));
+  } catch (err) { next(err); }
 });
 
 // POST /api/admin/users
-router.post("/users", function(req, res) {
+router.post("/users", async function(req, res, next) {
   const { email, displayName, role, teamId, teamIds, password } = req.body || {};
   if (!email || !displayName || !password) {
     return res.status(400).json({ error: "email, displayName, and password are required" });
   }
-  if (!["admin","user"].includes(role)) {
+  if (!["admin", "user"].includes(role)) {
     return res.status(400).json({ error: "role must be 'admin' or 'user'" });
   }
   var pwErr = validatePassword(password);
@@ -41,7 +43,7 @@ router.post("/users", function(req, res) {
     return res.status(400).json({ error: "Display name must be 100 characters or less" });
   }
   try {
-    const user = createUser({
+    const user = await createUser({
       orgId:        req.user.orgId,
       teamId:       teamId || null,
       email:        email.toLowerCase().trim(),
@@ -50,129 +52,144 @@ router.post("/users", function(req, res) {
       role:         role,
     });
     if (teamIds !== undefined) {
-      setUserTeams(user.id, teamIds);
+      await setUserTeams(user.id, teamIds);
     }
     const { passwordHash: _, ...safe } = user;
     res.status(201).json(safe);
   } catch (err) {
-    if (err.message && err.message.includes("UNIQUE")) {
+    // PostgreSQL unique violation code
+    if (err.code === "23505") {
       return res.status(409).json({ error: "Email already in use" });
     }
-    throw err;
+    next(err);
   }
 });
 
 // PUT /api/admin/users/:id
-router.put("/users/:id", function(req, res) {
-  const target = findUserById(req.params.id);
-  if (!target || target.orgId !== req.user.orgId) {
-    return res.status(404).json({ error: "User not found" });
-  }
-  const { displayName, role, teamId, teamIds } = req.body || {};
-  const fields = {};
-  if (displayName !== undefined) fields.displayName = displayName.trim();
-  if (role !== undefined) {
-    if (!["admin","user"].includes(role)) return res.status(400).json({ error: "Invalid role" });
-    fields.role = role;
-  }
-  if (teamId !== undefined) fields.teamId = teamId || null;
-  const updated = updateUser(req.params.id, req.user.orgId, fields);
-  if (teamIds !== undefined) {
-    setUserTeams(req.params.id, teamIds);
-  }
-  const { passwordHash: _, ...safe } = updated;
-  res.json(safe);
+router.put("/users/:id", async function(req, res, next) {
+  try {
+    const target = await findUserById(req.params.id);
+    if (!target || target.orgId !== req.user.orgId) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const { displayName, role, teamId, teamIds } = req.body || {};
+    const fields = {};
+    if (displayName !== undefined) fields.displayName = displayName.trim();
+    if (role !== undefined) {
+      if (!["admin", "user"].includes(role)) return res.status(400).json({ error: "Invalid role" });
+      fields.role = role;
+    }
+    if (teamId !== undefined) fields.teamId = teamId || null;
+    const updated = await updateUser(req.params.id, req.user.orgId, fields);
+    if (teamIds !== undefined) {
+      await setUserTeams(req.params.id, teamIds);
+    }
+    const { passwordHash: _, ...safe } = updated;
+    res.json(safe);
+  } catch (err) { next(err); }
 });
 
 // POST /api/admin/users/:id/reset-password
-router.post("/users/:id/reset-password", function(req, res) {
-  const target = findUserById(req.params.id);
-  if (!target || target.orgId !== req.user.orgId) {
-    return res.status(404).json({ error: "User not found" });
-  }
-  const { password } = req.body || {};
-  var pwErr = validatePassword(password);
-  if (pwErr) return res.status(400).json({ error: pwErr });
-  updateUser(req.params.id, req.user.orgId, { passwordHash: hashPassword(password) });
-  res.json({ ok: true });
+router.post("/users/:id/reset-password", async function(req, res, next) {
+  try {
+    const target = await findUserById(req.params.id);
+    if (!target || target.orgId !== req.user.orgId) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const { password } = req.body || {};
+    var pwErr = validatePassword(password);
+    if (pwErr) return res.status(400).json({ error: pwErr });
+    await updateUser(req.params.id, req.user.orgId, { passwordHash: hashPassword(password) });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 // DELETE /api/admin/users/:id
-router.delete("/users/:id", function(req, res) {
-  const target = findUserById(req.params.id);
-  if (!target || target.orgId !== req.user.orgId) {
-    return res.status(404).json({ error: "User not found" });
-  }
-  if (target.id === req.user.id) {
-    return res.status(400).json({ error: "Cannot delete your own account" });
-  }
-  deleteUser(req.params.id, req.user.orgId);
-  res.json({ ok: true });
+router.delete("/users/:id", async function(req, res, next) {
+  try {
+    const target = await findUserById(req.params.id);
+    if (!target || target.orgId !== req.user.orgId) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    if (target.id === req.user.id) {
+      return res.status(400).json({ error: "Cannot delete your own account" });
+    }
+    await deleteUser(req.params.id, req.user.orgId);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 // ─── TEAMS ────────────────────────────────────────────────────────────────────
 
 // GET /api/admin/teams
-router.get("/teams", function(req, res) {
-  res.json(getOrgTeams(req.user.orgId));
+router.get("/teams", async function(req, res, next) {
+  try {
+    res.json(await getOrgTeams(req.user.orgId));
+  } catch (err) { next(err); }
 });
 
 // POST /api/admin/teams
-router.post("/teams", function(req, res) {
-  const { name, adminIds, memberIds } = req.body || {};
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: "Team name is required" });
-  }
-  if (!adminIds || !adminIds.length) {
-    return res.status(400).json({ error: "At least one admin must be assigned to a team" });
-  }
-  const team = createTeam({ orgId: req.user.orgId, name: name.trim(), adminIds });
-  if (memberIds !== undefined) {
-    const newMemberIds = memberIds || [];
-    newMemberIds.forEach(function(uid) {
-      const current = getUserTeams(uid);
-      if (!current.includes(team.id)) setUserTeams(uid, current.concat([team.id]));
-    });
-  }
-  res.status(201).json(getTeamById(team.id));
+router.post("/teams", async function(req, res, next) {
+  try {
+    const { name, adminIds, memberIds } = req.body || {};
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Team name is required" });
+    }
+    if (!adminIds || !adminIds.length) {
+      return res.status(400).json({ error: "At least one admin must be assigned to a team" });
+    }
+    const team = await createTeam({ orgId: req.user.orgId, name: name.trim(), adminIds });
+    if (memberIds !== undefined) {
+      for (var i = 0; i < (memberIds || []).length; i++) {
+        var mid     = memberIds[i];
+        var current = await getUserTeams(mid);
+        if (!current.includes(team.id)) await setUserTeams(mid, current.concat([team.id]));
+      }
+    }
+    res.status(201).json(await getTeamById(team.id));
+  } catch (err) { next(err); }
 });
 
 // PUT /api/admin/teams/:id
-router.put("/teams/:id", function(req, res) {
-  const team = getTeamById(req.params.id);
-  if (!team || team.orgId !== req.user.orgId) {
-    return res.status(404).json({ error: "Team not found" });
-  }
-  const { name, adminIds, memberIds } = req.body || {};
-  if (adminIds !== undefined && (!adminIds || !adminIds.length)) {
-    return res.status(400).json({ error: "At least one admin must be assigned to a team" });
-  }
-  const updated = updateTeam(req.params.id, req.user.orgId, { name, adminIds });
-  if (memberIds !== undefined) {
-    const newMemberIds = memberIds || [];
-    const oldMembers = updated.memberIds || [];
-    const toAdd    = newMemberIds.filter(function(id) { return !oldMembers.includes(id); });
-    const toRemove = oldMembers.filter(function(id) { return !newMemberIds.includes(id); });
-    toAdd.forEach(function(uid) {
-      const current = getUserTeams(uid);
-      if (!current.includes(req.params.id)) setUserTeams(uid, current.concat([req.params.id]));
-    });
-    toRemove.forEach(function(uid) {
-      const current = getUserTeams(uid);
-      setUserTeams(uid, current.filter(function(t) { return t !== req.params.id; }));
-    });
-  }
-  res.json(getTeamById(req.params.id));
+router.put("/teams/:id", async function(req, res, next) {
+  try {
+    const team = await getTeamById(req.params.id);
+    if (!team || team.orgId !== req.user.orgId) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+    const { name, adminIds, memberIds } = req.body || {};
+    if (adminIds !== undefined && (!adminIds || !adminIds.length)) {
+      return res.status(400).json({ error: "At least one admin must be assigned to a team" });
+    }
+    const updated = await updateTeam(req.params.id, req.user.orgId, { name, adminIds });
+    if (memberIds !== undefined) {
+      const newMemberIds = memberIds || [];
+      const oldMembers   = updated.memberIds || [];
+      const toAdd        = newMemberIds.filter(function(id) { return !oldMembers.includes(id); });
+      const toRemove     = oldMembers.filter(function(id)   { return !newMemberIds.includes(id); });
+      for (var i = 0; i < toAdd.length; i++) {
+        var current = await getUserTeams(toAdd[i]);
+        if (!current.includes(req.params.id)) await setUserTeams(toAdd[i], current.concat([req.params.id]));
+      }
+      for (var j = 0; j < toRemove.length; j++) {
+        var cur = await getUserTeams(toRemove[j]);
+        await setUserTeams(toRemove[j], cur.filter(function(t) { return t !== req.params.id; }));
+      }
+    }
+    res.json(await getTeamById(req.params.id));
+  } catch (err) { next(err); }
 });
 
 // DELETE /api/admin/teams/:id
-router.delete("/teams/:id", function(req, res) {
-  const team = getTeamById(req.params.id);
-  if (!team || team.orgId !== req.user.orgId) {
-    return res.status(404).json({ error: "Team not found" });
-  }
-  deleteTeam(req.params.id, req.user.orgId);
-  res.json({ ok: true });
+router.delete("/teams/:id", async function(req, res, next) {
+  try {
+    const team = await getTeamById(req.params.id);
+    if (!team || team.orgId !== req.user.orgId) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+    await deleteTeam(req.params.id, req.user.orgId);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

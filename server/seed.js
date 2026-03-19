@@ -1,19 +1,24 @@
 // node server/seed.js  — idempotent: skips if org already exists
+(async function() {
+
 if (process.env.NODE_ENV === "production") {
   console.error("ERROR: seed.js must not be run in production.");
   process.exit(1);
 }
+
 const {
-  db, uid,
+  pool, uid, initSchema,
   createOrg, findOrgById,
-  createTeam, setTeamAdmins,
-  createUser, findUserByEmail,
+  setTeamAdmins,
   setUserTeams,
-  createDeck, updateDeck,
+  createDeck,
   setDeckAccess,
   insertSession,
 } = require("./db");
 const { hashPassword } = require("./auth");
+
+// Ensure schema exists before seeding
+await initSchema();
 
 const PW_HASH = hashPassword("Overcard2025!");
 
@@ -94,9 +99,7 @@ function computeMetrics(events, notes) {
 }
 
 // ─── PERSONA DEFINITIONS ─────────────────────────────────────────────────────
-// Each persona represents a distinct rep archetype with different session behaviors.
 var PERSONAS = {
-  // Top performer — straight paths, high win rate, minimal practice
   star: {
     sessionRange: [24, 30],
     practiceRatio: 0.14,
@@ -108,7 +111,6 @@ var PERSONAS = {
     pathBias:      "ideal",
     durationMod:   0.80,
   },
-  // Consistent performer — balanced metrics
   solid: {
     sessionRange: [18, 24],
     practiceRatio: 0.26,
@@ -120,7 +122,6 @@ var PERSONAS = {
     pathBias:      "mixed",
     durationMod:   1.00,
   },
-  // Hard worker — hits lots of objections, longer sessions, moderate outcomes
   grinder: {
     sessionRange: [20, 26],
     practiceRatio: 0.36,
@@ -132,7 +133,6 @@ var PERSONAS = {
     pathBias:      "struggle",
     durationMod:   1.28,
   },
-  // Newer rep — more practice, lower win rate, early exits, lots of notes
   newbie: {
     sessionRange: [14, 18],
     practiceRatio: 0.52,
@@ -181,15 +181,11 @@ var CONTACTS = [
   "Peyton Cruz","River Stone","Harlow James","Devin Hart","Kendall Wu",
 ];
 
-/**
- * Generate a set of sessions for a single user.
- * deckConfigs: array of deck config objects (id, name, color, icon, cards, objCardMaps, pathSets)
- */
+/** Generate a set of sessions for a single user. Pure JS — no DB calls. */
 function generateUserSessions(user, persona, deckConfigs, orgId) {
   var count    = jitter(persona.sessionRange[0], persona.sessionRange[1] - persona.sessionRange[0] + 1);
   var sessions = [];
 
-  // Distribute sessions across 90 days (slightly weighted toward recent)
   for (var i = 0; i < count; i++) {
     var daysBack  = Math.floor(Math.pow(Math.random(), 0.85) * 90) + 1;
     var isLive    = Math.random() > persona.practiceRatio;
@@ -198,11 +194,10 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
     var contact_  = isLive ? rnd(CONTACTS) : "";
     var deckCfg   = rnd(deckConfigs);
 
-    // Pick a path based on persona bias and whether they'll hit an objection
     var hitObj    = Math.random() < persona.objHitRate;
     var pathSet   = hitObj ? deckCfg.pathSets.objection
-                  : (persona.pathBias === "ideal"   ? deckCfg.pathSets.ideal
-                   : persona.pathBias === "mixed"   ? rnd([deckCfg.pathSets.ideal, deckCfg.pathSets.mixed, deckCfg.pathSets.objection])
+                  : (persona.pathBias === "ideal"    ? deckCfg.pathSets.ideal
+                   : persona.pathBias === "mixed"    ? rnd([deckCfg.pathSets.ideal, deckCfg.pathSets.mixed, deckCfg.pathSets.objection])
                    : persona.pathBias === "struggle" ? rnd([deckCfg.pathSets.struggle, deckCfg.pathSets.objection, deckCfg.pathSets.exit])
                    :                                   rnd([deckCfg.pathSets.mixed,   deckCfg.pathSets.exit,      deckCfg.pathSets.ideal]));
 
@@ -214,7 +209,6 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
     var durMs     = events.reduce(function(a, e){ return a + (e.durationMs || 0); }, 0);
     var endTs     = startTs + durMs + 2000;
 
-    // Generate notes
     var notes = [];
     if (Math.random() < persona.noteFreq) {
       var midIdx    = Math.floor(segments.length / 2);
@@ -236,13 +230,12 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
       });
     }
 
-    // soldCard = last card in last segment
     var soldCardId    = null;
     var soldCardTitle = null;
     if (sold) {
-      var lastSeg       = segments[segments.length - 1];
-      soldCardId        = lastSeg.cardIds[lastSeg.cardIds.length - 1];
-      soldCardTitle     = (deckCfg.cards[soldCardId] || {}).title || null;
+      var lastSeg    = segments[segments.length - 1];
+      soldCardId     = lastSeg.cardIds[lastSeg.cardIds.length - 1];
+      soldCardTitle  = (deckCfg.cards[soldCardId] || {}).title || null;
     }
 
     sessions.push({
@@ -277,11 +270,11 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
 // ORG 1 — APEX SALES
 // ═══════════════════════════════════════════════════════════════════════════════
 var ORG_ID = "org_apex";
-if (findOrgById(ORG_ID)) {
+if (await findOrgById(ORG_ID)) {
   console.log("org_apex already exists — skipping Apex Sales seed.");
 } else {
 
-createOrg({ id: ORG_ID, name: "Apex Sales" });
+await createOrg({ id: ORG_ID, name: "Apex Sales" });
 
 // ─── TEAMS ────────────────────────────────────────────────────────────────────
 const TEAMS = [
@@ -289,9 +282,13 @@ const TEAMS = [
   { id: "team_beta",  name: "Team Beta"  },
   { id: "team_gamma", name: "Team Gamma" },
 ];
-TEAMS.forEach(function(t) {
-  db.prepare("INSERT INTO teams (id,orgId,name,createdAt) VALUES (?,?,?,?)").run(t.id, ORG_ID, t.name, Date.now());
-});
+for (var i = 0; i < TEAMS.length; i++) {
+  var t = TEAMS[i];
+  await pool.query(
+    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4)',
+    [t.id, ORG_ID, t.name, Date.now()]
+  );
+}
 
 // ─── ADMINS ───────────────────────────────────────────────────────────────────
 const ADMINS = [
@@ -299,36 +296,38 @@ const ADMINS = [
   { id: "u_jordan", email: "jordan@apexsales.com",  displayName: "Jordan Rivera", teamAdmin: "team_beta"  },
   { id: "u_sam",    email: "sam@apexsales.com",     displayName: "Sam Patel",     teamAdmin: "team_gamma" },
 ];
-ADMINS.forEach(function(a) {
-  db.prepare(`INSERT INTO users (id,orgId,teamId,email,passwordHash,displayName,role,createdAt)
-    VALUES (?,?,NULL,?,?,?,'admin',?)`).run(a.id, ORG_ID, a.email, PW_HASH, a.displayName, Date.now());
-  setTeamAdmins(a.teamAdmin, [a.id]);
-});
+for (var i = 0; i < ADMINS.length; i++) {
+  var a = ADMINS[i];
+  await pool.query(
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6)',
+    [a.id, ORG_ID, a.email, PW_HASH, a.displayName, Date.now()]
+  );
+  await setTeamAdmins(a.teamAdmin, [a.id]);
+}
 
 // ─── REGULAR USERS ────────────────────────────────────────────────────────────
-// persona field drives session behavior
 const USERS = [
-  // Team Alpha
   { id: "u_marcus",  email: "marcus@apexsales.com",  displayName: "Marcus Chen",    teamId: "team_alpha", persona: "star"    },
   { id: "u_priya",   email: "priya@apexsales.com",   displayName: "Priya Nair",     teamId: "team_alpha", persona: "solid"   },
   { id: "u_tyler",   email: "tyler@apexsales.com",   displayName: "Tyler Brooks",   teamId: "team_alpha", persona: "grinder" },
   { id: "u_sofia",   email: "sofia@apexsales.com",   displayName: "Sofia Martinez", teamId: "team_alpha", persona: "newbie"  },
-  // Team Beta
   { id: "u_dani",    email: "dani@apexsales.com",    displayName: "Dani Walsh",     teamId: "team_beta",  persona: "solid"   },
   { id: "u_kenji",   email: "kenji@apexsales.com",   displayName: "Kenji Tanaka",   teamId: "team_beta",  persona: "star"    },
   { id: "u_amara",   email: "amara@apexsales.com",   displayName: "Amara Osei",     teamId: "team_beta",  persona: "grinder" },
   { id: "u_ryan",    email: "ryan@apexsales.com",    displayName: "Ryan Costello",  teamId: "team_beta",  persona: "newbie"  },
-  // Team Gamma
   { id: "u_leila",   email: "leila@apexsales.com",   displayName: "Leila Hassan",   teamId: "team_gamma", persona: "solid"   },
   { id: "u_colt",    email: "colt@apexsales.com",    displayName: "Colt Barnard",   teamId: "team_gamma", persona: "star"    },
   { id: "u_zara",    email: "zara@apexsales.com",    displayName: "Zara Kim",       teamId: "team_gamma", persona: "newbie"  },
   { id: "u_derek",   email: "derek@apexsales.com",   displayName: "Derek Pham",     teamId: "team_gamma", persona: "grinder" },
 ];
-USERS.forEach(function(u) {
-  db.prepare(`INSERT INTO users (id,orgId,teamId,email,passwordHash,displayName,role,createdAt)
-    VALUES (?,?,?,?,?,?,'user',?)`).run(u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now());
-  setUserTeams(u.id, [u.teamId]);
-});
+for (var i = 0; i < USERS.length; i++) {
+  var u = USERS[i];
+  await pool.query(
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7)',
+    [u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now()]
+  );
+  await setUserTeams(u.id, [u.teamId]);
+}
 
 // ─── DECKS ────────────────────────────────────────────────────────────────────
 const ENT_ID = uid("d");
@@ -366,8 +365,11 @@ const ENT_OBJ_STACKS = [
   },
 ];
 
-db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-  .run(ENT_ID, ORG_ID, "u_alex", "Enterprise Outbound", "#F5A623", "🏢", "ec0", JSON.stringify(ENT_CARDS), JSON.stringify(ENT_OBJ_STACKS), now, now);
+// Pass JS objects directly — pg serializes JSONB automatically (no JSON.stringify)
+await pool.query(
+  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+  [ENT_ID, ORG_ID, "u_alex", "Enterprise Outbound", "#F5A623", "🏢", "ec0", ENT_CARDS, ENT_OBJ_STACKS, now, now]
+);
 
 const SMB_CARDS = {
   "sc0":    { id:"sc0",    title:"Warm Open",       type:"pitch",     prompt:"*Hey — thanks for picking up*[Warm]. I'll be quick. **We help small sales teams close 20% more deals with better call structure.** Sound useful?",    overview:["Friendly, casual tone","Stay conversational"],  intendedPath:true,  answers:[{id:"sa0",label:"Maybe — what is it?",next:"sc1"},{id:"sa1",label:"Not interested",next:"sc_exit"},{id:"sa2",label:"How'd you get my number?",next:"sc0b"}] },
@@ -398,8 +400,10 @@ const SMB_OBJ_STACKS = [
   },
 ];
 
-db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-  .run(SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0", JSON.stringify(SMB_CARDS), JSON.stringify(SMB_OBJ_STACKS), now, now);
+await pool.query(
+  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+  [SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0", SMB_CARDS, SMB_OBJ_STACKS, now, now]
+);
 
 // ─── PRIVATE TEST DECK (Team Alpha only) ──────────────────────────────────────
 const PRIV_ID = uid("d");
@@ -410,39 +414,35 @@ const PRIV_CARDS = {
   "pc3": { id:"pc3", title:"Close — Workshop", type:"close",     prompt:"*Here's what I'd propose*[Confident] — **a 30-minute executive walkthrough with your VP and two team leads.** We map your specific gaps and show the delta.", overview:["High-level ask","Name the attendees"],          intendedPath:true,  answers:[{id:"pa8",label:"Set it up",next:null},{id:"pa9",label:"Send info first",next:null},{id:"paa",label:"Not ready",next:"pc_exit"}] },
   "pc_exit":{ id:"pc_exit", title:"Executive Exit", type:"close", prompt:"*Completely understand*[Empathetic] — *when would be a better quarter to revisit this?*[Question]",                                                           overview:["Leave the door open"],                          intendedPath:false, answers:[{id:"pab",label:"Next quarter",next:null},{id:"pac",label:"Not interested",next:null}] },
 };
-db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,visibility,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-  .run(PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0", JSON.stringify(PRIV_CARDS), JSON.stringify([]), "private", now, now);
-setDeckAccess(PRIV_ID, [{ entityType: "team", entityId: "team_alpha" }]);
+await pool.query(
+  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+  [PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0", PRIV_CARDS, [], "private", now, now]
+);
+await setDeckAccess(PRIV_ID, [{ entityType: "team", entityId: "team_alpha" }]);
 
 // ─── ENT PATH TEMPLATES ───────────────────────────────────────────────────────
-// Each template is an array of segments: [{cardIds[], isObjCard, stackLabel, stackId}]
 var ENT_PATH_SETS = {
-  // Direct, clean closes
   ideal: [
     [{cardIds:["ec0","ec1","ec3","ec4","ec5"],            isObjCard:false}],
     [{cardIds:["ec0","ec1","ec3","ec3b","ec4","ec5"],      isObjCard:false}],
     [{cardIds:["ec0","ec1","ec3","ec4b","ec5"],            isObjCard:false}],
   ],
-  // Mostly clean with minor diversions
   mixed: [
     [{cardIds:["ec0","ec0b","ec1","ec3","ec4","ec5"],      isObjCard:false}],
     [{cardIds:["ec0","ec1","ec3","ec3b","ec4","ec4b","ec5"],isObjCard:false}],
     [{cardIds:["ec0","ec1","ec3","ec4","ec5"],             isObjCard:false}],
   ],
-  // Hits objection stacks, still recovers
   objection: [
     [{cardIds:["ec0","ec1"],isObjCard:false},{cardIds:["op1","op2"],isObjCard:true,stackLabel:"Too Expensive",stackId:"os_price"},{cardIds:["ec3","ec4","ec5"],isObjCard:false}],
     [{cardIds:["ec0","ec1"],isObjCard:false},{cardIds:["oc1","oc2"],isObjCard:true,stackLabel:"Using a Competitor",stackId:"os_comp"},{cardIds:["ec3","ec4","ec5"],isObjCard:false}],
     [{cardIds:["ec0","ec1"],isObjCard:false},{cardIds:["op1","op3"],isObjCard:true,stackLabel:"Too Expensive",stackId:"os_price"},{cardIds:["ec3","ec4"],isObjCard:false}],
     [{cardIds:["ec0","ec1"],isObjCard:false},{cardIds:["oc1","oc3"],isObjCard:true,stackLabel:"Using a Competitor",stackId:"os_comp"},{cardIds:["ec3","ec4b","ec5"],isObjCard:false}],
   ],
-  // Multiple obstacles, longer sessions
   struggle: [
     [{cardIds:["ec0","ec1"],isObjCard:false},{cardIds:["op1","op2"],isObjCard:true,stackLabel:"Too Expensive",stackId:"os_price"},{cardIds:["ec3"],isObjCard:false},{cardIds:["oc1","oc2"],isObjCard:true,stackLabel:"Using a Competitor",stackId:"os_comp"},{cardIds:["ec4","ec5"],isObjCard:false}],
     [{cardIds:["ec0","ec0b","ec1"],isObjCard:false},{cardIds:["op1","op3"],isObjCard:true,stackLabel:"Too Expensive",stackId:"os_price"},{cardIds:["ec3","ec3b","ec4b","ec5"],isObjCard:false}],
     [{cardIds:["ec0","ec1"],isObjCard:false},{cardIds:["oc1","oc3"],isObjCard:true,stackLabel:"Using a Competitor",stackId:"os_comp"},{cardIds:["ec3","ec3b"],isObjCard:false},{cardIds:["op1","op2"],isObjCard:true,stackLabel:"Too Expensive",stackId:"os_price"},{cardIds:["ec4","ec5"],isObjCard:false}],
   ],
-  // Short calls, early exits
   exit: [
     [{cardIds:["ec0","ec2"],                              isObjCard:false}],
     [{cardIds:["ec0","ec0b","ec2"],                       isObjCard:false}],
@@ -451,7 +451,6 @@ var ENT_PATH_SETS = {
   ],
 };
 
-// Build objCardMaps for ENT
 var ENT_OBJ_MAP = {};
 ENT_OBJ_STACKS.forEach(function(s){ ENT_OBJ_MAP[s.id] = s.cards; });
 
@@ -489,7 +488,6 @@ var SMB_PATH_SETS = {
 var SMB_OBJ_MAP = {};
 SMB_OBJ_STACKS.forEach(function(s){ SMB_OBJ_MAP[s.id] = s.cards; });
 
-// ─── DECK CONFIGS FOR SESSION FACTORY ────────────────────────────────────────
 var APEX_DECK_CONFIGS = [
   { id:ENT_ID, name:"Enterprise Outbound", color:"#F5A623", icon:"🏢", cards:ENT_CARDS, objCardMaps:ENT_OBJ_MAP, pathSets:ENT_PATH_SETS },
   { id:SMB_ID, name:"SMB Inbound",         color:"#4FC3F7", icon:"🏗️", cards:SMB_CARDS, objCardMaps:SMB_OBJ_MAP, pathSets:SMB_PATH_SETS },
@@ -497,11 +495,15 @@ var APEX_DECK_CONFIGS = [
 
 // ─── GENERATE SESSIONS ────────────────────────────────────────────────────────
 var totalSessions = 0;
-USERS.forEach(function(u) {
+for (var i = 0; i < USERS.length; i++) {
+  var u        = USERS[i];
   var persona  = PERSONAS[u.persona];
   var sessions = generateUserSessions(u, persona, APEX_DECK_CONFIGS, ORG_ID);
-  sessions.forEach(function(s){ insertSession(s); totalSessions++; });
-});
+  for (var j = 0; j < sessions.length; j++) {
+    await insertSession(sessions[j]);
+    totalSessions++;
+  }
+}
 
 console.log("✅ Apex Sales seeded:");
 console.log("   Teams: 3 | Admins: 3 | Users: 12 | Decks: 3 (1 private: Executive Playbook → team_alpha) | Sessions: " + totalSessions);
@@ -516,29 +518,36 @@ console.log("   Password (all): [see seed.js]");
 // ORG 2 — MERIDIAN GROUP
 // ═══════════════════════════════════════════════════════════════════════════════
 var ORG2_ID = "org_meridian";
-if (findOrgById(ORG2_ID)) {
+if (await findOrgById(ORG2_ID)) {
   console.log("org_meridian already exists — skipping Meridian Group seed.");
 } else {
 
-createOrg({ id: ORG2_ID, name: "Meridian Group" });
+await createOrg({ id: ORG2_ID, name: "Meridian Group" });
 
 var M_TEAMS = [
   { id: "team_north", name: "Team North" },
   { id: "team_south", name: "Team South" },
 ];
-M_TEAMS.forEach(function(t) {
-  db.prepare("INSERT INTO teams (id,orgId,name,createdAt) VALUES (?,?,?,?)").run(t.id, ORG2_ID, t.name, Date.now());
-});
+for (var i = 0; i < M_TEAMS.length; i++) {
+  var t = M_TEAMS[i];
+  await pool.query(
+    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4)',
+    [t.id, ORG2_ID, t.name, Date.now()]
+  );
+}
 
 var M_ADMINS = [
   { id: "u_casey", email: "casey@meridiangroup.com", displayName: "Casey Wright", teamAdmin: "team_north" },
   { id: "u_riley", email: "riley@meridiangroup.com", displayName: "Riley Stone",  teamAdmin: "team_south" },
 ];
-M_ADMINS.forEach(function(a) {
-  db.prepare(`INSERT INTO users (id,orgId,teamId,email,passwordHash,displayName,role,createdAt)
-    VALUES (?,?,NULL,?,?,?,'admin',?)`).run(a.id, ORG2_ID, a.email, PW_HASH, a.displayName, Date.now());
-  setTeamAdmins(a.teamAdmin, [a.id]);
-});
+for (var i = 0; i < M_ADMINS.length; i++) {
+  var a = M_ADMINS[i];
+  await pool.query(
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6)',
+    [a.id, ORG2_ID, a.email, PW_HASH, a.displayName, Date.now()]
+  );
+  await setTeamAdmins(a.teamAdmin, [a.id]);
+}
 
 var M_USERS = [
   { id: "u_fox",   email: "fox@meridiangroup.com",   displayName: "Jordan Fox",  teamId: "team_north", persona: "solid"   },
@@ -546,11 +555,14 @@ var M_USERS = [
   { id: "u_shaw",  email: "shaw@meridiangroup.com",  displayName: "Morgan Shaw", teamId: "team_south", persona: "grinder" },
   { id: "u_reed",  email: "reed@meridiangroup.com",  displayName: "Taylor Reed", teamId: "team_south", persona: "newbie"  },
 ];
-M_USERS.forEach(function(u) {
-  db.prepare(`INSERT INTO users (id,orgId,teamId,email,passwordHash,displayName,role,createdAt)
-    VALUES (?,?,?,?,?,?,'user',?)`).run(u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now());
-  setUserTeams(u.id, [u.teamId]);
-});
+for (var i = 0; i < M_USERS.length; i++) {
+  var u = M_USERS[i];
+  await pool.query(
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7)',
+    [u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now()]
+  );
+  await setUserTeams(u.id, [u.teamId]);
+}
 
 // ─── MERIDIAN DECK ────────────────────────────────────────────────────────────
 var M_DECK_ID = uid("d");
@@ -587,8 +599,10 @@ var M_OBJ_STACKS = [
   },
 ];
 
-db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-  .run(M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0", JSON.stringify(M_CARDS), JSON.stringify(M_OBJ_STACKS), M_NOW, M_NOW);
+await pool.query(
+  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+  [M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0", M_CARDS, M_OBJ_STACKS, M_NOW, M_NOW]
+);
 
 // ─── PRIVATE TEST DECK (Team North only) ──────────────────────────────────────
 var M_PRIV_ID = uid("d");
@@ -599,9 +613,11 @@ var M_PRIV_CARDS = {
   "mp3": { id:"mp3", title:"Close — Pilot",    type:"close",     prompt:"*What I'd suggest*[Confident] — **a 30-day pilot with two of your top partners.** No fees upfront, just results.",                                         overview:["Low-commitment ask","Specific scope"],          intendedPath:true,  answers:[{id:"mpa8",label:"Let's do it",next:null},{id:"mpa9",label:"Need to check internally",next:null},{id:"mpaa",label:"Not right now",next:"mp_exit"}] },
   "mp_exit":{ id:"mp_exit", title:"Graceful Exit", type:"close", prompt:"*No problem at all*[Empathetic] — *mind if I follow up next quarter when you're evaluating partner tools?*[Question]",                                        overview:["Keep the door open"],                           intendedPath:false, answers:[{id:"mpab",label:"Sure",next:null},{id:"mpac",label:"No thanks",next:null}] },
 };
-db.prepare(`INSERT INTO decks (id,orgId,createdBy,name,color,icon,rootCard,cards,objStacks,visibility,updatedAt,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-  .run(M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0", JSON.stringify(M_PRIV_CARDS), JSON.stringify([]), "private", M_NOW, M_NOW);
-setDeckAccess(M_PRIV_ID, [{ entityType: "team", entityId: "team_north" }]);
+await pool.query(
+  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+  [M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0", M_PRIV_CARDS, [], "private", M_NOW, M_NOW]
+);
+await setDeckAccess(M_PRIV_ID, [{ entityType: "team", entityId: "team_north" }]);
 
 var M_OBJ_MAP = {};
 M_OBJ_STACKS.forEach(function(s){ M_OBJ_MAP[s.id] = s.cards; });
@@ -641,11 +657,15 @@ var MERIDIAN_DECK_CONFIGS = [
 ];
 
 var m_totalSessions = 0;
-M_USERS.forEach(function(u) {
+for (var i = 0; i < M_USERS.length; i++) {
+  var u        = M_USERS[i];
   var persona  = PERSONAS[u.persona];
   var sessions = generateUserSessions(u, persona, MERIDIAN_DECK_CONFIGS, ORG2_ID);
-  sessions.forEach(function(s){ insertSession(s); m_totalSessions++; });
-});
+  for (var j = 0; j < sessions.length; j++) {
+    await insertSession(sessions[j]);
+    m_totalSessions++;
+  }
+}
 
 console.log("✅ Meridian Group seeded:");
 console.log("   Teams: 2 | Admins: 2 (casey, riley) | Users: 4 | Decks: 2 (1 private: Partner Channel Playbook → team_north) | Sessions: " + m_totalSessions);
@@ -653,3 +673,10 @@ console.log("   Personas — star: Blake | solid: Fox | grinder: Shaw | newbie: 
 console.log("   Password (all): [see seed.js]");
 
 } // end org_meridian block
+
+await pool.end();
+
+})().catch(function(err) {
+  console.error("Seed failed:", err);
+  process.exit(1);
+});

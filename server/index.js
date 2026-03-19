@@ -5,6 +5,7 @@ const cookieParser = require("cookie-parser");
 const path         = require("path");
 const fs           = require("fs");
 
+const { pool, initSchema } = require("./db");
 const authRoutes    = require("./routes/authRoutes");
 const deckRoutes    = require("./routes/deckRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
@@ -37,18 +38,21 @@ app.use("/api/decks",    deckRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/admin",    adminRoutes);
 
-app.get("/api/health", function(req, res) {
-  const { db } = require("./db");
-  const userCount = db.prepare("SELECT COUNT(*) as n FROM users").get().n;
-  const deckCount = db.prepare("SELECT COUNT(*) as n FROM decks").get().n;
-  const sessCount = db.prepare("SELECT COUNT(*) as n FROM sessions").get().n;
-  res.json({
-    ok: true,
-    ts: Date.now(),
-    users: userCount,
-    decks: deckCount,
-    sessions: sessCount,
-  });
+app.get("/api/health", async function(req, res, next) {
+  try {
+    const [u, d, s] = await Promise.all([
+      pool.query("SELECT COUNT(*) AS n FROM users"),
+      pool.query("SELECT COUNT(*) AS n FROM decks"),
+      pool.query("SELECT COUNT(*) AS n FROM sessions"),
+    ]);
+    res.json({
+      ok:       true,
+      ts:       Date.now(),
+      users:    parseInt(u.rows[0].n, 10),
+      decks:    parseInt(d.rows[0].n, 10),
+      sessions: parseInt(s.rows[0].n, 10),
+    });
+  } catch (err) { next(err); }
 });
 
 // ─── FRONTEND ─────────────────────────────────────────────────────────────────
@@ -60,8 +64,23 @@ if (fs.existsSync(DIST_DIR)) {
   });
 }
 
-// ─── START ────────────────────────────────────────────────────────────────────
-app.listen(PORT, function() {
-  console.log("OverCard server listening on http://localhost:" + PORT);
-  console.log("Mode: " + (process.env.NODE_ENV || "development"));
+// ─── CENTRAL ERROR HANDLER ───────────────────────────────────────────────────
+app.use(function(err, req, res, next) {
+  console.error(err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
+
+// ─── START ────────────────────────────────────────────────────────────────────
+initSchema()
+  .then(function() {
+    app.listen(PORT, function() {
+      console.log("OverCard server listening on http://localhost:" + PORT);
+      console.log("Mode: " + (process.env.NODE_ENV || "development"));
+    });
+  })
+  .catch(function(err) {
+    console.error("Failed to initialize schema:", err);
+    process.exit(1);
+  });

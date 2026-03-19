@@ -1,5 +1,5 @@
-const jwt     = require("jsonwebtoken");
-const bcrypt  = require("bcrypt");
+const jwt    = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 const { findUserById } = require("./db");
 
 if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
@@ -47,29 +47,34 @@ function clearCookie(res) {
   });
 }
 
-function requireAuth(req, res, next) {
+// requireAuth is async because findUserById is now an async DB call
+async function requireAuth(req, res, next) {
   const token = req.cookies && req.cookies[COOKIE_NAME];
   if (!token) return res.status(401).json({ error: "Not authenticated" });
   try {
-    const payload = jwtVerify(token);
-    const user    = findUserById(payload.sub);
+    const payload = jwtVerify(token);           // still synchronous
+    const user    = await findUserById(payload.sub);
     if (!user) return res.status(401).json({ error: "User not found" });
     req.user = {
-      id:     user.id,
-      orgId:  user.orgId,
-      teamId: user.teamId,
-      role:   user.role,
-      email:  user.email,
+      id:          user.id,
+      orgId:       user.orgId,
+      teamId:      user.teamId,
+      role:        user.role,
+      email:       user.email,
       displayName: user.displayName,
     };
     next();
   } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+    next(err);
   }
 }
 
 function requireAdmin(req, res, next) {
-  requireAuth(req, res, function() {
+  requireAuth(req, res, function(err) {
+    if (err) return next(err);
     if (req.user.role !== "admin") {
       return res.status(403).json({ error: "Admin access required" });
     }
