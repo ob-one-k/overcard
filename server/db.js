@@ -140,6 +140,16 @@ async function initSchema() {
     // Migration: add visibility column if it doesn't exist yet
     await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`);
 
+    // Seed manifest — tracks which records were seeded and their last-seeded content hash
+    // Enables smart re-seeding: refresh unmodified seed records, preserve user edits
+    await client.query(`CREATE TABLE IF NOT EXISTS seed_manifest (
+      table_name   TEXT   NOT NULL,
+      record_id    TEXT   NOT NULL,
+      content_hash TEXT   NOT NULL,
+      seeded_at    BIGINT NOT NULL,
+      PRIMARY KEY (table_name, record_id)
+    )`);
+
     await client.query("COMMIT");
   } catch (e) {
     await client.query("ROLLBACK");
@@ -212,6 +222,11 @@ async function updateLastLogin(userId) {
 
 async function getUserTeams(userId) {
   const { rows } = await pool.query('SELECT "teamId" FROM user_teams WHERE "userId" = $1', [userId]);
+  return rows.map(function(r) { return r.teamId; });
+}
+
+async function getAdminTeamIds(userId) {
+  const { rows } = await pool.query('SELECT "teamId" FROM team_admins WHERE "userId" = $1', [userId]);
   return rows.map(function(r) { return r.teamId; });
 }
 
@@ -685,7 +700,7 @@ module.exports = {
   findOrgById, createOrg,
   // teams
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
-  getUserTeams, setUserTeams,
+  getUserTeams, setUserTeams, getAdminTeamIds,
   // decks
   getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck,
   getDeckAccess, setDeckAccess,

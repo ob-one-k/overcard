@@ -1,7 +1,7 @@
 const express   = require("express");
 const rateLimit = require("express-rate-limit");
 const router    = express.Router();
-const { findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams } = require("../db");
+const { findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams, getAdminTeamIds } = require("../db");
 const { jwtSign, checkPassword, setCookie, clearCookie, requireAuth } = require("../auth");
 
 var loginLimiter = rateLimit({
@@ -15,6 +15,13 @@ var loginLimiter = rateLimit({
 async function buildUserResponse(user) {
   const team    = user.teamId ? await getTeamById(user.teamId) : null;
   const teamIds = await getUserTeams(user.id);
+  // For admin users: also include teams they administer so sub-tabs are immediate
+  if (user.role === "admin") {
+    const adminTeamIds = await getAdminTeamIds(user.id);
+    adminTeamIds.forEach(function(tid) {
+      if (teamIds.indexOf(tid) === -1) teamIds.push(tid);
+    });
+  }
   const teams   = (await Promise.all(
     teamIds.map(function(tid) { return getTeamById(tid); })
   )).filter(Boolean).map(function(t) { return { id: t.id, name: t.name }; });

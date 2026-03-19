@@ -1,4 +1,4 @@
-// node server/seed.js  — always wipes and reseeds all data
+// node server/seed.js  — smart seeding: preserves user-modified records
 const {
   pool, uid, initSchema,
   setTeamAdmins,
@@ -7,16 +7,14 @@ const {
   insertSession,
 } = require("./db");
 const { hashPassword } = require("./auth");
+const crypto = require("crypto");
 
 async function runSeed() {
 
 // Ensure schema exists before seeding
 await initSchema();
 
-// Wipe all data for a clean reseed every deploy
-console.log("Wiping existing data...");
-await pool.query("TRUNCATE orgs, teams, team_admins, user_teams, users, decks, deck_access, sessions, session_feedback, session_shares CASCADE");
-console.log("Seeding fresh data...");
+console.log("Smart seeding — preserving user data...");
 
 const PW_HASH = hashPassword("Overcard2025!");
 
@@ -264,13 +262,96 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
 }
 
 
+// ─── SEED HELPERS ─────────────────────────────────────────────────────────────
+// Compute a deterministic hash of an object for change detection
+function seedHash(obj) {
+  return crypto.createHash("md5").update(JSON.stringify(obj)).digest("hex");
+}
+
+// Upsert a seed record with user-modification protection.
+// - If never tracked: insert and add to manifest
+// - If tracked and record deleted: restore it
+// - If tracked and unmodified (current DB state matches last-seeded hash): refresh with new seed data
+// - If tracked and user-modified: skip (preserve user changes)
+async function seedUpsert(tableName, id, trackedFields, upsertFn, getCurrentHashFn) {
+  var newHash = seedHash(trackedFields);
+  var manifestRes = await pool.query(
+    "SELECT content_hash FROM seed_manifest WHERE table_name=$1 AND record_id=$2",
+    [tableName, id]
+  );
+
+  if (manifestRes.rows.length === 0) {
+    // Never tracked — first run. Insert and claim as seed record.
+    await upsertFn();
+    await pool.query(
+      "INSERT INTO seed_manifest (table_name, record_id, content_hash, seeded_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      [tableName, id, newHash, Date.now()]
+    );
+    return "new";
+  }
+
+  // Check if record still exists in DB
+  var existsRes = await pool.query("SELECT 1 FROM " + tableName + " WHERE id=$1", [id]);
+  if (existsRes.rows.length === 0) {
+    // Was deleted — restore it
+    await upsertFn();
+    await pool.query(
+      "UPDATE seed_manifest SET content_hash=$1, seeded_at=$2 WHERE table_name=$3 AND record_id=$4",
+      [newHash, Date.now(), tableName, id]
+    );
+    return "restored";
+  }
+
+  // Compare current DB state to what seed last set
+  var currentHash = await getCurrentHashFn();
+  if (currentHash !== manifestRes.rows[0].content_hash) {
+    // Hash differs → user modified this record → preserve their changes
+    return "skipped";
+  }
+
+  // Unmodified — refresh with latest seed data
+  await upsertFn();
+  await pool.query(
+    "UPDATE seed_manifest SET content_hash=$1, seeded_at=$2 WHERE table_name=$3 AND record_id=$4",
+    [newHash, Date.now(), tableName, id]
+  );
+  return "refreshed";
+}
+
+// ─── SESSION CLEANUP ──────────────────────────────────────────────────────────
+// Delete previously-seeded sessions so we can re-generate fresh ones.
+// User-created sessions are never in seed_manifest so they're always preserved.
+var oldSeedSessRes = await pool.query(
+  "SELECT record_id FROM seed_manifest WHERE table_name='sessions'"
+);
+var oldSeedIds = oldSeedSessRes.rows.map(function(r) { return r.record_id; });
+if (oldSeedIds.length > 0) {
+  await pool.query("DELETE FROM sessions WHERE id = ANY($1::text[])", [oldSeedIds]);
+  await pool.query("DELETE FROM seed_manifest WHERE table_name='sessions'");
+  console.log("Cleared " + oldSeedIds.length + " old seed sessions");
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ORG 1 — APEX SALES
 // ═══════════════════════════════════════════════════════════════════════════════
 var ORG_ID = "org_apex";
+var now = Date.now();
 {
 
-await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3)', [ORG_ID, "Apex Sales", Date.now()]);
+await seedUpsert("orgs", ORG_ID,
+  { name: "Apex Sales" },
+  async function() {
+    await pool.query(
+      'INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3) ON CONFLICT (id) DO UPDATE SET name=$2',
+      [ORG_ID, "Apex Sales", now]
+    );
+  },
+  async function() {
+    var res = await pool.query("SELECT name FROM orgs WHERE id=$1", [ORG_ID]);
+    return res.rows[0] ? seedHash({ name: res.rows[0].name }) : null;
+  }
+);
 
 // ─── TEAMS ────────────────────────────────────────────────────────────────────
 const TEAMS = [
@@ -280,9 +361,18 @@ const TEAMS = [
 ];
 for (var i = 0; i < TEAMS.length; i++) {
   var t = TEAMS[i];
-  await pool.query(
-    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4)',
-    [t.id, ORG_ID, t.name, Date.now()]
+  await seedUpsert("teams", t.id,
+    { name: t.name, orgId: ORG_ID },
+    async function() {
+      await pool.query(
+        'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET name=$3',
+        [t.id, ORG_ID, t.name, now]
+      );
+    },
+    async function() {
+      var res = await pool.query('SELECT name, "orgId" FROM teams WHERE id=$1', [t.id]);
+      return res.rows[0] ? seedHash({ name: res.rows[0].name, orgId: res.rows[0].orgId }) : null;
+    }
   );
 }
 
@@ -294,11 +384,21 @@ const ADMINS = [
 ];
 for (var i = 0; i < ADMINS.length; i++) {
   var a = ADMINS[i];
-  await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6)',
-    [a.id, ORG_ID, a.email, PW_HASH, a.displayName, Date.now()]
+  var aStatus = await seedUpsert("users", a.id,
+    { email: a.email, displayName: a.displayName, role: "admin", teamId: null },
+    async function() {
+      await pool.query(
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6) ON CONFLICT (id) DO UPDATE SET "teamId"=NULL,email=$3,"displayName"=$5,role=\'admin\'',
+        [a.id, ORG_ID, a.email, PW_HASH, a.displayName, now]
+      );
+    },
+    async function() {
+      var res = await pool.query('SELECT email, "displayName", role, "teamId" FROM users WHERE id=$1', [a.id]);
+      return res.rows[0] ? seedHash({ email: res.rows[0].email, displayName: res.rows[0].displayName, role: res.rows[0].role, teamId: null }) : null;
+    }
   );
   await setTeamAdmins(a.teamAdmin, [a.id]);
+  await setUserTeams(a.id, [a.teamAdmin]);
 }
 
 // ─── REGULAR USERS ────────────────────────────────────────────────────────────
@@ -318,17 +418,28 @@ const USERS = [
 ];
 for (var i = 0; i < USERS.length; i++) {
   var u = USERS[i];
-  await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7)',
-    [u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now()]
+  var uStatus = await seedUpsert("users", u.id,
+    { email: u.email, displayName: u.displayName, role: "user", teamId: u.teamId },
+    async function() {
+      await pool.query(
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7) ON CONFLICT (id) DO UPDATE SET "teamId"=$3,email=$4,"displayName"=$6,role=\'user\'',
+        [u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, now]
+      );
+    },
+    async function() {
+      var res = await pool.query('SELECT email, "displayName", role, "teamId" FROM users WHERE id=$1', [u.id]);
+      return res.rows[0] ? seedHash({ email: res.rows[0].email, displayName: res.rows[0].displayName, role: res.rows[0].role, teamId: res.rows[0].teamId }) : null;
+    }
   );
-  await setUserTeams(u.id, [u.teamId]);
+  if (uStatus !== "skipped") {
+    await setUserTeams(u.id, [u.teamId]);
+  }
 }
 
 // ─── DECKS ────────────────────────────────────────────────────────────────────
-const ENT_ID = uid("d");
-const SMB_ID = uid("d");
-const now    = Date.now();
+const ENT_ID  = "d_apex_ent";
+const SMB_ID  = "d_apex_smb";
+const PRIV_ID = "d_apex_exec";
 
 const ENT_CARDS = {
   "ec0":  { id:"ec0",  title:"Cold Open",         type:"pitch",     prompt:"*Hey [Name]*[Warm] — quick one. I help sales teams cut ramp time by 40%. **Worth 90 seconds?**",                                                         overview:["Short, punchy opener","Watch their energy"],    intendedPath:true,  answers:[{id:"ea0",label:"Sure, go ahead",next:"ec1"},{id:"ea1",label:"Not interested / busy",next:"ec2"},{id:"ea2",label:"Who are you?",next:"ec0b"}] },
@@ -361,9 +472,28 @@ const ENT_OBJ_STACKS = [
   },
 ];
 
-await pool.query(
-  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-  [ENT_ID, ORG_ID, "u_alex", "Enterprise Outbound", "#F5A623", "🏢", "ec0", JSON.stringify(ENT_CARDS), JSON.stringify(ENT_OBJ_STACKS), now, now]
+await seedUpsert("decks", ENT_ID,
+  { name:"Enterprise Outbound", color:"#F5A623", icon:"🏢", rootCard:"ec0", visibility:"public", cards:ENT_CARDS, objStacks:ENT_OBJ_STACKS },
+  async function() {
+    await pool.query(
+      `INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+       ON CONFLICT (id) DO UPDATE SET name=$4,color=$5,icon=$6,"rootCard"=$7,cards=$8,"objStacks"=$9,visibility=$10,"updatedAt"=$11`,
+      [ENT_ID, ORG_ID, "u_alex", "Enterprise Outbound", "#F5A623", "🏢", "ec0",
+       JSON.stringify(ENT_CARDS), JSON.stringify(ENT_OBJ_STACKS), "public", now]
+    );
+  },
+  async function() {
+    var res = await pool.query(
+      'SELECT name, color, icon, "rootCard", visibility, cards, "objStacks" FROM decks WHERE id=$1',
+      [ENT_ID]
+    );
+    if (!res.rows[0]) return null;
+    var r = res.rows[0];
+    var cards = typeof r.cards === "string" ? JSON.parse(r.cards) : (r.cards || {});
+    var objStacks = typeof r["objStacks"] === "string" ? JSON.parse(r["objStacks"]) : (r["objStacks"] || []);
+    return seedHash({ name:r.name, color:r.color, icon:r.icon, rootCard:r.rootCard, visibility:r.visibility||"public", cards, objStacks });
+  }
 );
 
 const SMB_CARDS = {
@@ -395,13 +525,31 @@ const SMB_OBJ_STACKS = [
   },
 ];
 
-await pool.query(
-  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-  [SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0", JSON.stringify(SMB_CARDS), JSON.stringify(SMB_OBJ_STACKS), now, now]
+await seedUpsert("decks", SMB_ID,
+  { name:"SMB Inbound", color:"#4FC3F7", icon:"🏗️", rootCard:"sc0", visibility:"public", cards:SMB_CARDS, objStacks:SMB_OBJ_STACKS },
+  async function() {
+    await pool.query(
+      `INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+       ON CONFLICT (id) DO UPDATE SET name=$4,color=$5,icon=$6,"rootCard"=$7,cards=$8,"objStacks"=$9,visibility=$10,"updatedAt"=$11`,
+      [SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0",
+       JSON.stringify(SMB_CARDS), JSON.stringify(SMB_OBJ_STACKS), "public", now]
+    );
+  },
+  async function() {
+    var res = await pool.query(
+      'SELECT name, color, icon, "rootCard", visibility, cards, "objStacks" FROM decks WHERE id=$1',
+      [SMB_ID]
+    );
+    if (!res.rows[0]) return null;
+    var r = res.rows[0];
+    var cards = typeof r.cards === "string" ? JSON.parse(r.cards) : (r.cards || {});
+    var objStacks = typeof r["objStacks"] === "string" ? JSON.parse(r["objStacks"]) : (r["objStacks"] || []);
+    return seedHash({ name:r.name, color:r.color, icon:r.icon, rootCard:r.rootCard, visibility:r.visibility||"public", cards, objStacks });
+  }
 );
 
 // ─── PRIVATE TEST DECK (Team Alpha only) ──────────────────────────────────────
-const PRIV_ID = uid("d");
 const PRIV_CARDS = {
   "pc0": { id:"pc0", title:"Exec Opener",      type:"pitch",     prompt:"*[Name]*[Warm] — I'll keep this tight. **We help sales orgs compress their top-of-funnel by 35% without adding headcount.** Worth 2 minutes?",                  overview:["Executive-level energy","No fluff"],           intendedPath:true,  answers:[{id:"pa0",label:"Sure, go ahead",next:"pc1"},{id:"pa1",label:"Not now",next:"pc_exit"}] },
   "pc1": { id:"pc1", title:"Strategic Pain",   type:"discovery", prompt:"*Quick one*[Pause] — **where's your biggest pipeline leak right now?** Top of funnel, mid-stage, or close?",                                                   overview:["Let them name it","Don't lead the witness"],   intendedPath:true,  answers:[{id:"pa2",label:"Top of funnel",next:"pc2"},{id:"pa3",label:"Mid-stage",next:"pc2"},{id:"pa4",label:"Close stage",next:"pc2"},{id:"pa5",label:"We're good",next:"pc_exit"}] },
@@ -409,9 +557,29 @@ const PRIV_CARDS = {
   "pc3": { id:"pc3", title:"Close — Workshop", type:"close",     prompt:"*Here's what I'd propose*[Confident] — **a 30-minute executive walkthrough with your VP and two team leads.** We map your specific gaps and show the delta.", overview:["High-level ask","Name the attendees"],          intendedPath:true,  answers:[{id:"pa8",label:"Set it up",next:null},{id:"pa9",label:"Send info first",next:null},{id:"paa",label:"Not ready",next:"pc_exit"}] },
   "pc_exit":{ id:"pc_exit", title:"Executive Exit", type:"close", prompt:"*Completely understand*[Empathetic] — *when would be a better quarter to revisit this?*[Question]",                                                           overview:["Leave the door open"],                          intendedPath:false, answers:[{id:"pab",label:"Next quarter",next:null},{id:"pac",label:"Not interested",next:null}] },
 };
-await pool.query(
-  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-  [PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0", JSON.stringify(PRIV_CARDS), JSON.stringify([]), "private", now, now]
+
+await seedUpsert("decks", PRIV_ID,
+  { name:"Executive Playbook", color:"#AB47BC", icon:"🔒", rootCard:"pc0", visibility:"private", cards:PRIV_CARDS, objStacks:[] },
+  async function() {
+    await pool.query(
+      `INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+       ON CONFLICT (id) DO UPDATE SET name=$4,color=$5,icon=$6,"rootCard"=$7,cards=$8,"objStacks"=$9,visibility=$10,"updatedAt"=$11`,
+      [PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0",
+       JSON.stringify(PRIV_CARDS), JSON.stringify([]), "private", now]
+    );
+  },
+  async function() {
+    var res = await pool.query(
+      'SELECT name, color, icon, "rootCard", visibility, cards, "objStacks" FROM decks WHERE id=$1',
+      [PRIV_ID]
+    );
+    if (!res.rows[0]) return null;
+    var r = res.rows[0];
+    var cards = typeof r.cards === "string" ? JSON.parse(r.cards) : (r.cards || {});
+    var objStacks = typeof r["objStacks"] === "string" ? JSON.parse(r["objStacks"]) : (r["objStacks"] || []);
+    return seedHash({ name:r.name, color:r.color, icon:r.icon, rootCard:r.rootCard, visibility:r.visibility||"public", cards, objStacks });
+  }
 );
 await setDeckAccess(PRIV_ID, [{ entityType: "team", entityId: "team_alpha" }]);
 
@@ -496,14 +664,18 @@ for (var i = 0; i < USERS.length; i++) {
   var sessions = generateUserSessions(u, persona, APEX_DECK_CONFIGS, ORG_ID);
   for (var j = 0; j < sessions.length; j++) {
     await insertSession(sessions[j]);
+    await pool.query(
+      "INSERT INTO seed_manifest (table_name, record_id, content_hash, seeded_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      ["sessions", sessions[j].id, "seed", Date.now()]
+    );
     totalSessions++;
   }
 }
 
-console.log("✅ Apex Sales seeded:");
-console.log("   Teams: 3 | Admins: 3 | Users: 12 | Decks: 3 (1 private: Executive Playbook → team_alpha) | Sessions: " + totalSessions);
-console.log("   Personas — star: Marcus, Kenji, Colt | solid: Priya, Dani, Leila");
-console.log("           — grinder: Tyler, Amara, Derek | newbie: Sofia, Ryan, Zara");
+console.log("Apex Sales seeded:");
+console.log("   Teams: 3 | Admins: 3 | Users: 12 | Decks: 3 (1 private: Executive Playbook -> team_alpha) | Sessions: " + totalSessions);
+console.log("   Personas -- star: Marcus, Kenji, Colt | solid: Priya, Dani, Leila");
+console.log("           -- grinder: Tyler, Amara, Derek | newbie: Sofia, Ryan, Zara");
 console.log("   Password (all): [see seed.js]");
 
 } // end org_apex block
@@ -513,9 +685,22 @@ console.log("   Password (all): [see seed.js]");
 // ORG 2 — MERIDIAN GROUP
 // ═══════════════════════════════════════════════════════════════════════════════
 var ORG2_ID = "org_meridian";
+var m_now = Date.now();
 {
 
-await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3)', [ORG2_ID, "Meridian Group", Date.now()]);
+await seedUpsert("orgs", ORG2_ID,
+  { name: "Meridian Group" },
+  async function() {
+    await pool.query(
+      'INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3) ON CONFLICT (id) DO UPDATE SET name=$2',
+      [ORG2_ID, "Meridian Group", m_now]
+    );
+  },
+  async function() {
+    var res = await pool.query("SELECT name FROM orgs WHERE id=$1", [ORG2_ID]);
+    return res.rows[0] ? seedHash({ name: res.rows[0].name }) : null;
+  }
+);
 
 var M_TEAMS = [
   { id: "team_north", name: "Team North" },
@@ -523,9 +708,18 @@ var M_TEAMS = [
 ];
 for (var i = 0; i < M_TEAMS.length; i++) {
   var t = M_TEAMS[i];
-  await pool.query(
-    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4)',
-    [t.id, ORG2_ID, t.name, Date.now()]
+  await seedUpsert("teams", t.id,
+    { name: t.name, orgId: ORG2_ID },
+    async function() {
+      await pool.query(
+        'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET name=$3',
+        [t.id, ORG2_ID, t.name, m_now]
+      );
+    },
+    async function() {
+      var res = await pool.query('SELECT name, "orgId" FROM teams WHERE id=$1', [t.id]);
+      return res.rows[0] ? seedHash({ name: res.rows[0].name, orgId: res.rows[0].orgId }) : null;
+    }
   );
 }
 
@@ -535,11 +729,21 @@ var M_ADMINS = [
 ];
 for (var i = 0; i < M_ADMINS.length; i++) {
   var a = M_ADMINS[i];
-  await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6)',
-    [a.id, ORG2_ID, a.email, PW_HASH, a.displayName, Date.now()]
+  await seedUpsert("users", a.id,
+    { email: a.email, displayName: a.displayName, role: "admin", teamId: null },
+    async function() {
+      await pool.query(
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6) ON CONFLICT (id) DO UPDATE SET "teamId"=NULL,email=$3,"displayName"=$5,role=\'admin\'',
+        [a.id, ORG2_ID, a.email, PW_HASH, a.displayName, m_now]
+      );
+    },
+    async function() {
+      var res = await pool.query('SELECT email, "displayName", role, "teamId" FROM users WHERE id=$1', [a.id]);
+      return res.rows[0] ? seedHash({ email: res.rows[0].email, displayName: res.rows[0].displayName, role: res.rows[0].role, teamId: null }) : null;
+    }
   );
   await setTeamAdmins(a.teamAdmin, [a.id]);
+  await setUserTeams(a.id, [a.teamAdmin]);
 }
 
 var M_USERS = [
@@ -550,16 +754,27 @@ var M_USERS = [
 ];
 for (var i = 0; i < M_USERS.length; i++) {
   var u = M_USERS[i];
-  await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7)',
-    [u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now()]
+  var muStatus = await seedUpsert("users", u.id,
+    { email: u.email, displayName: u.displayName, role: "user", teamId: u.teamId },
+    async function() {
+      await pool.query(
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7) ON CONFLICT (id) DO UPDATE SET "teamId"=$3,email=$4,"displayName"=$6,role=\'user\'',
+        [u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, m_now]
+      );
+    },
+    async function() {
+      var res = await pool.query('SELECT email, "displayName", role, "teamId" FROM users WHERE id=$1', [u.id]);
+      return res.rows[0] ? seedHash({ email: res.rows[0].email, displayName: res.rows[0].displayName, role: res.rows[0].role, teamId: res.rows[0].teamId }) : null;
+    }
   );
-  await setUserTeams(u.id, [u.teamId]);
+  if (muStatus !== "skipped") {
+    await setUserTeams(u.id, [u.teamId]);
+  }
 }
 
 // ─── MERIDIAN DECK ────────────────────────────────────────────────────────────
-var M_DECK_ID = uid("d");
-var M_NOW     = Date.now();
+var M_DECK_ID  = "d_merd_out";
+var M_PRIV_ID  = "d_merd_partner";
 
 var M_CARDS = {
   "mc0":    { id:"mc0",    title:"Intro",          type:"pitch",     prompt:"*Hi [Name]*[Warm] — I'll be quick. **Meridian helps mid-market teams close 30% faster with structured outreach.** Got 60 seconds?",    overview:["Keep it punchy","Watch for energy"],intendedPath:true,  answers:[{id:"ma0",label:"Sure",next:"mc1"},{id:"ma1",label:"Not interested",next:"mc_exit"},{id:"ma2",label:"Who are you?",next:"mc0b"}] },
@@ -592,13 +807,31 @@ var M_OBJ_STACKS = [
   },
 ];
 
-await pool.query(
-  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-  [M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0", JSON.stringify(M_CARDS), JSON.stringify(M_OBJ_STACKS), M_NOW, M_NOW]
+await seedUpsert("decks", M_DECK_ID,
+  { name:"Meridian Outbound", color:"#CE93D8", icon:"💎", rootCard:"mc0", visibility:"public", cards:M_CARDS, objStacks:M_OBJ_STACKS },
+  async function() {
+    await pool.query(
+      `INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+       ON CONFLICT (id) DO UPDATE SET name=$4,color=$5,icon=$6,"rootCard"=$7,cards=$8,"objStacks"=$9,visibility=$10,"updatedAt"=$11`,
+      [M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0",
+       JSON.stringify(M_CARDS), JSON.stringify(M_OBJ_STACKS), "public", m_now]
+    );
+  },
+  async function() {
+    var res = await pool.query(
+      'SELECT name, color, icon, "rootCard", visibility, cards, "objStacks" FROM decks WHERE id=$1',
+      [M_DECK_ID]
+    );
+    if (!res.rows[0]) return null;
+    var r = res.rows[0];
+    var cards = typeof r.cards === "string" ? JSON.parse(r.cards) : (r.cards || {});
+    var objStacks = typeof r["objStacks"] === "string" ? JSON.parse(r["objStacks"]) : (r["objStacks"] || []);
+    return seedHash({ name:r.name, color:r.color, icon:r.icon, rootCard:r.rootCard, visibility:r.visibility||"public", cards, objStacks });
+  }
 );
 
 // ─── PRIVATE TEST DECK (Team North only) ──────────────────────────────────────
-var M_PRIV_ID = uid("d");
 var M_PRIV_CARDS = {
   "mp0": { id:"mp0", title:"Partner Intro",    type:"pitch",     prompt:"*[Name]*[Warm] — quick intro. **Meridian's partner program gives your team white-label access to our structured call framework.** Got 90 seconds?",          overview:["Warm and direct","Partnership frame"],         intendedPath:true,  answers:[{id:"mpa0",label:"Sure",next:"mp1"},{id:"mpa1",label:"Not interested",next:"mp_exit"}] },
   "mp1": { id:"mp1", title:"Channel Pain",     type:"discovery", prompt:"*Tell me*[Pause] — **what's the biggest friction point in your current partner channel?** Onboarding, pipeline quality, or rep consistency?",              overview:["Open question","Let them pick"],                intendedPath:true,  answers:[{id:"mpa2",label:"Onboarding",next:"mp2"},{id:"mpa3",label:"Pipeline quality",next:"mp2"},{id:"mpa4",label:"Consistency",next:"mp2"},{id:"mpa5",label:"We're solid",next:"mp_exit"}] },
@@ -606,9 +839,29 @@ var M_PRIV_CARDS = {
   "mp3": { id:"mp3", title:"Close — Pilot",    type:"close",     prompt:"*What I'd suggest*[Confident] — **a 30-day pilot with two of your top partners.** No fees upfront, just results.",                                         overview:["Low-commitment ask","Specific scope"],          intendedPath:true,  answers:[{id:"mpa8",label:"Let's do it",next:null},{id:"mpa9",label:"Need to check internally",next:null},{id:"mpaa",label:"Not right now",next:"mp_exit"}] },
   "mp_exit":{ id:"mp_exit", title:"Graceful Exit", type:"close", prompt:"*No problem at all*[Empathetic] — *mind if I follow up next quarter when you're evaluating partner tools?*[Question]",                                        overview:["Keep the door open"],                           intendedPath:false, answers:[{id:"mpab",label:"Sure",next:null},{id:"mpac",label:"No thanks",next:null}] },
 };
-await pool.query(
-  'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-  [M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0", JSON.stringify(M_PRIV_CARDS), JSON.stringify([]), "private", M_NOW, M_NOW]
+
+await seedUpsert("decks", M_PRIV_ID,
+  { name:"Partner Channel Playbook", color:"#26C6DA", icon:"🔒", rootCard:"mp0", visibility:"private", cards:M_PRIV_CARDS, objStacks:[] },
+  async function() {
+    await pool.query(
+      `INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
+       ON CONFLICT (id) DO UPDATE SET name=$4,color=$5,icon=$6,"rootCard"=$7,cards=$8,"objStacks"=$9,visibility=$10,"updatedAt"=$11`,
+      [M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0",
+       JSON.stringify(M_PRIV_CARDS), JSON.stringify([]), "private", m_now]
+    );
+  },
+  async function() {
+    var res = await pool.query(
+      'SELECT name, color, icon, "rootCard", visibility, cards, "objStacks" FROM decks WHERE id=$1',
+      [M_PRIV_ID]
+    );
+    if (!res.rows[0]) return null;
+    var r = res.rows[0];
+    var cards = typeof r.cards === "string" ? JSON.parse(r.cards) : (r.cards || {});
+    var objStacks = typeof r["objStacks"] === "string" ? JSON.parse(r["objStacks"]) : (r["objStacks"] || []);
+    return seedHash({ name:r.name, color:r.color, icon:r.icon, rootCard:r.rootCard, visibility:r.visibility||"public", cards, objStacks });
+  }
 );
 await setDeckAccess(M_PRIV_ID, [{ entityType: "team", entityId: "team_north" }]);
 
@@ -656,13 +909,17 @@ for (var i = 0; i < M_USERS.length; i++) {
   var sessions = generateUserSessions(u, persona, MERIDIAN_DECK_CONFIGS, ORG2_ID);
   for (var j = 0; j < sessions.length; j++) {
     await insertSession(sessions[j]);
+    await pool.query(
+      "INSERT INTO seed_manifest (table_name, record_id, content_hash, seeded_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      ["sessions", sessions[j].id, "seed", Date.now()]
+    );
     m_totalSessions++;
   }
 }
 
-console.log("✅ Meridian Group seeded:");
-console.log("   Teams: 2 | Admins: 2 (casey, riley) | Users: 4 | Decks: 2 (1 private: Partner Channel Playbook → team_north) | Sessions: " + m_totalSessions);
-console.log("   Personas — star: Blake | solid: Fox | grinder: Shaw | newbie: Reed");
+console.log("Meridian Group seeded:");
+console.log("   Teams: 2 | Admins: 2 (casey, riley) | Users: 4 | Decks: 2 (1 private: Partner Channel Playbook -> team_north) | Sessions: " + m_totalSessions);
+console.log("   Personas -- star: Blake | solid: Fox | grinder: Shaw | newbie: Reed");
 console.log("   Password (all): [see seed.js]");
 
 } // end org_meridian block
