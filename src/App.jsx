@@ -258,8 +258,7 @@ function MainApp({ authUser, onLogout }) {
       <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
         <div style={{fontSize:48}}>⚠️</div>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,textAlign:"center",lineHeight:1.7}}>
-          Could not connect to the API server.<br/>Make sure it's running:<br/><br/>
-          <code style={{color:"#F5A623",fontSize:11}}>npm start</code>
+          No decks available.<br/>Ask your admin to create a deck.
         </div>
       </div>
     );
