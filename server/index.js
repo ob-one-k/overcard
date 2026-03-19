@@ -77,12 +77,15 @@ app.use(function(err, req, res, next) {
 async function start() {
   await initSchema();
 
-  // Auto-seed on first boot (runSeed skips itself if data already exists)
-  await runSeed();
-
+  // Start listening first so Render's health check passes immediately
   app.listen(PORT, function() {
     console.log("OverCard server listening on http://localhost:" + PORT);
     console.log("Mode: " + (process.env.NODE_ENV || "development"));
+
+    // Seed after server is up — runs in background, won't block requests
+    runSeed().catch(function(err) {
+      console.error("Seed error:", err.message);
+    });
   });
 }
 
