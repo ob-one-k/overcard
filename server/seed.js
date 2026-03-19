@@ -444,9 +444,9 @@ for (var i = 0; i < USERS.length; i++) {
       return res.rows[0] ? seedHash({ email: res.rows[0].email, displayName: res.rows[0].displayName, role: res.rows[0].role, teamId: res.rows[0].teamId }) : null;
     }
   );
-  if (uStatus !== "skipped") {
-    await setUserTeams(u.id, [u.teamId]);
-  }
+  // Always sync user_teams — idempotent, ensures membership is correct even if
+  // the old TRUNCATE-based seed never populated user_teams for this user
+  await setUserTeams(u.id, [u.teamId]);
 }
 
 // ─── DECKS ────────────────────────────────────────────────────────────────────
@@ -780,9 +780,7 @@ for (var i = 0; i < M_USERS.length; i++) {
       return res.rows[0] ? seedHash({ email: res.rows[0].email, displayName: res.rows[0].displayName, role: res.rows[0].role, teamId: res.rows[0].teamId }) : null;
     }
   );
-  if (muStatus !== "skipped") {
-    await setUserTeams(u.id, [u.teamId]);
-  }
+  await setUserTeams(u.id, [u.teamId]);
 }
 
 // ─── MERIDIAN DECK ────────────────────────────────────────────────────────────

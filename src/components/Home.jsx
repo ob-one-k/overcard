@@ -272,47 +272,6 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
             </div>
           )}
 
-          {/* ── Unified deck selector (shown when not on team tab and decks available) ── */}
-          {!isTeamTab && sortedDecks.length > 0 && (
-            <div style={{marginBottom:14}}>
-              <SectionHdr>Play a Deck</SectionHdr>
-              <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                {visibleDecks.map(function(d) {
-                  var sessCount = (mySessions || []).filter(function(s){ return s.deckId === d.id; }).length;
-                  var deckStat  = decksWithSessions.find(function(ds){ return ds.deckId === d.id; });
-                  var winRate   = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
-                  return (
-                    <button key={d.id} onClick={function(){ if (onSwitchDeckAndPlay) onSwitchDeckAndPlay(d.id); }}
-                      style={{background:"rgba(255,255,255,.05)",border:"1.5px solid rgba(255,255,255,.09)",borderLeft:"3px solid "+d.color,borderRadius:"0 14px 14px 0",padding:"12px 14px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:12,textAlign:"left"}}>
-                      <div style={{width:32,height:32,borderRadius:9,background:d.color+"22",border:"1.5px solid "+d.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{d.icon}</div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
-                        <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:2}}>
-                          {sessCount > 0
-                            ? (winRate !== null ? sessCount + " session" + (sessCount!==1?"s":"") + " · " + winRate + "% close" : sessCount + " session" + (sessCount!==1?"s":""))
-                            : "No sessions yet"}
-                        </div>
-                      </div>
-                      <span style={{color:"rgba(255,255,255,.3)",fontSize:16,flexShrink:0}}>▶</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {!showAllDecks && hiddenCount > 0 && (
-                <button onClick={function(){ setShowAllDecks(true); }}
-                  style={{marginTop:8,width:"100%",background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
-                  Show {hiddenCount} more deck{hiddenCount!==1?"s":""} ↓
-                </button>
-              )}
-              {showAllDecks && hiddenCount > 0 && (
-                <button onClick={function(){ setShowAllDecks(false); }}
-                  style={{marginTop:8,width:"100%",background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
-                  Show less ↑
-                </button>
-              )}
-            </div>
-          )}
-
           {/* ── Empty state (no sessions) ── */}
           {!isLoading && (!currentSessions || currentSessions.length === 0) && (
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:isTeamTab?"44px 16px":"20px 16px",gap:10,textAlign:"center"}}>
@@ -321,7 +280,7 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
               <div style={{fontSize:12,color:"rgba(255,255,255,.3)",lineHeight:1.6,maxWidth:240}}>
                 {isTeamTab && authUser.role === "admin"
                   ? "No sessions recorded for this team yet."
-                  : "Select a deck above and run your first session."}
+                  : "Select a deck below and run your first session."}
               </div>
             </div>
           )}
@@ -348,30 +307,35 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
                 </div>
               )}
 
-              {/* Deck Performance — right below key metrics */}
-              {decksWithSessions.length > 0 && (
+              {/* Deck Performance — recency-sorted, top 3 visible, collapsible */}
+              {!isTeamTab && sortedDecks.length > 0 && (
                 <div style={{marginBottom:18}}>
                   <SectionHdr>Deck Performance</SectionHdr>
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    {decksWithSessions.map(function(ds){
-                      var deckWinRate = ds.live > 0 ? Math.round(ds.sold / ds.live * 100) : null;
-                      var deckObj = decks ? decks.find(function(d){ return d.id === ds.deckId; }) : null;
-                      var dColor = ds.deckColor || (deckObj && deckObj.color) || "#F5A623";
-                      var dIcon  = ds.deckIcon  || (deckObj && deckObj.icon)  || "💼";
-                      var dName  = ds.deckName  || (deckObj && deckObj.name)  || "Unknown Deck";
+                    {visibleDecks.map(function(d) {
+                      var deckStat  = decksWithSessions.find(function(ds){ return ds.deckId === d.id; });
+                      var dColor    = d.color || "#F5A623";
+                      var dIcon     = d.icon  || "💼";
+                      var deckWinRate = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
                       return (
-                        <div key={ds.deckId} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+dColor,borderRadius:"0 14px 14px 0",padding:"12px 14px",display:"flex",alignItems:"center",gap:12}}>
+                        <div key={d.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+dColor,borderRadius:"0 14px 14px 0",padding:"12px 14px",display:"flex",alignItems:"center",gap:12}}>
                           <div style={{width:34,height:34,borderRadius:9,background:dColor+"22",border:"1.5px solid "+dColor+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{dIcon}</div>
                           <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}}>{dName}</div>
+                            <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:4}}>{d.name}</div>
                             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                              <span style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{ds.total} session{ds.total!==1?"s":""}</span>
-                              {ds.live > 0 && <span style={{fontSize:10,color:"rgba(168,255,62,.65)"}}>{deckWinRate}% close</span>}
-                              {ds.practice > 0 && <span style={{fontSize:10,color:"rgba(0,180,255,.55)"}}>{ds.practice} practice</span>}
+                              {deckStat ? (
+                                <>
+                                  <span style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{deckStat.total} session{deckStat.total!==1?"s":""}</span>
+                                  {deckStat.live > 0 && <span style={{fontSize:10,color:"rgba(168,255,62,.65)"}}>{deckWinRate}% close</span>}
+                                  {deckStat.practice > 0 && <span style={{fontSize:10,color:"rgba(0,180,255,.55)"}}>{deckStat.practice} practice</span>}
+                                </>
+                              ) : (
+                                <span style={{fontSize:10,color:"rgba(255,255,255,.25)"}}>No sessions yet</span>
+                              )}
                             </div>
                           </div>
-                          {onSwitchDeckAndPlay && deckObj && (
-                            <button onClick={function(){ onSwitchDeckAndPlay(ds.deckId); }}
+                          {onSwitchDeckAndPlay && (
+                            <button onClick={function(){ onSwitchDeckAndPlay(d.id); }}
                               style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 11px",cursor:"pointer",fontSize:11,color:"rgba(255,255,255,.7)",fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
                               Play →
                             </button>
@@ -380,6 +344,18 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
                       );
                     })}
                   </div>
+                  {!showAllDecks && hiddenCount > 0 && (
+                    <button onClick={function(){ setShowAllDecks(true); }}
+                      style={{marginTop:8,width:"100%",background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
+                      Show {hiddenCount} more deck{hiddenCount!==1?"s":""} ↓
+                    </button>
+                  )}
+                  {showAllDecks && hiddenCount > 0 && (
+                    <button onClick={function(){ setShowAllDecks(false); }}
+                      style={{marginTop:8,width:"100%",background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
+                      Show less ↑
+                    </button>
+                  )}
                 </div>
               )}
 

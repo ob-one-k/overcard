@@ -152,7 +152,26 @@ async function initSchema() {
       PRIMARY KEY (table_name, record_id)
     )`);
 
+    // Migrations table — tracks named one-time migrations so they run exactly once
+    await client.query(`CREATE TABLE IF NOT EXISTS migrations (
+      name       TEXT PRIMARY KEY,
+      applied_at BIGINT NOT NULL
+    )`);
+
     await client.query("COMMIT");
+
+    // ── One-time migrations (run outside transaction so they can operate freely) ──
+
+    // deck_dedup_v1: remove legacy random-ID seed decks that were created before
+    // deterministic IDs were introduced. Only runs if both old AND new decks coexist.
+    var migCheck = await pool.query("SELECT 1 FROM migrations WHERE name='deck_dedup_v1' LIMIT 1");
+    if (migCheck.rows.length === 0) {
+      var SEED_DECK_IDS = ['d_apex_ent','d_apex_smb','d_apex_exec','d_merd_out','d_merd_partner'];
+      await pool.query("DELETE FROM decks WHERE id <> ALL($1::text[])", [SEED_DECK_IDS]);
+      await pool.query("INSERT INTO migrations (name, applied_at) VALUES ('deck_dedup_v1', $1)", [Date.now()]);
+      console.log("Migration deck_dedup_v1: removed legacy deck duplicates");
+    }
+    return; // already committed above
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
