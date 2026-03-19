@@ -361,10 +361,9 @@ const ENT_OBJ_STACKS = [
   },
 ];
 
-// Pass JS objects directly — pg serializes JSONB automatically (no JSON.stringify)
 await pool.query(
   'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-  [ENT_ID, ORG_ID, "u_alex", "Enterprise Outbound", "#F5A623", "🏢", "ec0", ENT_CARDS, ENT_OBJ_STACKS, now, now]
+  [ENT_ID, ORG_ID, "u_alex", "Enterprise Outbound", "#F5A623", "🏢", "ec0", JSON.stringify(ENT_CARDS), JSON.stringify(ENT_OBJ_STACKS), now, now]
 );
 
 const SMB_CARDS = {
@@ -398,7 +397,7 @@ const SMB_OBJ_STACKS = [
 
 await pool.query(
   'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-  [SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0", SMB_CARDS, SMB_OBJ_STACKS, now, now]
+  [SMB_ID, ORG_ID, "u_alex", "SMB Inbound", "#4FC3F7", "🏗️", "sc0", JSON.stringify(SMB_CARDS), JSON.stringify(SMB_OBJ_STACKS), now, now]
 );
 
 // ─── PRIVATE TEST DECK (Team Alpha only) ──────────────────────────────────────
@@ -412,7 +411,7 @@ const PRIV_CARDS = {
 };
 await pool.query(
   'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-  [PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0", PRIV_CARDS, [], "private", now, now]
+  [PRIV_ID, ORG_ID, "u_alex", "Executive Playbook", "#AB47BC", "🔒", "pc0", JSON.stringify(PRIV_CARDS), JSON.stringify([]), "private", now, now]
 );
 await setDeckAccess(PRIV_ID, [{ entityType: "team", entityId: "team_alpha" }]);
 
@@ -598,7 +597,7 @@ var M_OBJ_STACKS = [
 
 await pool.query(
   'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks","updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-  [M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0", M_CARDS, M_OBJ_STACKS, M_NOW, M_NOW]
+  [M_DECK_ID, ORG2_ID, "u_casey", "Meridian Outbound", "#CE93D8", "💎", "mc0", JSON.stringify(M_CARDS), JSON.stringify(M_OBJ_STACKS), M_NOW, M_NOW]
 );
 
 // ─── PRIVATE TEST DECK (Team North only) ──────────────────────────────────────
@@ -612,7 +611,7 @@ var M_PRIV_CARDS = {
 };
 await pool.query(
   'INSERT INTO decks (id,"orgId","createdBy",name,color,icon,"rootCard",cards,"objStacks",visibility,"updatedAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
-  [M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0", M_PRIV_CARDS, [], "private", M_NOW, M_NOW]
+  [M_PRIV_ID, ORG2_ID, "u_casey", "Partner Channel Playbook", "#26C6DA", "🔒", "mp0", JSON.stringify(M_PRIV_CARDS), JSON.stringify([]), "private", M_NOW, M_NOW]
 );
 await setDeckAccess(M_PRIV_ID, [{ entityType: "team", entityId: "team_north" }]);
 
