@@ -73,14 +73,30 @@ app.use(function(err, req, res, next) {
 });
 
 // ─── START ────────────────────────────────────────────────────────────────────
-initSchema()
-  .then(function() {
-    app.listen(PORT, function() {
-      console.log("OverCard server listening on http://localhost:" + PORT);
-      console.log("Mode: " + (process.env.NODE_ENV || "development"));
-    });
-  })
-  .catch(function(err) {
-    console.error("Failed to initialize schema:", err);
-    process.exit(1);
+async function start() {
+  await initSchema();
+
+  // Auto-seed on first boot (only if database is empty)
+  var { rows: orgCheck } = await pool.query("SELECT COUNT(*) AS n FROM orgs");
+  if (parseInt(orgCheck[0].n, 10) === 0) {
+    console.log("Empty database detected — running seed...");
+    try {
+      require("child_process").execFileSync(process.execPath, [require("path").join(__dirname, "seed.js")], {
+        stdio: "inherit",
+        env: Object.assign({}, process.env, { DATABASE_URL: process.env.DATABASE_URL }),
+      });
+    } catch (e) {
+      console.error("Auto-seed failed:", e.message);
+    }
+  }
+
+  app.listen(PORT, function() {
+    console.log("OverCard server listening on http://localhost:" + PORT);
+    console.log("Mode: " + (process.env.NODE_ENV || "development"));
   });
+}
+
+start().catch(function(err) {
+  console.error("Failed to start:", err);
+  process.exit(1);
+});

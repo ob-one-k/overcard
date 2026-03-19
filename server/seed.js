@@ -1,9 +1,12 @@
 // node server/seed.js  — idempotent: skips if org already exists
 (async function() {
 
-if (process.env.NODE_ENV === "production") {
-  console.error("ERROR: seed.js must not be run in production.");
-  process.exit(1);
+// Skip if database already has data (idempotent — safe to call on every boot)
+var { rows: orgCheck } = await pool.query("SELECT COUNT(*) AS n FROM orgs");
+if (parseInt(orgCheck[0].n, 10) > 0) {
+  console.log("Seed skipped — database already has data.");
+  await pool.end();
+  return;
 }
 
 const {
