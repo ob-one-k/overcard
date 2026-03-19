@@ -1,14 +1,4 @@
 // node server/seed.js  — idempotent: skips if org already exists
-(async function() {
-
-// Skip if database already has data (idempotent — safe to call on every boot)
-var { rows: orgCheck } = await pool.query("SELECT COUNT(*) AS n FROM orgs");
-if (parseInt(orgCheck[0].n, 10) > 0) {
-  console.log("Seed skipped — database already has data.");
-  await pool.end();
-  return;
-}
-
 const {
   pool, uid, initSchema,
   createOrg, findOrgById,
@@ -19,6 +9,15 @@ const {
   insertSession,
 } = require("./db");
 const { hashPassword } = require("./auth");
+
+async function runSeed() {
+
+// Skip if database already has data
+var { rows: orgCheck } = await pool.query("SELECT COUNT(*) AS n FROM orgs");
+if (parseInt(orgCheck[0].n, 10) > 0) {
+  console.log("Seed skipped — database already has data.");
+  return;
+}
 
 // Ensure schema exists before seeding
 await initSchema();
@@ -677,9 +676,14 @@ console.log("   Password (all): [see seed.js]");
 
 } // end org_meridian block
 
-await pool.end();
+} // end runSeed()
 
-})().catch(function(err) {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});
+module.exports = { runSeed };
+
+// Run directly: node server/seed.js
+if (require.main === module) {
+  runSeed()
+    .then(function() { return pool.end(); })
+    .then(function() { process.exit(0); })
+    .catch(function(err) { console.error("Seed failed:", err); process.exit(1); });
+}

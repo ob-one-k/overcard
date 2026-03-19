@@ -6,6 +6,7 @@ const path         = require("path");
 const fs           = require("fs");
 
 const { pool, initSchema } = require("./db");
+const { runSeed }          = require("./seed");
 const authRoutes    = require("./routes/authRoutes");
 const deckRoutes    = require("./routes/deckRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
@@ -76,19 +77,8 @@ app.use(function(err, req, res, next) {
 async function start() {
   await initSchema();
 
-  // Auto-seed on first boot (only if database is empty)
-  var { rows: orgCheck } = await pool.query("SELECT COUNT(*) AS n FROM orgs");
-  if (parseInt(orgCheck[0].n, 10) === 0) {
-    console.log("Empty database detected — running seed...");
-    try {
-      require("child_process").execFileSync(process.execPath, [require("path").join(__dirname, "seed.js")], {
-        stdio: "inherit",
-        env: Object.assign({}, process.env, { DATABASE_URL: process.env.DATABASE_URL }),
-      });
-    } catch (e) {
-      console.error("Auto-seed failed:", e.message);
-    }
-  }
+  // Auto-seed on first boot (runSeed skips itself if data already exists)
+  await runSeed();
 
   app.listen(PORT, function() {
     console.log("OverCard server listening on http://localhost:" + PORT);
