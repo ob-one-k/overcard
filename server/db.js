@@ -410,8 +410,8 @@ async function updateDeck(id, orgId, deck) {
     [
       deck.name, deck.color, deck.icon,
       deck.rootCard || null,
-      deck.cards    || {},
-      deck.objStacks || [],
+      JSON.stringify(deck.cards    || {}),
+      JSON.stringify(deck.objStacks || []),
       deck.visibility || "public",
       now, id, orgId,
     ]
@@ -567,7 +567,7 @@ async function upsertSession(session, userId, orgId) {
     session.mode || "live", session.status || "completed", session.outcome || "completed",
     session.startTs, session.endTs || null, session.sold ? true : false,
     session.soldCardId || null, session.soldCardTitle || null,
-    session.events || [], session.notes || [], session.metrics || null,
+    JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
   ]);
   return rows[0] ? parseSession(rows[0]) : getSessionById(session.id);
 }
@@ -597,7 +597,7 @@ async function insertSession(session) {
     session.mode || "live", session.status || "completed", session.outcome || "completed",
     session.startTs, session.endTs || null, session.sold ? true : false,
     session.soldCardId || null, session.soldCardTitle || null,
-    session.events || [], session.notes || [], session.metrics || null,
+    JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
   ]);
 }
 
