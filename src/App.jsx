@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid } from "./lib/constants";
-import { setUnauthHandler, apiGet, apiPut, apiPost, SAVE_DELAY } from "./lib/api";
+import { setUnauthHandler, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
@@ -43,7 +43,7 @@ export default function App() {
   var [authChecked, setAuthChecked] = useState(false);
 
   useEffect(function() {
-    fetch("/api/auth/me", { credentials:"include" })
+    fetch(API_BASE + "/auth/me", { credentials:"include" })
       .then(function(r){ return r.ok ? r.json() : Promise.reject(); })
       .then(function(u){ setAuthUser(u); setAuthChecked(true); })
       .catch(function(){ setAuthUser(false); setAuthChecked(true); });
@@ -58,7 +58,7 @@ export default function App() {
   // Refresh JWT on visibility change and every hour to prevent mid-session logout
   useEffect(function() {
     function doRefresh() {
-      fetch("/api/auth/refresh", { method:"POST", credentials:"include" })
+      fetch(API_BASE + "/auth/refresh", { method:"POST", credentials:"include" })
         .then(function(r) { if (r.status === 401) setAuthUser(false); })
         .catch(function() {});
     }
