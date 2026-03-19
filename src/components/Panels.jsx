@@ -201,8 +201,8 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
 }
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
-var DEV_PASSWORD = import.meta.env.DEV ? "Overcard2025!" : "";
-var DEV_ORGS = import.meta.env.DEV ? [
+var DEV_PASSWORD = "Overcard2025!";
+var DEV_ORGS = [
   {
     id: "apex", name: "Apex Sales", domain: "apexsales.com",
     admins: [
@@ -248,7 +248,7 @@ var DEV_ORGS = import.meta.env.DEV ? [
       ]},
     ],
   },
-] : [];
+];
 
 export function LoginScreen({ onLogin }) {
   var [email,   setEmail]   = useState("");
