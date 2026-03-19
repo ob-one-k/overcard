@@ -170,11 +170,17 @@ function uid(prefix) {
   return (prefix || "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+function parseJsonField(val, fallback) {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === "string") { try { return JSON.parse(val); } catch(e) { return fallback; } }
+  return val;
+}
+
 function parseDeck(row) {
   if (!row) return null;
   return Object.assign({}, row, {
-    cards:      row.cards     || {},
-    objStacks:  row.objStacks || [],
+    cards:      parseJsonField(row.cards,     {}),
+    objStacks:  parseJsonField(row.objStacks, []),
     visibility: row.visibility || "public",
   });
 }
@@ -183,9 +189,9 @@ function parseSession(row) {
   if (!row) return null;
   return Object.assign({}, row, {
     sold:    !!row.sold,
-    events:  row.events  || [],
-    notes:   row.notes   || [],
-    metrics: row.metrics || null,
+    events:  parseJsonField(row.events,  []),
+    notes:   parseJsonField(row.notes,   []),
+    metrics: parseJsonField(row.metrics, null),
   });
 }
 

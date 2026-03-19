@@ -1,10 +1,8 @@
-// node server/seed.js  — idempotent: skips if org already exists
+// node server/seed.js  — always wipes and reseeds all data
 const {
   pool, uid, initSchema,
-  createOrg, findOrgById,
   setTeamAdmins,
   setUserTeams,
-  createDeck,
   setDeckAccess,
   insertSession,
 } = require("./db");
@@ -14,6 +12,11 @@ async function runSeed() {
 
 // Ensure schema exists before seeding
 await initSchema();
+
+// Wipe all data for a clean reseed every deploy
+console.log("Wiping existing data...");
+await pool.query("TRUNCATE orgs, teams, team_admins, user_teams, users, decks, deck_access, sessions, session_feedback, session_shares CASCADE");
+console.log("Seeding fresh data...");
 
 const PW_HASH = hashPassword("Overcard2025!");
 
@@ -265,12 +268,9 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
 // ORG 1 — APEX SALES
 // ═══════════════════════════════════════════════════════════════════════════════
 var ORG_ID = "org_apex";
-var { rows: apexDeckRows } = await pool.query('SELECT COUNT(*) AS n FROM decks WHERE "orgId"=$1', [ORG_ID]);
-if (parseInt(apexDeckRows[0].n, 10) > 0) {
-  console.log("org_apex already fully seeded — skipping.");
-} else {
+{
 
-await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING', [ORG_ID, "Apex Sales", Date.now()]);
+await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3)', [ORG_ID, "Apex Sales", Date.now()]);
 
 // ─── TEAMS ────────────────────────────────────────────────────────────────────
 const TEAMS = [
@@ -281,7 +281,7 @@ const TEAMS = [
 for (var i = 0; i < TEAMS.length; i++) {
   var t = TEAMS[i];
   await pool.query(
-    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING',
+    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4)',
     [t.id, ORG_ID, t.name, Date.now()]
   );
 }
@@ -295,7 +295,7 @@ const ADMINS = [
 for (var i = 0; i < ADMINS.length; i++) {
   var a = ADMINS[i];
   await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6) ON CONFLICT (id) DO NOTHING',
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6)',
     [a.id, ORG_ID, a.email, PW_HASH, a.displayName, Date.now()]
   );
   await setTeamAdmins(a.teamAdmin, [a.id]);
@@ -319,7 +319,7 @@ const USERS = [
 for (var i = 0; i < USERS.length; i++) {
   var u = USERS[i];
   await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7) ON CONFLICT (id) DO NOTHING',
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7)',
     [u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now()]
   );
   await setUserTeams(u.id, [u.teamId]);
@@ -513,12 +513,9 @@ console.log("   Password (all): [see seed.js]");
 // ORG 2 — MERIDIAN GROUP
 // ═══════════════════════════════════════════════════════════════════════════════
 var ORG2_ID = "org_meridian";
-var { rows: meridianDeckRows } = await pool.query('SELECT COUNT(*) AS n FROM decks WHERE "orgId"=$1', [ORG2_ID]);
-if (parseInt(meridianDeckRows[0].n, 10) > 0) {
-  console.log("org_meridian already fully seeded — skipping.");
-} else {
+{
 
-await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING', [ORG2_ID, "Meridian Group", Date.now()]);
+await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3)', [ORG2_ID, "Meridian Group", Date.now()]);
 
 var M_TEAMS = [
   { id: "team_north", name: "Team North" },
@@ -527,7 +524,7 @@ var M_TEAMS = [
 for (var i = 0; i < M_TEAMS.length; i++) {
   var t = M_TEAMS[i];
   await pool.query(
-    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING',
+    'INSERT INTO teams (id,"orgId",name,"createdAt") VALUES ($1,$2,$3,$4)',
     [t.id, ORG2_ID, t.name, Date.now()]
   );
 }
@@ -539,7 +536,7 @@ var M_ADMINS = [
 for (var i = 0; i < M_ADMINS.length; i++) {
   var a = M_ADMINS[i];
   await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6) ON CONFLICT (id) DO NOTHING',
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6)',
     [a.id, ORG2_ID, a.email, PW_HASH, a.displayName, Date.now()]
   );
   await setTeamAdmins(a.teamAdmin, [a.id]);
@@ -554,7 +551,7 @@ var M_USERS = [
 for (var i = 0; i < M_USERS.length; i++) {
   var u = M_USERS[i];
   await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7) ON CONFLICT (id) DO NOTHING',
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7)',
     [u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, Date.now()]
   );
   await setUserTeams(u.id, [u.teamId]);
