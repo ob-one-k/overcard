@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid } from "./lib/constants";
-import { setUnauthHandler, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
+import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
@@ -41,9 +41,12 @@ var ADMIN_TABS = [
 export default function App() {
   var [authUser,    setAuthUser]    = useState(null);
   var [authChecked, setAuthChecked] = useState(false);
+  var [kickReason,  setKickReason]  = useState(null); // "replaced" when session kicked by another login
 
   useEffect(function() {
-    fetch(API_BASE + "/auth/me", { credentials:"include" })
+    var storedToken = localStorage.getItem("overcard_token");
+    var headers = storedToken ? { "Authorization": "Bearer " + storedToken } : {};
+    fetch(API_BASE + "/auth/me", { credentials:"include", headers: headers })
       .then(function(r){ return r.ok ? r.json() : Promise.reject(); })
       .then(function(u){ setAuthUser(u); setAuthChecked(true); })
       .catch(function(){ setAuthUser(false); setAuthChecked(true); });
@@ -51,15 +54,23 @@ export default function App() {
 
   // Register 401 handler so api helpers can clear auth state
   useEffect(function() {
-    setUnauthHandler(function(){ setAuthUser(false); });
-    return function(){ setUnauthHandler(null); };
+    setUnauthHandler(function(){ setStoredToken(null); setAuthUser(false); });
+    setSessionReplacedHandler(function(){ setStoredToken(null); setKickReason("replaced"); setAuthUser(false); });
+    return function(){ setUnauthHandler(null); setSessionReplacedHandler(null); };
   }, []);
 
   // Refresh JWT on visibility change and every hour to prevent mid-session logout
   useEffect(function() {
     function doRefresh() {
-      fetch(API_BASE + "/auth/refresh", { method:"POST", credentials:"include" })
-        .then(function(r) { if (r.status === 401) setAuthUser(false); })
+      var storedToken = localStorage.getItem("overcard_token");
+      var headers = { "Content-Type": "application/json" };
+      if (storedToken) headers["Authorization"] = "Bearer " + storedToken;
+      fetch(API_BASE + "/auth/refresh", { method:"POST", credentials:"include", headers: headers })
+        .then(function(r) {
+          if (r.status === 401) { setStoredToken(null); setAuthUser(false); return null; }
+          return r.ok ? r.json() : null;
+        })
+        .then(function(data) { if (data && data._token) setStoredToken(data._token); })
         .catch(function() {});
     }
     var interval = setInterval(doRefresh, 60 * 60 * 1000); // every hour
@@ -74,8 +85,13 @@ export default function App() {
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading OverCard…</div>
     </div>
   );
-  if (!authUser) return <LoginScreen onLogin={function(u){ setAuthUser(u); }}/>;
-  return <MainApp authUser={authUser} onLogout={function(){ setAuthUser(false); }}/>;
+  if (!authUser) return (
+    <LoginScreen
+      kickReason={kickReason}
+      onLogin={function(u){ setKickReason(null); setAuthUser(u); }}
+    />
+  );
+  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setAuthUser(false); }}/>;
 }
 
 // ─── APP ────────────────────────────────────────────────────────────────────
@@ -83,7 +99,7 @@ function MainApp({ authUser, onLogout }) {
   var TABS        = authUser.role === "admin" ? ADMIN_TABS : USER_TABS;
   var [decks,     setDecks]    = useState([]);
   var [activeId,  setActiveId] = useState("d1");
-  var [tab,       setTab]      = useState("home");
+  var [tab,       setTab]      = useState(localStorage.getItem("overcard_tab") || "home");
   var [showDS,    setShowDS]   = useState(false);
   var [saveStatus, setSaveStatus] = useState("idle"); // "idle"|"saving"|"saved"|"error"
   var [serverOk,  setServerOk] = useState(true);
@@ -105,6 +121,12 @@ function MainApp({ authUser, onLogout }) {
   // Dirty deck tracking for per-deck autosave
   var dirtyIds = useRef(new Set());
 
+  // ── Tab switching helper (persists to localStorage) ─────────────────────────
+  function switchTab(newTab) {
+    localStorage.setItem("overcard_tab", newTab);
+    setTab(newTab);
+  }
+
   // ── Load on mount ────────────────────────────────────────────────────────────
   useEffect(function() {
     apiGet("/decks")
@@ -116,8 +138,6 @@ function MainApp({ authUser, onLogout }) {
             setActiveId(lastId);
           } else {
             setActiveId(data[0].id);
-            // First login (no saved deck) — open deck picker so user can choose
-            if (!lastId) setShowDS(true);
           }
         }
         setSaveStatus("saved"); setServerOk(true);
@@ -192,12 +212,13 @@ function MainApp({ authUser, onLogout }) {
     apiPost("/decks", newDeckData)
       .then(function(d) {
         setDecks(function(ds){ return ds.concat([d]); });
-        setActiveId(d.id);
-        setTab("play");
+        switchDeck(d.id);
+        switchTab("play");
       })
       .catch(function(err){ console.error("Failed to create deck:", err); });
   }
   function switchDeck(id) {
+    localStorage.setItem("overcard_activeId", id);
     setActiveId(id);
     setSessionActive(false);
     setPendingReview(null);
@@ -218,7 +239,7 @@ function MainApp({ authUser, onLogout }) {
   // ── Home tab: switch deck + go to Play ───────────────────────────────────────
   function handleSwitchDeckAndPlay(deckId) {
     switchDeck(deckId);
-    setTab("play");
+    switchTab("play");
   }
 
   // ── Portal from Play → Sessions ──────────────────────────────────────────────
@@ -226,14 +247,14 @@ function MainApp({ authUser, onLogout }) {
     setSessionActive(false);
     if (sessionId) {
       setPendingReview(sessionId);
-      setTab("sessions");
+      switchTab("sessions");
     }
   }
 
   // ── Tab switching ─────────────────────────────────────────────────────────────
   function handleTabClick(tabId) {
     if (tabId !== "sessions") setPendingReview(null); // clear portal on manual nav
-    setTab(tabId);
+    switchTab(tabId);
   }
 
   // ── Tooltip context ───────────────────────────────────────────────────────────

@@ -139,6 +139,8 @@ async function initSchema() {
 
     // Migration: add visibility column if it doesn't exist yet
     await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`);
+    // Migration: add activeToken for single-session enforcement
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "activeToken" TEXT`);
 
     // Seed manifest — tracks which records were seeded and their last-seeded content hash
     // Enables smart re-seeding: refresh unmodified seed records, preserve user edits
@@ -228,6 +230,10 @@ async function getUserTeams(userId) {
 async function getAdminTeamIds(userId) {
   const { rows } = await pool.query('SELECT "teamId" FROM team_admins WHERE "userId" = $1', [userId]);
   return rows.map(function(r) { return r.teamId; });
+}
+
+async function setActiveToken(userId, token) {
+  await pool.query('UPDATE users SET "activeToken"=$1 WHERE id=$2', [token, userId]);
 }
 
 async function setUserTeams(userId, teamIds) {
@@ -700,7 +706,7 @@ module.exports = {
   findOrgById, createOrg,
   // teams
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
-  getUserTeams, setUserTeams, getAdminTeamIds,
+  getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken,
   // decks
   getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck,
   getDeckAccess, setDeckAccess,

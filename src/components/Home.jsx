@@ -121,6 +121,7 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");
   var [loadingTeam,  setLoadingTeam]  = useState(null);
+  var [showAllDecks, setShowAllDecks] = useState(false);
 
   // Build teams list — explicit priority chain to avoid [] truthy bug:
   // 1. Admins: use orgTeams (already loaded by App, full roster)
@@ -186,10 +187,26 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
   var greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
   var firstName = (authUser.displayName || "").split(" ")[0] || authUser.displayName;
 
-  // Deck cards to show: decks with sessions + decks without
+  // Deck cards to show: decks with sessions + decks without (used by Deck Performance section)
   var decksWithSessions  = stats ? stats.deckStats.sort(function(a, b){ return b.total - a.total; }) : [];
   var deckIdsWithSessions = decksWithSessions.map(function(ds){ return ds.deckId; });
   var decksWithoutSessions = (decks || []).filter(function(d){ return !deckIdsWithSessions.includes(d.id); });
+
+  // Recency-sorted deck selector (always uses user's own sessions for recency)
+  var deckLastUsed = {};
+  (mySessions || []).forEach(function(s) {
+    if (!deckLastUsed[s.deckId] || s.startTs > deckLastUsed[s.deckId]) {
+      deckLastUsed[s.deckId] = s.startTs;
+    }
+  });
+  var sortedDecks = (decks || []).slice().sort(function(a, b) {
+    var aTs = deckLastUsed[a.id] || 0;
+    var bTs = deckLastUsed[b.id] || 0;
+    if (aTs !== bTs) return bTs - aTs;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+  var visibleDecks = showAllDecks ? sortedDecks : sortedDecks.slice(0, 3);
+  var hiddenCount  = Math.max(0, sortedDecks.length - 3);
 
   var isTeamTab = activeSubTab !== "me";
   var activeTeam = isTeamTab ? myTeams.find(function(t){ return t.id === activeSubTab; }) : null;
@@ -255,33 +272,57 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
             </div>
           )}
 
-          {/* ── Empty state ── */}
+          {/* ── Unified deck selector (shown when not on team tab and decks available) ── */}
+          {!isTeamTab && sortedDecks.length > 0 && (
+            <div style={{marginBottom:14}}>
+              <SectionHdr>Play a Deck</SectionHdr>
+              <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                {visibleDecks.map(function(d) {
+                  var sessCount = (mySessions || []).filter(function(s){ return s.deckId === d.id; }).length;
+                  var deckStat  = decksWithSessions.find(function(ds){ return ds.deckId === d.id; });
+                  var winRate   = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
+                  return (
+                    <button key={d.id} onClick={function(){ if (onSwitchDeckAndPlay) onSwitchDeckAndPlay(d.id); }}
+                      style={{background:"rgba(255,255,255,.05)",border:"1.5px solid rgba(255,255,255,.09)",borderLeft:"3px solid "+d.color,borderRadius:"0 14px 14px 0",padding:"12px 14px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:12,textAlign:"left"}}>
+                      <div style={{width:32,height:32,borderRadius:9,background:d.color+"22",border:"1.5px solid "+d.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{d.icon}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
+                        <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:2}}>
+                          {sessCount > 0
+                            ? (winRate !== null ? sessCount + " session" + (sessCount!==1?"s":"") + " · " + winRate + "% close" : sessCount + " session" + (sessCount!==1?"s":""))
+                            : "No sessions yet"}
+                        </div>
+                      </div>
+                      <span style={{color:"rgba(255,255,255,.3)",fontSize:16,flexShrink:0}}>▶</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {!showAllDecks && hiddenCount > 0 && (
+                <button onClick={function(){ setShowAllDecks(true); }}
+                  style={{marginTop:8,width:"100%",background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
+                  Show {hiddenCount} more deck{hiddenCount!==1?"s":""} ↓
+                </button>
+              )}
+              {showAllDecks && hiddenCount > 0 && (
+                <button onClick={function(){ setShowAllDecks(false); }}
+                  style={{marginTop:8,width:"100%",background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
+                  Show less ↑
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── Empty state (no sessions) ── */}
           {!isLoading && (!currentSessions || currentSessions.length === 0) && (
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"44px 16px",gap:12,textAlign:"center"}}>
-              <div style={{fontSize:40}}>📊</div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:isTeamTab?"44px 16px":"20px 16px",gap:10,textAlign:"center"}}>
+              <div style={{fontSize:36}}>📊</div>
               <div style={{fontSize:14,fontWeight:700,color:"rgba(255,255,255,.6)"}}>No sessions yet</div>
               <div style={{fontSize:12,color:"rgba(255,255,255,.3)",lineHeight:1.6,maxWidth:240}}>
                 {isTeamTab && authUser.role === "admin"
                   ? "No sessions recorded for this team yet."
-                  : "Select a deck below and run your first session."}
+                  : "Select a deck above and run your first session."}
               </div>
-              {decks && decks.length > 0 && !isTeamTab && (
-                <div style={{marginTop:4,display:"flex",flexDirection:"column",gap:7,width:"100%"}}>
-                  {decks.slice(0,3).map(function(d){
-                    return (
-                      <button key={d.id} onClick={function(){ if (onSwitchDeckAndPlay) onSwitchDeckAndPlay(d.id); }}
-                        style={{background:"rgba(255,255,255,.05)",border:"1.5px solid rgba(255,255,255,.1)",borderLeft:"3px solid "+d.color,borderRadius:"0 14px 14px 0",padding:"12px 16px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:12,textAlign:"left"}}>
-                        <div style={{width:32,height:32,borderRadius:9,background:d.color+"22",border:"1.5px solid "+d.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{d.icon}</div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>{d.name}</div>
-                          <div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>Tap to start playing</div>
-                        </div>
-                        <span style={{color:"rgba(255,255,255,.3)",fontSize:16}}>▶</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           )}
 
@@ -394,27 +435,6 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
                 </div>
               )}
 
-              {/* Available Decks (no sessions yet) */}
-              {!isTeamTab && decksWithoutSessions.length > 0 && (
-                <div style={{marginBottom:18}}>
-                  <SectionHdr>Available Decks</SectionHdr>
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    {decksWithoutSessions.map(function(d){
-                      return (
-                        <button key={d.id} onClick={function(){ if (onSwitchDeckAndPlay) onSwitchDeckAndPlay(d.id); }}
-                          style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.07)",borderLeft:"3px solid "+d.color+"44",borderRadius:"0 14px 14px 0",padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:12,textAlign:"left"}}>
-                          <div style={{width:30,height:30,borderRadius:8,background:d.color+"18",border:"1px solid "+d.color+"30",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>{d.icon}</div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,.65)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
-                            <div style={{fontSize:9,color:"rgba(255,255,255,.25)",marginTop:1}}>No sessions yet — tap to play</div>
-                          </div>
-                          <span style={{color:"rgba(255,255,255,.25)",fontSize:14,flexShrink:0}}>▶</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
               {/* Recent Sessions */}
               {stats.recent.length > 0 && (

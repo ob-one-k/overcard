@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR } from "../lib/constants";
-import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
+import { apiGet, apiPost, apiPut, apiDel, setStoredToken, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 
@@ -250,17 +250,18 @@ var DEV_ORGS = [
   },
 ];
 
-export function LoginScreen({ onLogin }) {
+export function LoginScreen({ onLogin, kickReason }) {
   var [email,   setEmail]   = useState("");
   var [pass,    setPass]    = useState("");
   var [err,     setErr]     = useState("");
   var [busy,    setBusy]    = useState(false);
   var [selOrg,  setSelOrg]  = useState(null);   // null | DEV_ORGS entry
   var [showPicker, setShowPicker] = useState(false);
+  var [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false);
 
   function pickOrg(org) {
     setSelOrg(org);
-    setEmail(""); setPass(""); setErr("");
+    setEmail(""); setPass(""); setErr(""); setAlreadyLoggedIn(false);
   }
 
   function pickUser(u) {
@@ -270,13 +271,30 @@ export function LoginScreen({ onLogin }) {
     setErr("");
   }
 
+  function doLogin(url, creds) {
+    setBusy(true); setErr(""); setAlreadyLoggedIn(false);
+    apiPost(url, creds)
+      .then(function(user) {
+        setBusy(false);
+        if (user._token) setStoredToken(user._token);
+        onLogin(user);
+      })
+      .catch(function(e) {
+        setBusy(false);
+        if (e.status === 409) { setAlreadyLoggedIn(true); return; }
+        setErr(e.message || "Login failed");
+      });
+  }
+
   function submit(e) {
     e.preventDefault();
     if (!email.trim() || !pass) { setErr("Email and password are required."); return; }
-    setBusy(true); setErr("");
-    apiPost("/auth/login", { email: email.trim(), password: pass })
-      .then(function(user) { setBusy(false); onLogin(user); })
-      .catch(function(e) { setBusy(false); setErr(e.message || "Login failed"); });
+    doLogin("/auth/login", { email: email.trim(), password: pass });
+  }
+
+  function handleForceLogin() {
+    if (!email.trim() || !pass) return;
+    doLogin("/auth/login?force=true", { email: email.trim(), password: pass });
   }
 
   var accentColor = "#00B4FF"; // always on-theme; org colors only identify org tiles
@@ -380,10 +398,32 @@ export function LoginScreen({ onLogin }) {
           </div>
         )}
 
+        {/* ── Kicked-out banner ── */}
+        {kickReason === "replaced" && (
+          <div style={{background:"rgba(239,83,80,.10)",border:"1px solid rgba(239,83,80,.28)",borderRadius:12,padding:"10px 14px",fontSize:12,color:"#EF8070",marginBottom:12,lineHeight:1.5}}>
+            You were signed out because this account was accessed on another device.
+          </div>
+        )}
+
         {/* ── Form ── */}
         <form onSubmit={submit} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.09)",borderRadius:18,padding:"24px 24px",display:"flex",flexDirection:"column",gap:14}}>
           <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:2}}>Sign in</div>
           {err && <div style={{background:"rgba(239,83,80,.12)",border:"1px solid rgba(239,83,80,.3)",borderRadius:9,padding:"9px 12px",fontSize:12,color:"#EF5350"}}>{err}</div>}
+          {alreadyLoggedIn && (
+            <div style={{background:"rgba(255,165,0,.10)",border:"1px solid rgba(255,165,0,.3)",borderRadius:9,padding:"12px 14px",fontSize:12,color:"#FFA040",display:"flex",flexDirection:"column",gap:10}}>
+              <div>This account is already active on another device.</div>
+              <div style={{display:"flex",gap:8}}>
+                <button type="button" disabled={busy} onClick={handleForceLogin}
+                  style={Object.assign({},solidBtn("#FFA040"),{flex:1,fontSize:12,padding:"7px 12px",opacity:busy?0.6:1})}>
+                  {busy ? "Signing in…" : "Log in anyway"}
+                </button>
+                <button type="button" onClick={function(){ setAlreadyLoggedIn(false); setErr(""); }}
+                  style={Object.assign({},ghostBtn(),{flex:1,fontSize:12,padding:"7px 12px"})}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <div>
             <label style={labelSt()}>Email</label>
             <input type="email" value={email} onChange={function(e){setEmail(e.target.value);}} placeholder="you@company.com"
@@ -394,8 +434,8 @@ export function LoginScreen({ onLogin }) {
             <input type="password" value={pass} onChange={function(e){setPass(e.target.value);}} placeholder="••••••••"
               style={inputSt({marginBottom:0})} autoComplete="current-password"/>
           </div>
-          <button type="submit" disabled={busy}
-            style={Object.assign({},solidBtn("#A8FF3E"),{marginTop:2,opacity:busy?0.6:1})}>
+          <button type="submit" disabled={busy || alreadyLoggedIn}
+            style={Object.assign({},solidBtn("#A8FF3E"),{marginTop:2,opacity:(busy||alreadyLoggedIn)?0.6:1})}>
             {busy ? "Signing in…" : "Sign In"}
           </button>
         </form>
@@ -412,7 +452,9 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
   var [busy, setBusy] = useState(false);
   function logout() {
     setBusy(true);
-    fetch("/api/auth/logout", { method:"POST", credentials:"include" })
+    var storedToken = localStorage.getItem("overcard_token");
+    var headers = storedToken ? { "Authorization": "Bearer " + storedToken } : {};
+    fetch(API_BASE + "/auth/logout", { method:"POST", credentials:"include", headers: headers })
       .then(function(){ onLogout(); })
       .catch(function(){ onLogout(); });
   }

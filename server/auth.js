@@ -49,12 +49,19 @@ function clearCookie(res) {
 
 // requireAuth is async because findUserById is now an async DB call
 async function requireAuth(req, res, next) {
-  const token = req.cookies && req.cookies[COOKIE_NAME];
+  // Accept token from cookie first, then Authorization: Bearer header (for mobile/Safari ITP)
+  var token = (req.cookies && req.cookies[COOKIE_NAME]) || null;
+  var authHeader = req.headers["authorization"] || "";
+  if (!token && authHeader.startsWith("Bearer ")) token = authHeader.slice(7);
   if (!token) return res.status(401).json({ error: "Not authenticated" });
   try {
     const payload = jwtVerify(token);           // still synchronous
     const user    = await findUserById(payload.sub);
     if (!user) return res.status(401).json({ error: "User not found" });
+    // Single-session check: if activeToken is set, verify JWT's sid matches
+    if (user.activeToken && payload.sid && user.activeToken !== payload.sid) {
+      return res.status(401).json({ error: "session_replaced", message: "Signed in on another device." });
+    }
     req.user = {
       id:          user.id,
       orgId:       user.orgId,
