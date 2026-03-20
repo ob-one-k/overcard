@@ -486,7 +486,7 @@ function buildSessionWhere(scope, orgId, userId, filters) {
     conds.push('"userId" IN (' + phs.join(",") + ')');
     conds.push('"orgId" = ' + push(orgId));
   } else if (scope.type === "team") {
-    conds.push('"userId" IN (SELECT id FROM users WHERE "teamId" = ' + push(scope.teamId) + ')');
+    conds.push('"userId" IN (SELECT "userId" FROM user_teams WHERE "teamId" = ' + push(scope.teamId) + ')');
     conds.push('"orgId" = ' + push(orgId));
   } else if (scope.type === "org") {
     conds.push('"orgId" = ' + push(orgId));

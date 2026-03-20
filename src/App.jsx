@@ -353,6 +353,7 @@ function MainApp({ authUser, onLogout }) {
                 authUser={authUser}
                 decks={decks}
                 orgTeams={orgTeams}
+                orgUsers={orgUsers}
                 onSwitchDeckAndPlay={handleSwitchDeckAndPlay}
               />
             )}

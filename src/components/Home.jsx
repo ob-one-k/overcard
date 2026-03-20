@@ -115,8 +115,38 @@ function OutcomeBadge({ session }) {
   return <span style={{fontSize:9,background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.5)",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Live</span>;
 }
 
+// ─── RANKINGS ─────────────────────────────────────────────────────────────────
+function computeRankings(sessions, orgUsers) {
+  var userMap = {};
+  sessions.forEach(function(s) {
+    if (!s.userId) return;
+    if (!userMap[s.userId]) userMap[s.userId] = [];
+    userMap[s.userId].push(s);
+  });
+  var entries = Object.keys(userMap).map(function(uid) {
+    var uSessions = userMap[uid];
+    var user = orgUsers ? orgUsers.find(function(u){ return String(u.id) === String(uid); }) : null;
+    var live = uSessions.filter(function(s){ return (s.mode||"live") === "live"; });
+    var sold = live.filter(function(s){ return s.sold || s.outcome === "sold"; });
+    var winRate = live.length > 0 ? Math.round(sold.length / live.length * 100) : null;
+    return { userId: uid, displayName: user ? (user.displayName || user.email) : uid, total: uSessions.length, live: live.length, sold: sold.length, winRate: winRate };
+  });
+  entries.sort(function(a, b) {
+    if (a.winRate !== null && b.winRate !== null) {
+      if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+      if (b.total !== a.total) return b.total - a.total;
+      return (a.displayName || "").localeCompare(b.displayName || "");
+    }
+    if (a.winRate !== null) return -1;
+    if (b.winRate !== null) return 1;
+    if (b.total !== a.total) return b.total - a.total;
+    return (a.displayName || "").localeCompare(b.displayName || "");
+  });
+  return entries;
+}
+
 // ─── HOME TAB ─────────────────────────────────────────────────────────────────
-export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
+export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");
@@ -143,6 +173,12 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
       .then(function(data){ setMySessions(Array.isArray(data) ? data : []); })
       .catch(function(){ setMySessions([]); });
   }, []);
+
+  useEffect(function() {
+    myTeams.forEach(function(team) {
+      loadTeamSessions(team.id);
+    });
+  }, [myTeams.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function loadTeamSessions(teamId) {
     if (teamSessions[teamId] !== undefined) return; // already loaded or loading
@@ -233,7 +269,7 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
             return (
               <button key={tab.id} onClick={function(){ handleSubTab(tab.id); }}
                 style={{background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),cursor:"pointer",padding:"10px 14px",fontSize:11,fontWeight:700,color:on?SESS_COLOR:"rgba(255,255,255,.35)",fontFamily:"inherit",whiteSpace:"nowrap",transition:"color .15s",letterSpacing:.3,flexShrink:0}}>
-                {tab.label}
+                {tab.label || tab.name}
                 {sessCount !== null && (
                   <span style={{marginLeft:4,fontSize:9,color:"rgba(255,255,255,.25)",fontWeight:400}}>({sessCount})</span>
                 )}
@@ -290,6 +326,44 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
                   <StatBox value={stats.notContacted} label="No contact" color="rgba(255,255,255,.4)"/>
                 </div>
               )}
+
+              {/* My Ranking — Me tab only, shows rank per team */}
+              {!isTeamTab && myTeams.length > 0 && (function() {
+                var rankRows = myTeams.map(function(team) {
+                  var tSess = teamSessions[team.id];
+                  if (!tSess || tSess.length === 0) return null;
+                  var rankings = computeRankings(tSess, orgUsers);
+                  if (rankings.length < 2) return null;
+                  var myIdx = rankings.findIndex(function(r){ return String(r.userId) === String(authUser.id); });
+                  if (myIdx === -1) return null;
+                  var me = rankings[myIdx];
+                  return { team: team, rank: myIdx + 1, total: rankings.length, winRate: me.winRate, totalSess: me.total };
+                }).filter(Boolean);
+                if (rankRows.length === 0) return null;
+                return (
+                  <div style={{marginBottom:18}}>
+                    <SectionHdr>My Ranking</SectionHdr>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {rankRows.map(function(row) {
+                        var rankColor = row.rank === 1 ? "#FFD700" : row.rank === 2 ? "#C0C0C0" : row.rank === 3 ? "#CD7F32" : SESS_COLOR;
+                        return (
+                          <div key={row.team.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:12}}>
+                            <div style={{fontSize:18,fontWeight:900,color:rankColor,minWidth:28,textAlign:"center"}}>#{row.rank}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,.85)"}}>{row.team.name}</div>
+                              <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:2}}>
+                                {row.winRate !== null ? row.winRate + "% close rate" : "No live sessions"}
+                                {" · "}{row.rank} of {row.total} reps
+                                {" · "}{row.totalSess} session{row.totalSess !== 1 ? "s" : ""}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Deck Performance — recency-sorted, top 3 visible, collapsible */}
               {!isTeamTab && sortedDecks.length > 0 && (
@@ -396,8 +470,47 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
               )}
 
 
-              {/* Recent Sessions */}
-              {stats.recent.length > 0 && (
+              {/* Team Leaderboard — team tab only */}
+              {isTeamTab && currentSessions && currentSessions.length > 0 && (function() {
+                var rankings = computeRankings(currentSessions, orgUsers);
+                if (rankings.length === 0) return null;
+                return (
+                  <div style={{marginBottom:18}}>
+                    <SectionHdr>Team Leaderboard</SectionHdr>
+                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      {rankings.map(function(entry, idx) {
+                        var isMe = String(entry.userId) === String(authUser.id);
+                        var rankNum = idx + 1;
+                        var rankColor = rankNum === 1 ? "#FFD700" : rankNum === 2 ? "#C0C0C0" : rankNum === 3 ? "#CD7F32" : "rgba(255,255,255,.3)";
+                        return (
+                          <div key={entry.userId} style={{
+                            background: isMe ? "rgba(168,255,62,.07)" : "rgba(255,255,255,.04)",
+                            border: "1px solid " + (isMe ? "rgba(168,255,62,.3)" : "rgba(255,255,255,.07)"),
+                            borderRadius:12,padding:"10px 13px",display:"flex",alignItems:"center",gap:10
+                          }}>
+                            <div style={{fontSize:13,fontWeight:900,color:rankColor,minWidth:22,textAlign:"center"}}>#{rankNum}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight: isMe ? 700 : 600,color: isMe ? SESS_COLOR : "rgba(255,255,255,.8)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                {entry.displayName}{isMe ? " (you)" : ""}
+                              </div>
+                              <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:1}}>
+                                {entry.total} session{entry.total !== 1 ? "s" : ""}
+                                {entry.live > 0 ? " · " + entry.live + " live" : ""}
+                              </div>
+                            </div>
+                            <div style={{fontSize:12,fontWeight:700,color: entry.winRate !== null ? "#66BB6A" : "rgba(255,255,255,.25)"}}>
+                              {entry.winRate !== null ? entry.winRate + "%" : "—"}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Recent Sessions — Me tab only */}
+              {!isTeamTab && stats.recent.length > 0 && (
                 <div style={{marginBottom:18}}>
                   <SectionHdr>Recent Sessions</SectionHdr>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>

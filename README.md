@@ -16,6 +16,7 @@ A sales pitch deck training platform. Build structured call flows with branching
 - **Tree View** — Hierarchical card tree with collapse/expand, zoom controls, loop detection, and orphan identification
 - **Admin Panel** — Manage users (create, edit, delete, password reset) and teams (create, edit, assign admins/members)
 - **Deck Management** — Multiple decks per org with color, icon, and visibility settings (public/private with team/user access controls)
+- **Home Tab** — Performance dashboard showing win rates, average call duration, intended path adherence, top cards, top objections, and per-deck breakdowns with team sub-tabs
 - **Inflection System** — 20 delivery cues across 5 categories (pace, tone, attitude, rhetorical, personality) embedded in card prompts via rich-text markup
 
 ## Quick Start
@@ -66,7 +67,7 @@ React 19 (Vite)  ──▶  Express REST API  ──▶  PostgreSQL (pg Pool)
                          auth.js
 ```
 
-- **Frontend:** Modular React app. `src/App.jsx` is the shell; components in `src/components/` (8 files), shared code in `src/lib/` (4 files). All styling via JS objects — no CSS files.
+- **Frontend:** Modular React app. `src/App.jsx` is the shell; components in `src/components/` (9 files), shared code in `src/lib/` (4 files). All styling via JS objects — no CSS files.
 - **Backend:** Express with JWT cookie authentication, role-based authorization (admin/user), and PostgreSQL database via async `pg` Pool.
 - **Dev proxy:** Vite proxies `/api/*` to Express on port 3001 during development.
 - **Production:** Express serves the built `dist/` directory and handles API routes on a single port.
@@ -85,6 +86,7 @@ overcard/
 │   ├── components/
 │   │   ├── Cards.jsx       # CardsTab, ObjStackEditor, ObjectionsTab
 │   │   ├── Editor.jsx      # RichPromptEditor, CardEditorSheet
+│   │   ├── Home.jsx        # HomeTab (performance dashboard, team sub-tabs)
 │   │   ├── Panels.jsx      # DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel
 │   │   ├── Play.jsx        # ObjPicker, Navigator, PlayTab
 │   │   ├── Sessions.jsx    # ShareModal, SessionReview, SessionsTab, SessionAnalytics
@@ -154,9 +156,11 @@ See `CLAUDE.md` for the complete endpoint reference.
 
 - **Autosave:** Deck changes autosave after 800ms of inactivity via `PUT /api/decks/:id`
 - **No CSS:** All styling is inline JS objects. Style helper functions (`solidBtn`, `ghostBtn`, etc.) handle common patterns.
-- **ES5-style code:** Uses `var`, `function`, `Object.assign` — no arrow functions, no spread operator, no destructuring in the frontend
+- **ES5-style code:** Uses `var`, `function`, `Object.assign` — no arrow functions, no spread operator, no destructuring. Applies to the frontend only; the backend uses modern JS freely.
 - **Rich text:** Card prompts support `**bold**`, `*italic*`, and `*text*[Inflection]` markup
 - **Polling:** Feedback and share modals poll every 5 seconds with proper cleanup on unmount
+- **Single-session enforcement:** Each login records a session token (`activeToken`) in the database. A second login from a different device invalidates the first session, returning a `session_replaced` 401 that the frontend intercepts to show a kicked-out message.
+- **Smart seeding:** `server/seed.js` uses upsert logic so it can be run repeatedly without creating duplicate data.
 
 ## Production Deployment
 

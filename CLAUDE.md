@@ -22,9 +22,9 @@ No test framework is configured.
 
 **Stack:** React 19 (Vite) frontend + Express backend + PostgreSQL (`pg` Pool, async).
 
-**Modular frontend:** `src/App.jsx` is the app shell (auth, tabs, autosave). Components are split into `src/components/` (8 files) and shared code into `src/lib/` (4 files):
+**Modular frontend:** `src/App.jsx` is the app shell (auth, tabs, autosave). Components are split into `src/components/` (9 files) and shared code into `src/lib/` (4 files):
 
-- `src/components/` — `Cards.jsx`, `Editor.jsx`, `Panels.jsx`, `Play.jsx`, `Sessions.jsx`, `Tooltip.jsx`, `Viewer.jsx`, `ui.jsx`
+- `src/components/` — `Cards.jsx`, `Editor.jsx`, `Home.jsx`, `Panels.jsx`, `Play.jsx`, `Sessions.jsx`, `Tooltip.jsx`, `Viewer.jsx`, `ui.jsx`
 - `src/lib/` — `api.js`, `constants.js`, `richtext.js`, `styles.js`
 
 **Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined in `src/lib/styles.js` (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
@@ -44,9 +44,9 @@ JWT-based authentication with HttpOnly cookies.
 
 - **Cookie:** `rc_token` — HttpOnly, SameSite=Strict, Secure in production
 - **JWT payload:** `{ sub: userId, role, orgId }` — 24h expiry by default
-- **Middleware:** `requireAuth` (validates JWT, attaches `req.user`) and `requireAdmin` (checks `role === "admin"`)
+- **Middleware:** `requireAuth` (async — validates JWT, attaches `req.user`) and `requireAdmin` (chains `requireAuth` then checks `role === "admin"`)
 - **Roles:** `admin` (full org access, deck CRUD, user management) and `user` (play sessions, view cards/objections read-only, share sessions)
-- **Dev login:** Uses `DEV_ORGS` in LoginScreen (gated by `import.meta.env.DEV`) with org picker and user quick-select. Default credentials are configured in `server/seed.js` (development only).
+- **Dev login:** Uses `DEV_ORGS` and `DEV_PASSWORD` defined unconditionally at module level in `Panels.jsx`. Only the LoginScreen UI that renders them is conditionally shown. Default credentials are configured in `server/seed.js` (development only).
 
 ## Database Schema
 
@@ -61,7 +61,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", role |
 | `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility |
 | `deck_access` | Deck visibility controls for private decks | "deckId", "entityType" (team/user), "entityId" |
-| `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", mode, outcome, events (JSONB), notes (JSONB), metrics (JSONB) |
+| `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", "deckColor", "deckIcon", mode, status, outcome, sold, "soldCardId", "soldCardTitle", events (JSONB), notes (JSONB), metrics (JSONB) |
 | `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
 | `session_shares` | Session sharing between users | id, "sessionId", "fromUserId", "toUserId", context |
 
@@ -85,7 +85,11 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 
 **Session** — A live or practice run through a deck:
 - `mode` — "live" or "practice"
+- `status` — "completed" (default); tracks session lifecycle state
 - `outcome` — "completed", "sold", "booked", or "abandoned"
+- `sold` — boolean; true when outcome is a successful close
+- `soldCardId` / `soldCardTitle` — card where the close was recorded (nullable)
+- `deckColor` / `deckIcon` — snapshot of deck appearance at time of session (denormalized)
 - `events[]` — Array of `{ type:"visit", cardId, cardTitle, cardType, isObjCard, stackLabel, intendedPath, ts, durationMs }`
 - `notes[]` — Array of `{ cardId, cardTitle, text, ts }`
 - `metrics` — Computed stats: totalVisits, intendedVisits, intendedPct, noteCount, objectionVisits, uniqueCards, totalMs, etc.
@@ -107,6 +111,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow` |
 | `src/components/Tooltip.jsx` | `TipCtx`, `GlobalInflTooltip`, `InflWord`, `RichPromptDisplay`, `OverviewDisplay`, `OverviewEditor` |
 | `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
+| `src/components/Home.jsx` | `HomeTab` |
 | `src/components/Play.jsx` | `ObjPicker`, `Navigator`, `PlayTab` |
 | `src/components/Viewer.jsx` | `TreeView`, `SwimlaneView` |
 | `src/components/Sessions.jsx` | `ShareModal`, `SessionReview`, `SessionsTab`, `SessionAnalytics` |
@@ -139,6 +144,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | GET | `/api/sessions` | Yes | List sessions (supports `?scope=`, `?deckId=`, `?mode=`, `?outcome=`, `?from=`, `?to=`) |
 | POST | `/api/sessions` | Yes | Upsert session (requires `id` in body) |
 | DELETE | `/api/sessions/:id` | Yes | Delete session (owner or org admin) |
+| GET | `/api/sessions/org-users` | Yes | List all users in the caller's org (used by sharing UI) |
 
 ### Session Feedback
 | Method | Path | Auth | Description |
@@ -200,7 +206,7 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Immutable updates:** All state updates use `Object.assign({}, prev, changes)` pattern. No spread operator (ES5-style codebase).
 - **Inline styling:** All styles are JS objects. Helper functions for common patterns. No CSS classes.
 - **Auth flow:** JWT in HttpOnly cookie. `setUnauthHandler` sets a global 401 redirect. `apiGet/Put/Post/Del` check for 401 on every response.
-- **Dev login:** `DEV_ORGS` gated by `import.meta.env.DEV` with preset orgs/teams/users. Default credentials are configured in `server/seed.js` (development only).
+- **Dev login:** `DEV_ORGS` and `DEV_PASSWORD` defined unconditionally in `Panels.jsx`. The quick-select UI is shown based on context, not `import.meta.env.DEV`. Default credentials are configured in `server/seed.js` (development only).
 - **Read-only mode:** CardsTab and ObjectionsTab accept a `readOnly` prop. Non-admin users see cards/objections but cannot edit.
 - **Feedback notifications:** `feedbackCount` and `latestFeedbackAt` returned per session by API. Frontend stores `fbSeenTs` in localStorage to track read state.
 
@@ -220,8 +226,8 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `SL_LANE_W` | `src/components/Viewer.jsx` | Swimlane column width (186) |
 | `SL_COL_GAP` | `src/components/Viewer.jsx` | Gap between swimlane columns (36) |
 | `TAB_ACCENTS` | `src/App.jsx` | Color accent per tab |
-| `USER_TABS` | `src/App.jsx` | Tabs for regular users: play, sessions, cards, objections |
-| `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: play, sessions, cards, objections, admin |
+| `USER_TABS` | `src/App.jsx` | Tabs for regular users: home, play, sessions, cards, objections |
+| `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: home, play, sessions, cards, objections, admin |
 
 ## Environment Variables
 
@@ -262,6 +268,6 @@ Deploy steps:
 - **Password policy:** 8+ characters, at least one uppercase letter, at least one digit. Enforced on user creation and password reset.
 - **Org scoping:** All endpoints validate `orgId` to prevent cross-org data access (IDOR protection).
 - **XSS prevention:** `escH()` in `Editor.jsx` escapes all user content before innerHTML rendering in the contentEditable editor.
-- **Dev-only features:** `DEV_ORGS` and `DEV_PASSWORD` gated by `import.meta.env.DEV` — stripped from production bundles by Vite.
+- **Dev-only features:** `DEV_ORGS` and `DEV_PASSWORD` are defined unconditionally in `Panels.jsx` (not tree-shaken by Vite). Only the LoginScreen UI rendering them checks a condition. Do not rely on Vite bundle stripping for these values.
 - **Seed guard:** `server/seed.js` exits immediately if `NODE_ENV=production`.
 - **Feedback limits:** Feedback text capped at 5000 characters.
