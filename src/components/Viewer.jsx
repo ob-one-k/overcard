@@ -279,28 +279,80 @@ function slEdgePath(fp, tp, portY) {
   }
 }
 
+// ─── CANVAS VIEW (free drag-and-drop node canvas) ─────────────────────────────
+var CANVAS_W = 3600;
+var CANVAS_H = 2800;
+var DRAG_THRESHOLD = 6;
+
+function canvasEdgePath(fx, fy, tx, ty) {
+  var dx = tx - fx;
+  var cp = Math.max(60, Math.abs(dx) * 0.45);
+  if (dx >= 0) {
+    return "M "+fx+","+fy+" C "+(fx+cp)+","+fy+" "+(tx-cp)+","+ty+" "+tx+","+ty;
+  }
+  var drop = Math.max(70, Math.abs(ty - fy) * 0.3 + 60);
+  var mx = (fx + tx) / 2;
+  return "M "+fx+","+fy
+    +" C "+(fx+50)+","+fy+" "+(fx+50)+","+(fy+drop)+" "+mx+","+(fy+drop)
+    +" C "+(tx-50)+","+(fy+drop)+" "+(tx-50)+","+ty+" "+tx+","+ty;
+}
+
 export function SwimlaneView({ cards, rootCard, onEdit, onSetRoot }) {
-  var [zoom, setZoom]       = useState(1.0);
+  var posRef       = useRef(null);
+  var [posTick,    setPosTick]    = useState(0);
+  var [pan,        setPan]        = useState({x:32,y:32});
+  var panRef       = useRef({x:32,y:32});
+  var [zoom,       setZoom]       = useState(1.0);
+  var zoomRef      = useRef(1.0);
+  var dragRef      = useRef({active:false,isPan:false,cardId:null,startPX:0,startPY:0,startCX:0,startCY:0,moved:false});
   var [selectedId, setSelectedId] = useState(null);
-  var scrollRef  = useRef(null);
-  var pinchRef   = useRef(null);
-  var zoomRef    = useRef(1.0);
+  var containerRef = useRef(null);
+  var pinchRef     = useRef(null);
+  var canEdit      = !!onEdit;
 
-  useEffect(function() { zoomRef.current = zoom; }, [zoom]);
-
-  // Attach non-passive touchmove for pinch zoom — scoped to this viewer
+  // Initialize card positions from layout algorithm; preserve existing positions for known cards
+  var cardKeyStr = Object.keys(cards).sort().join(",");
   useEffect(function() {
-    var el = scrollRef.current;
+    var layout = buildTypeLayout(cards, rootCard, null, 0, false);
+    var next = {};
+    Object.keys(layout.posMap).forEach(function(id) {
+      next[id] = (posRef.current && posRef.current[id])
+        ? posRef.current[id]
+        : {x: layout.posMap[id].x, y: layout.posMap[id].y};
+    });
+    posRef.current = next;
+    setPosTick(function(t) { return t+1; });
+  }, [cardKeyStr]); // eslint-disable-line react-hooks/exhaustive_deps
+
+  // Non-passive touchmove for pinch-to-zoom
+  useEffect(function() {
+    var el = containerRef.current;
     if (!el) return;
     function dist(e) { return Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY); }
-    function onTS(e) { if (e.touches.length===2) pinchRef.current={d:dist(e),z:zoomRef.current}; }
-    function onTM(e) {
-      if (e.touches.length===2 && pinchRef.current) {
-        e.preventDefault();
-        setZoom(Math.min(1.55, Math.max(0.40, pinchRef.current.z * dist(e) / pinchRef.current.d)));
+    function onTS(e) {
+      if (e.touches.length === 2) {
+        var rect = el.getBoundingClientRect();
+        var mx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        var my = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        pinchRef.current = {d: dist(e), z: zoomRef.current, mx: mx, my: my};
       }
     }
-    function onTE(e) { if (e.touches.length<2) pinchRef.current=null; }
+    function onTM(e) {
+      if (e.touches.length === 2 && pinchRef.current) {
+        e.preventDefault();
+        var nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchRef.current.z * dist(e) / pinchRef.current.d));
+        var mx = pinchRef.current.mx, my = pinchRef.current.my;
+        var np = {
+          x: mx - (mx - panRef.current.x) * (nz / zoomRef.current),
+          y: my - (my - panRef.current.y) * (nz / zoomRef.current)
+        };
+        zoomRef.current = nz;
+        panRef.current = np;
+        setZoom(nz);
+        setPan(Object.assign({}, np));
+      }
+    }
+    function onTE(e) { if (e.touches.length < 2) pinchRef.current = null; }
     el.addEventListener("touchstart", onTS, {passive:true});
     el.addEventListener("touchmove",  onTM, {passive:false});
     el.addEventListener("touchend",   onTE, {passive:true});
@@ -311,189 +363,256 @@ export function SwimlaneView({ cards, rootCard, onEdit, onSetRoot }) {
     };
   }, []);
 
-  if (!rootCard || !cards || Object.keys(cards).length === 0) {
-    return <div style={{padding:32,textAlign:"center",color:"rgba(255,255,255,.3)",fontSize:13}}>No cards yet.</div>;
+  function fitToView() {
+    var ids = Object.keys(posRef.current || {});
+    if (!ids.length || !containerRef.current) return;
+    var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    ids.forEach(function(id) {
+      var p = posRef.current[id];
+      var h = cardHeight(cards[id] || {answers:[]});
+      minX=Math.min(minX,p.x); minY=Math.min(minY,p.y);
+      maxX=Math.max(maxX,p.x+SL_CARD_W); maxY=Math.max(maxY,p.y+h);
+    });
+    var pad=40, cW=containerRef.current.clientWidth, cH=containerRef.current.clientHeight;
+    var nz = Math.min(1.2, Math.min(cW/(maxX-minX+pad*2), cH/(maxY-minY+pad*2)));
+    nz = Math.max(MIN_ZOOM, nz);
+    var np = {x:(pad-minX)*nz, y:(pad-minY)*nz};
+    setZoom(nz); zoomRef.current=nz;
+    setPan(np); panRef.current=np;
   }
 
-  var isCompact = zoom < 0.70;
-  var canEdit   = !!onEdit;
+  // Ctrl+wheel zoom
+  function onWheel(e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    var rect = containerRef.current ? containerRef.current.getBoundingClientRect() : {left:0,top:0};
+    var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    var factor = 1 - e.deltaY * 0.002;
+    var nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * factor));
+    var np = {
+      x: mx - (mx - panRef.current.x) * (nz / zoomRef.current),
+      y: my - (my - panRef.current.y) * (nz / zoomRef.current)
+    };
+    zoomRef.current = nz; panRef.current = np;
+    setZoom(nz); setPan(Object.assign({}, np));
+  }
 
-  // Compute how much extra height the selected card adds beyond its base height
-  var selExpansion = 0;
-  if (selectedId && canEdit) {
-    var sc = cards[selectedId];
-    if (sc) {
-      if (isCompact) {
-        var scLinked   = (sc.answers||[]).filter(function(a){return a.next;}).length;
-        var scUnlinked = (sc.answers||[]).filter(function(a){return !a.next && a.label;}).length;
-        var scTotal    = scLinked + scUnlinked;
-        var scShown    = Math.min(scTotal, SL_ANS_MAX);
-        var scOverflow = scTotal > SL_ANS_MAX ? 1 : 0;
-        selExpansion = (scShown + scOverflow) * COMPACT_ANS_H + 28;
+  // Container background pointer handlers (pan)
+  function onContainerPointerDown(e) {
+    if (e.target.closest("[data-canvas-card]")) return;
+    dragRef.current = {active:true,isPan:true,cardId:null,startPX:e.clientX,startPY:e.clientY,startCX:panRef.current.x,startCY:panRef.current.y,moved:false};
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onContainerPointerMove(e) {
+    var d = dragRef.current;
+    if (!d.active || !d.isPan) return;
+    var dx = e.clientX - d.startPX, dy = e.clientY - d.startPY;
+    if (!d.moved && Math.sqrt(dx*dx+dy*dy) < DRAG_THRESHOLD) return;
+    d.moved = true;
+    var np = {x: d.startCX + dx, y: d.startCY + dy};
+    panRef.current = np;
+    setPan(Object.assign({}, np));
+  }
+  function onContainerPointerUp() {
+    if (dragRef.current.active && dragRef.current.isPan) {
+      dragRef.current = Object.assign({}, dragRef.current, {active:false, moved:false});
+    }
+  }
+
+  // Card pointer handlers (drag + click/select)
+  function onCardPointerDown(e, cardId) {
+    e.stopPropagation();
+    var pos = (posRef.current && posRef.current[cardId]) || {x:0,y:0};
+    dragRef.current = {active:true,isPan:false,cardId:cardId,startPX:e.clientX,startPY:e.clientY,startCX:pos.x,startCY:pos.y,moved:false};
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onCardPointerMove(e, cardId) {
+    var d = dragRef.current;
+    if (!d.active || d.isPan || d.cardId !== cardId) return;
+    var dx = e.clientX - d.startPX, dy = e.clientY - d.startPY;
+    if (!d.moved && Math.sqrt(dx*dx+dy*dy) < DRAG_THRESHOLD) return;
+    d.moved = true;
+    var nx = d.startCX + dx / zoomRef.current;
+    var ny = d.startCY + dy / zoomRef.current;
+    if (posRef.current) posRef.current[cardId] = {x:nx, y:ny};
+    var el = document.getElementById("cc-"+cardId);
+    if (el) { el.style.left = nx+"px"; el.style.top = ny+"px"; }
+  }
+  function onCardPointerUp(e, cardId, card) {
+    var d = dragRef.current;
+    if (!d.active || d.cardId !== cardId) return;
+    var wasMoved = d.moved;
+    dragRef.current = Object.assign({}, dragRef.current, {active:false, moved:false});
+    if (wasMoved) {
+      setPosTick(function(t) { return t+1; }); // commit edges
+    } else {
+      // Click: select or edit
+      if (canEdit) {
+        if (selectedId === cardId) { onEdit(card); setSelectedId(null); }
+        else setSelectedId(cardId);
       } else {
-        selExpansion = 28; // just the action bar in normal mode
+        setSelectedId(selectedId === cardId ? null : cardId);
       }
     }
   }
 
-  var layout   = buildTypeLayout(cards, rootCard, selectedId, selExpansion, isCompact);
-  var laneCards= layout.laneCards, activeLanes=layout.activeLanes, laneX=layout.laneX;
-  var posMap   = layout.posMap, edges=layout.edges, canvasW=layout.canvasW, canvasH=layout.canvasH;
+  if (!cards || Object.keys(cards).length === 0) {
+    return <div style={{padding:32,textAlign:"center",color:"rgba(255,255,255,.3)",fontSize:13}}>No cards yet.</div>;
+  }
+
+  // Build edge list from current positions
+  var pos = posRef.current || {};
+  var edgeList = [];
+  var inboundCounts = {};
+  Object.keys(cards).forEach(function(fromId) {
+    var card = cards[fromId];
+    var fp = pos[fromId];
+    if (!fp) return;
+    var linked = (card.answers||[]).filter(function(a){return a.next && pos[a.next];});
+    linked.forEach(function(ans, rowIdx) {
+      var tp = pos[ans.next];
+      if (!tp) return;
+      inboundCounts[ans.next] = (inboundCounts[ans.next]||0) + 1;
+      var fx = fp.x + SL_CARD_W;
+      var fy = fp.y + SL_HDR_H + Math.min(rowIdx, SL_ANS_MAX-1) * SL_ANS_H + SL_ANS_H/2;
+      var toCard = cards[ans.next];
+      var th = toCard ? cardHeight(toCard) : SL_HDR_H;
+      var tx = tp.x;
+      var ty = tp.y + th/2;
+      var isIntended = !!(toCard && toCard.intendedPath);
+      edgeList.push({d:canvasEdgePath(fx,fy,tx,ty), intended:isIntended, key:fromId+"-"+ans.id});
+    });
+  });
 
   return (
     <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
       {/* Toolbar */}
       <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
-        <button onClick={function(){setZoom(function(z){return Math.min(1.55,+(z+0.15).toFixed(2));});}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:5,padding:"3px 9px",cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>+</button>
+        <button onClick={function(){var nz=Math.min(MAX_ZOOM,+(zoom+0.15).toFixed(2));setZoom(nz);zoomRef.current=nz;}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:5,padding:"3px 9px",cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>+</button>
         <span style={{fontSize:11,color:"rgba(255,255,255,.35)",minWidth:36,textAlign:"center",fontFamily:"inherit"}}>{Math.round(zoom*100)}%</span>
-        <button onClick={function(){setZoom(function(z){return Math.max(0.40,+(z-0.15).toFixed(2));});}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:5,padding:"3px 9px",cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>−</button>
-        <button onClick={function(){setZoom(1.0);}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.4)",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11,marginLeft:2,fontFamily:"inherit"}}>Reset</button>
-        {isCompact && <span style={{marginLeft:"auto",fontSize:9,color:"rgba(168,255,62,.6)",letterSpacing:.5,textTransform:"uppercase",fontWeight:700}}>Compact</span>}
+        <button onClick={function(){var nz=Math.max(MIN_ZOOM,+(zoom-0.15).toFixed(2));setZoom(nz);zoomRef.current=nz;}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:5,padding:"3px 9px",cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>−</button>
+        <button onClick={function(){setZoom(1.0);zoomRef.current=1.0;}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.4)",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11,marginLeft:2,fontFamily:"inherit"}}>Reset</button>
+        <button onClick={fitToView} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.4)",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11,marginLeft:2,fontFamily:"inherit"}}>Fit</button>
+        <span style={{marginLeft:"auto",fontSize:9,color:"rgba(255,255,255,.2)",fontFamily:"inherit"}}>Drag cards · pinch or ctrl+scroll to zoom · drag canvas to pan</span>
       </div>
 
-      {/* Scroll area */}
-      <div ref={scrollRef} style={{overflow:"auto",flex:1,userSelect:"none"}}>
-        {/* Wrapper sized to zoomed canvas so scrollbars appear correctly */}
-        <div style={{position:"relative",width:canvasW*zoom+32,height:canvasH*zoom+32,minWidth:"100%",flexShrink:0}}>
-          {/* Scaled canvas */}
-          <div style={{position:"absolute",top:0,left:0,width:canvasW,height:canvasH,transform:"scale("+zoom+")",transformOrigin:"top left"}}>
-
-            {/* Column lane headers */}
-            {activeLanes.map(function(t, i) {
-              var meta = TM[t] || TM.pitch;
-              var x = laneX[t];
+      {/* Canvas container */}
+      <div
+        ref={containerRef}
+        style={{flex:1,overflow:"hidden",position:"relative",cursor:"grab",userSelect:"none"}}
+        onPointerDown={onContainerPointerDown}
+        onPointerMove={onContainerPointerMove}
+        onPointerUp={onContainerPointerUp}
+        onWheel={onWheel}
+      >
+        {/* Scaled + panned inner canvas */}
+        <div style={{
+          position:"absolute",
+          width:CANVAS_W, height:CANVAS_H,
+          transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")",
+          transformOrigin:"0 0"
+        }}>
+          {/* Edges SVG */}
+          <svg style={{position:"absolute",inset:0,width:CANVAS_W,height:CANVAS_H,overflow:"visible",pointerEvents:"none"}}>
+            <defs>
+              <marker id="cv-arr-normal" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+                <polygon points="0,0 7,3.5 0,7" fill={SL_EDGE_NORMAL}/>
+              </marker>
+              <marker id="cv-arr-intended" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+                <polygon points="0,0 7,3.5 0,7" fill={SL_EDGE_INTENDED}/>
+              </marker>
+            </defs>
+            {edgeList.map(function(edge) {
+              var stroke = edge.intended ? SL_EDGE_INTENDED : SL_EDGE_NORMAL;
+              var marker = edge.intended ? "url(#cv-arr-intended)" : "url(#cv-arr-normal)";
               return (
-                <div key={t+"-hdr"} style={{position:"absolute",left:x,top:SL_PAD,width:SL_LANE_W,height:SL_LANE_HDR-6,background:meta.color+"16",border:"1px solid "+meta.color+"35",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",gap:5,pointerEvents:"none",userSelect:"none"}}>
-                  <span style={{fontSize:13}}>{meta.icon}</span>
-                  <span style={{fontSize:10,fontWeight:700,color:meta.color,textTransform:"uppercase",letterSpacing:1.1}}>{meta.label}</span>
-                  <span style={{fontSize:9,color:"rgba(255,255,255,.28)",marginLeft:1}}>{laneCards[t].length}</span>
+                <path key={edge.key} d={edge.d} stroke={stroke} strokeWidth={edge.intended?1.8:1.3} fill="none" markerEnd={marker}/>
+              );
+            })}
+          </svg>
+
+          {/* Card nodes */}
+          {Object.keys(pos).map(function(cardId) {
+            var p = pos[cardId];
+            var card = cards[cardId];
+            if (!card || !p) return null;
+            var meta       = TM[card.type] || TM.pitch;
+            var isRoot     = cardId === rootCard;
+            var isSelected = cardId === selectedId;
+            var linked     = (card.answers||[]).filter(function(a){return a.next;});
+            var unlinked   = (card.answers||[]).filter(function(a){return !a.next && a.label;});
+            var allRows    = linked.concat(unlinked);
+            var shown      = allRows.slice(0, SL_ANS_MAX);
+            var overflow   = allRows.length - shown.length;
+            var isMerge    = (inboundCounts[cardId]||0) > 1;
+            var cardH      = cardHeight(card);
+            return (
+              <div
+                id={"cc-"+cardId}
+                key={cardId}
+                data-canvas-card="1"
+                onPointerDown={function(e){onCardPointerDown(e,cardId);}}
+                onPointerMove={function(e){onCardPointerMove(e,cardId);}}
+                onPointerUp={function(e){onCardPointerUp(e,cardId,card);}}
+                style={{
+                  position:"absolute", left:p.x, top:p.y,
+                  width:SL_CARD_W, height:cardH,
+                  background: card.intendedPath ? "rgba(168,255,62,.06)" : "rgba(255,255,255,.06)",
+                  borderTop:"3px solid "+meta.color,
+                  borderRight:"1.5px solid "+(isSelected?meta.color:card.intendedPath?"rgba(168,255,62,.28)":"rgba(255,255,255,.10)"),
+                  borderBottom:"1.5px solid "+(isSelected?meta.color:card.intendedPath?"rgba(168,255,62,.28)":"rgba(255,255,255,.10)"),
+                  borderLeft:"1.5px solid "+(isSelected?meta.color:card.intendedPath?"rgba(168,255,62,.28)":"rgba(255,255,255,.10)"),
+                  borderRadius:10, cursor:"pointer",
+                  overflow:"hidden",
+                  boxShadow: isSelected ? ("0 0 0 3px "+meta.color+"33,0 8px 28px rgba(0,0,0,.6)") : "0 2px 8px rgba(0,0,0,.35)",
+                  transition:"box-shadow .18s, border-color .18s",
+                  zIndex: isSelected ? 10 : 1,
+                  display:"flex", flexDirection:"column",
+                  touchAction:"none",
+                }}>
+                {/* Header */}
+                <div style={{height:SL_HDR_H,padding:"0 8px",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+                  <span style={{fontSize:11}}>{meta.icon}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title || card.type}</span>
+                  {isRoot && <span style={{fontSize:8,background:"rgba(0,180,255,.22)",color:"#00B4FF",borderRadius:99,padding:"1px 5px",fontWeight:700,flexShrink:0}}>root</span>}
+                  {isMerge && <span style={{fontSize:9,color:meta.color,opacity:.65,flexShrink:0}}>⊕</span>}
+                  {card.intendedPath && <span style={{fontSize:9,color:"#A8FF3E",flexShrink:0}}>★</span>}
                 </div>
-              );
-            })}
-
-            {/* Vertical lane dividers */}
-            {activeLanes.slice(0,-1).map(function(t, i) {
-              var nextX = laneX[activeLanes[i+1]];
-              var sepX = laneX[t] + SL_LANE_W + (nextX - laneX[t] - SL_LANE_W) / 2;
-              return (
-                <div key={t+"-div"} style={{position:"absolute",left:sepX,top:SL_PAD,height:canvasH-SL_PAD*2,width:1,background:"rgba(255,255,255,.055)",pointerEvents:"none"}}/>
-              );
-            })}
-
-            {/* Edges SVG — rendered below cards */}
-            <svg style={{position:"absolute",inset:0,width:canvasW,height:canvasH,overflow:"visible",pointerEvents:"none"}}>
-              <defs>
-                <marker id="arr-normal" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
-                  <polygon points="0,0 7,3.5 0,7" fill={SL_EDGE_NORMAL}/>
-                </marker>
-                <marker id="arr-intended" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
-                  <polygon points="0,0 7,3.5 0,7" fill={SL_EDGE_INTENDED}/>
-                </marker>
-              </defs>
-              {edges.map(function(edge, i) {
-                var fp = posMap[edge.from], tp = posMap[edge.to];
-                if (!fp || !tp) return null;
-                var ep = slEdgePath(fp, tp, edge.portY);
-                var stroke   = edge.toIntended ? SL_EDGE_INTENDED : SL_EDGE_NORMAL;
-                var markerId = edge.toIntended ? "url(#arr-intended)" : "url(#arr-normal)";
-                var strokeW  = edge.toIntended ? 1.8 : 1.3;
-                return (
-                  <g key={i}>
-                    <path d={ep.d} stroke={stroke} strokeWidth={strokeW} fill="none" markerEnd={markerId}/>
-                    <circle cx={ep.x1} cy={ep.y1} r={2.5} fill={stroke}/>
-                  </g>
-                );
-              })}
-            </svg>
-
-            {/* Cards */}
-            {Object.keys(posMap).map(function(cardId) {
-              var pos  = posMap[cardId];
-              var card = cards[cardId];
-              if (!card) return null;
-              var meta       = TM[card.type] || TM.pitch;
-              var isRoot     = cardId === rootCard;
-              var isSelected = cardId === selectedId;
-              var linked   = (card.answers || []).filter(function(a){ return a.next; });
-              var unlinked = (card.answers || []).filter(function(a){ return !a.next && a.label; });
-              var allRows  = linked.concat(unlinked);
-              var shown    = allRows.slice(0, SL_ANS_MAX);
-              var overflow = allRows.length - shown.length;
-              var inboundCt = edges.filter(function(e){ return e.to === cardId; }).length;
-              var isMerge   = inboundCt > 1;
-              // cardH = base height + selection expansion (only for selected card)
-              var expansion = (isSelected && canEdit) ? selExpansion : 0;
-              var cardH = isCompact ? (COMPACT_CARD_H + expansion) : (pos.h + expansion);
-              // In compact mode, answer rows only visible when selected
-              var showAnswers = !isCompact || (isSelected && canEdit);
-              var ansH = isCompact ? COMPACT_ANS_H : SL_ANS_H;
-              return (
-                <div key={cardId}
-                  onClick={function(){ if(canEdit){ if(isSelected) onEdit(card); else setSelectedId(cardId); } else setSelectedId(isSelected?null:cardId); }}
-                  style={{
-                    position:"absolute", left:pos.x, top:pos.y,
-                    width:SL_CARD_W, height:cardH,
-                    background: card.intendedPath ? "rgba(168,255,62,.06)" : "rgba(255,255,255,.06)",
-                    borderTop:"3px solid "+meta.color,
-                    borderRight:"1.5px solid "+(isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)"),
-                    borderBottom:"1.5px solid "+(isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)"),
-                    borderLeft:"1.5px solid "+(isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)"),
-                    borderRadius:10, cursor: canEdit ? "pointer" : "default",
-                    overflow:"hidden",
-                    boxShadow: isSelected ? ("0 0 0 3px "+meta.color+"33,0 8px 28px rgba(0,0,0,.6)") : "0 2px 8px rgba(0,0,0,.35)",
-                    transition:"box-shadow .18s, height .18s, border-color .18s",
-                    zIndex: isSelected ? 10 : 1,
-                    display:"flex", flexDirection:"column",
-                  }}>
-                  {/* Header row — compact uses larger text, fills full card height when not selected */}
-                  {isCompact ? (
-                    <div style={{height:COMPACT_CARD_H,padding:"0 9px",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                      <span style={{fontSize:14,flexShrink:0}}>{meta.icon}</span>
-                      <span style={{fontSize:13,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title || card.type}</span>
-                      {isRoot && <span style={{fontSize:7,background:"rgba(0,180,255,.22)",color:"#00B4FF",borderRadius:99,padding:"1px 4px",fontWeight:700,flexShrink:0}}>root</span>}
-                      {card.intendedPath && <span style={{fontSize:11,color:"#A8FF3E",flexShrink:0}}>★</span>}
-                      {isMerge && <span style={{fontSize:9,color:meta.color,opacity:.7,flexShrink:0}}>⊕</span>}
+                {/* Answer rows */}
+                {shown.length > 0 && <div style={{height:1,background:"rgba(255,255,255,.07)",flexShrink:0}}/>}
+                {shown.map(function(ans, rowIdx) {
+                  var hasLink = !!ans.next;
+                  return (
+                    <div key={ans.id||rowIdx} style={{height:SL_ANS_H,padding:"0 8px",display:"flex",alignItems:"center",gap:5,flexShrink:0,borderTop:rowIdx>0?"1px solid rgba(255,255,255,.05)":"none"}}>
+                      <span style={{fontSize:9,color:hasLink?"rgba(255,255,255,.72)":"rgba(255,255,255,.28)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ans.label||"—"}</span>
+                      {hasLink && <span style={{display:"inline-block",width:5,height:5,borderRadius:"50%",background:"rgba(255,255,255,.35)",flexShrink:0}}/>}
+                      {hasLink && <span style={{fontSize:9,color:"rgba(255,255,255,.28)",flexShrink:0,lineHeight:1}}>→</span>}
                     </div>
-                  ) : (
-                    <div style={{height:SL_HDR_H,padding:"0 8px",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
-                      <span style={{fontSize:11}}>{meta.icon}</span>
-                      <span style={{fontSize:11,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title || card.type}</span>
-                      {isRoot && <span style={{fontSize:8,background:"rgba(0,180,255,.22)",color:"#00B4FF",borderRadius:99,padding:"1px 5px",fontWeight:700,flexShrink:0}}>root</span>}
-                      {isMerge && <span style={{fontSize:9,color:meta.color,opacity:.65,flexShrink:0}}>⊕</span>}
-                      {card.intendedPath && <span style={{fontSize:9,color:"#A8FF3E",flexShrink:0}}>★</span>}
-                    </div>
-                  )}
-                  {/* Divider + answer rows — hidden in compact mode until selected */}
-                  {showAnswers && shown.length > 0 && <div style={{height:1,background:"rgba(255,255,255,.07)",flexShrink:0}}/>}
-                  {showAnswers && shown.map(function(ans, rowIdx) {
-                    var hasLink = !!ans.next;
-                    return (
-                      <div key={ans.id || rowIdx} style={{height:ansH,padding:"0 8px",display:"flex",alignItems:"center",gap:5,flexShrink:0,borderTop:rowIdx>0?"1px solid rgba(255,255,255,.05)":"none"}}>
-                        <span style={{fontSize:isCompact?10:9,color:hasLink?"rgba(255,255,255,.72)":"rgba(255,255,255,.28)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ans.label||"—"}</span>
-                        {hasLink && <span style={{display:"inline-block",width:5,height:5,borderRadius:"50%",background:"rgba(255,255,255,.35)",flexShrink:0}}/>}
-                        {hasLink && <span style={{fontSize:9,color:"rgba(255,255,255,.28)",flexShrink:0,lineHeight:1}}>→</span>}
-                      </div>
-                    );
-                  })}
-                  {/* Overflow stub */}
-                  {showAnswers && overflow > 0 && (
-                    <div style={{height:ansH,padding:"0 8px",display:"flex",alignItems:"center",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.05)"}}>
-                      <span style={{fontSize:9,color:"rgba(255,255,255,.25)",fontStyle:"italic"}}>+{overflow} more</span>
-                    </div>
-                  )}
-                  {/* Selection action bar */}
-                  {isSelected && canEdit && (
-                    <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(4,10,28,.95)",borderTop:"1px solid rgba(255,255,255,.09)",display:"flex"}}>
-                      <button onClick={function(e){e.stopPropagation();onEdit(card);setSelectedId(null);}} style={{flex:1,fontSize:10,color:"rgba(255,255,255,.7)",background:"none",border:"none",padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>✏ Edit</button>
-                      {onSetRoot && !isRoot && (
-                        <button onClick={function(e){e.stopPropagation();onSetRoot(cardId);setSelectedId(null);}} style={{flex:1,fontSize:10,color:"rgba(168,255,62,.8)",background:"none",border:"none",borderLeft:"1px solid rgba(255,255,255,.07)",padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>⬆ Root</button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+                {overflow > 0 && (
+                  <div style={{height:SL_ANS_H,padding:"0 8px",display:"flex",alignItems:"center",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.05)"}}>
+                    <span style={{fontSize:9,color:"rgba(255,255,255,.25)",fontStyle:"italic"}}>+{overflow} more</span>
+                  </div>
+                )}
+                {/* Selection action bar — click card to select, click selected to edit */}
+                {isSelected && canEdit && (
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(4,10,28,.95)",borderTop:"1px solid rgba(255,255,255,.09)",display:"flex"}}>
+                    <button
+                      onPointerDown={function(e){e.stopPropagation();}}
+                      onClick={function(e){e.stopPropagation();onEdit(card);setSelectedId(null);}}
+                      style={{flex:1,fontSize:10,color:"rgba(255,255,255,.7)",background:"none",border:"none",padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>✏ Edit</button>
+                    {onSetRoot && !isRoot && (
+                      <button
+                        onPointerDown={function(e){e.stopPropagation();}}
+                        onClick={function(e){e.stopPropagation();onSetRoot(cardId);setSelectedId(null);}}
+                        style={{flex:1,fontSize:10,color:"rgba(168,255,62,.8)",background:"none",border:"none",borderLeft:"1px solid rgba(255,255,255,.07)",padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>⬆ Root</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

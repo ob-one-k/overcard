@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, INFLECTIONS, INFL_CATS, aid } from "../lib/constants";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, labelSt, inputSt, cardBg } from "../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, labelSt, inputSt, cardBg, SHEET_MAX_H } from "../lib/styles";
 import { TypeBadge, SectionHdr, IntendedBadge, Handle } from "./ui";
 import { TipCtx, OverviewEditor, RichPromptDisplay } from "./Tooltip";
 import { parseRichText, stripMarkup } from "../lib/richtext";
@@ -465,7 +465,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 }
 
 // ─── CARD EDITOR SHEET ────────────────────────────────────────────────────────
-export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose }) {
+export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo }) {
   var isBlank = !card.prompt && !card.title;
   var [form, setForm] = useState({
     id: card.id || uid(),
@@ -478,7 +478,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
   });
   var [linkIdx, setLinkIdx] = useState(null);
   var [previewCardId, setPreviewCardId] = useState(null);
-  var lastTouchId = useRef(null);
+  var touchPreviewRef = useRef(null); // {cardId, ansIdx} — tap-once-for-preview, tap-again-to-select
   var [errs, setErrs] = useState({});
   var [section, setSection] = useState("prompt");
   var [showOv, setShowOv] = useState(function() { return !!(card.overview && card.overview.some(function(b){return b&&b.trim();})); });
@@ -503,11 +503,14 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
     return c.intendedPath && (c.answers || []).some(function(a){ return a.next === form.id; });
   });
   var canEnableIntended = isRootCard || hasIntendedParent;
+  var linkedFromCards = Object.values(allCards || {}).filter(function(c) {
+    return c.id !== form.id && (c.answers||[]).some(function(a){ return a.next === form.id; });
+  });
 
   return (
     <div style={{position:"fixed",inset:0,zIndex:300,display:"flex",flexDirection:"column"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"94vh",display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
         <div style={{padding:"8px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
           <div>
@@ -520,6 +523,26 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
           </div>
         </div>
         <div style={{overflowY:"auto",flex:1,padding:"18px 20px"}}>
+          {/* Linked From — cards that have an answer pointing to this card */}
+          {linkedFromCards.length > 0 && (
+            <div style={{marginBottom:14}}>
+              <label style={labelSt()}>Linked From</label>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {linkedFromCards.map(function(c) {
+                  var m2 = TM[c.type]||TM.pitch;
+                  return (
+                    <button key={c.id}
+                      onClick={function(){ if(onNavigateTo) onNavigateTo(c); }}
+                      style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"5px 10px",fontSize:11,cursor:onNavigateTo?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,color:"rgba(255,255,255,.6)"}}>
+                      <span style={{color:m2.color}}>{m2.icon}</span>
+                      <span>{c.title}</span>
+                      {onNavigateTo && <span style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>↵</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {/* Card type */}
           {availTypes.length > 1 && (
             <div style={{marginBottom:18}}>
@@ -624,10 +647,25 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                   </button>
                   {linkIdx === i && (
                     <div style={{marginTop:8,background:"#0c0d13",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden"}}>
-                      {/* Scrollable list — preview is rendered OUTSIDE this div so hover never causes list reflow */}
+                      {/* Scrollable list — preview panel below has pre-allocated height to prevent reflow on mobile */}
                       <div style={{maxHeight:240,overflowY:"auto"}}>
-                        <button onClick={function(){setAns(i,"next",null);setLinkIdx(null);setPreviewCardId(null);lastTouchId.current=null;}}
-                          onPointerEnter={function(){setPreviewCardId(null);}}
+                        {/* + New Card option */}
+                        {onSaveAndNavigateTo && (
+                          <button onClick={function() {
+                            var newCard = {id:uid(),title:"",type:"pitch",overview:[],intendedPath:false,prompt:"",answers:[{id:aid(),label:"",next:null}]};
+                            var updatedAnswers = form.answers.map(function(a,ai){ return ai===i ? Object.assign({},a,{next:newCard.id}) : a; });
+                            var savedForm = Object.assign({},form,{answers:updatedAnswers});
+                            setLinkIdx(null);
+                            setPreviewCardId(null);
+                            onSaveAndNavigateTo(savedForm, newCard);
+                          }}
+                          style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",color:ac,fontSize:13,padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                            <span style={{fontSize:14}}>✦</span>
+                            <span>New card</span>
+                          </button>
+                        )}
+                        <button onClick={function(){setAns(i,"next",null);setLinkIdx(null);setPreviewCardId(null);touchPreviewRef.current=null;}}
+                          onPointerEnter={function(e){ if(e.pointerType!=="touch") setPreviewCardId(null); }}
                           style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:ans.next===null?"rgba(255,255,255,.08)":"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",color:"rgba(255,255,255,.4)",fontSize:13,padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                           <span>— {lockedType==="objection" ? "End / return to pitch" : "End of path"}</span>
                           {ans.next === null && <span style={{marginLeft:"auto",color:ac}}>✓</span>}
@@ -638,16 +676,23 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                           return (
                             <button
                               key={c.id}
-                              onPointerEnter={function(){setPreviewCardId(c.id);}}
-                              onPointerLeave={function(){setPreviewCardId(null);}}
-                              onTouchStart={function(e){
-                                if (lastTouchId.current !== c.id) {
-                                  e.preventDefault();
-                                  lastTouchId.current = c.id;
+                              onPointerDown={function(e) {
+                                if (e.pointerType !== "touch") return;
+                                e.preventDefault();
+                                var isSameTap = touchPreviewRef.current && touchPreviewRef.current.cardId===c.id && touchPreviewRef.current.ansIdx===i;
+                                if (isSameTap) {
+                                  touchPreviewRef.current = null;
+                                  setPreviewCardId(null);
+                                  setAns(i,"next",c.id);
+                                  setLinkIdx(null);
+                                } else {
+                                  touchPreviewRef.current = {cardId:c.id, ansIdx:i};
                                   setPreviewCardId(c.id);
                                 }
                               }}
-                              onClick={function(){setAns(i,"next",c.id);setLinkIdx(null);setPreviewCardId(null);lastTouchId.current=null;}}
+                              onPointerEnter={function(e){ if(e.pointerType!=="touch") setPreviewCardId(c.id); }}
+                              onPointerLeave={function(e){ if(e.pointerType!=="touch") setPreviewCardId(null); }}
+                              onClick={function(){setAns(i,"next",c.id);setLinkIdx(null);setPreviewCardId(null);touchPreviewRef.current=null;}}
                               style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:ans.next===c.id?"rgba(255,255,255,.09)":isPreviewing?"rgba(255,255,255,.06)":"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",color:"rgba(255,255,255,.75)",fontSize:13,padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"background .1s"}}>
                               <span style={{color:m2.color,fontSize:12,flexShrink:0}}>{m2.icon}</span>
                               <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title}</span>
@@ -656,38 +701,39 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                           );
                         })}
                       </div>
-                      {/* Card preview panel — outside the scroll area, no layout reflow */}
-                      {prevCard && (
-                        <div style={{borderTop:"2px solid "+prevMeta.color,background:"rgba(255,255,255,.04)",padding:"10px 14px 12px",transition:"all .15s"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:prevBullets.length>0||prevCard.prompt?7:0}}>
-                            <TypeBadge type={prevCard.type} small/>
-                            {prevCard.intendedPath && <IntendedBadge/>}
-                            <span style={{fontSize:12,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{prevCard.title}</span>
+                      {/* Card preview panel — pre-allocated height prevents list reflow on mobile */}
+                      <div style={{height:prevCard?96:0,overflow:"hidden",transition:"height .15s",borderTop:prevCard?("2px solid "+prevMeta.color):"none",background:"rgba(255,255,255,.04)"}}>
+                        {prevCard && (
+                          <div style={{padding:"10px 14px 12px"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:prevBullets.length>0||prevCard.prompt?7:0}}>
+                              <TypeBadge type={prevCard.type} small/>
+                              {prevCard.intendedPath && <IntendedBadge/>}
+                              <span style={{fontSize:12,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{prevCard.title}</span>
+                            </div>
+                            {prevBullets.length > 0 && (
+                              <div style={{marginBottom:prevCard.prompt?5:0}}>
+                                {prevBullets.map(function(b,bi){return(
+                                  <div key={bi} style={{display:"flex",alignItems:"flex-start",gap:5,marginBottom:2}}>
+                                    <span style={{color:prevMeta.color,fontSize:8,marginTop:3,flexShrink:0}}>◆</span>
+                                    <span style={{fontSize:10,color:"rgba(255,255,255,.55)",lineHeight:1.4}}>{b}</span>
+                                  </div>
+                                );})}
+                              </div>
+                            )}
+                            {prevCard.prompt && (
+                              <div style={{fontSize:11,color:"rgba(255,255,255,.38)",lineHeight:1.5,fontStyle:"italic",overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",fontFamily:"'Lora',Georgia,serif"}}>
+                                {stripMarkup(prevCard.prompt).slice(0,130)}{stripMarkup(prevCard.prompt).length>130?"…":""}
+                              </div>
+                            )}
                           </div>
-                          {prevBullets.length > 0 && (
-                            <div style={{marginBottom:prevCard.prompt?5:0}}>
-                              {prevBullets.map(function(b,bi){return(
-                                <div key={bi} style={{display:"flex",alignItems:"flex-start",gap:5,marginBottom:2}}>
-                                  <span style={{color:prevMeta.color,fontSize:8,marginTop:3,flexShrink:0}}>◆</span>
-                                  <span style={{fontSize:10,color:"rgba(255,255,255,.55)",lineHeight:1.4}}>{b}</span>
-                                </div>
-                              );})}
-                            </div>
-                          )}
-                          {prevCard.prompt && (
-                            <div style={{fontSize:11,color:"rgba(255,255,255,.38)",lineHeight:1.5,fontStyle:"italic",overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",fontFamily:"'Lora',Georgia,serif"}}>
-                              {stripMarkup(prevCard.prompt).slice(0,130)}{stripMarkup(prevCard.prompt).length>130?"…":""}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
-          <div style={{height:80}}/>
         </div>
         <div style={{padding:"14px 20px",borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",gap:10}}>
           <button onClick={onClose} style={Object.assign({},ghostBtn(),{flex:1})}>Cancel</button>

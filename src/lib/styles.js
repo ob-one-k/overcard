@@ -31,3 +31,10 @@ export function badgeSt(color, bg) {
 export function dividerV(h) {
   return { width:1, height: h || 24, background:"rgba(255,255,255,.07)", flexShrink:0 };
 }
+export var SHEET_MAX_H = (function() {
+  try {
+    var el = document.createElement("div");
+    el.style.maxHeight = "100dvh";
+    return el.style.maxHeight ? "calc(100dvh - 48px)" : "94vh";
+  } catch(e) { return "94vh"; }
+})();

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS } from "../lib/constants";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
 import { TipCtx } from "./Tooltip";
 import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
@@ -210,7 +210,9 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
         <CardEditorSheet card={editing} allCards={deck.cards} rootCard={deck.rootCard} accentColor={deck.color} lockedType={null}
           onSave={function(c){safeUpsert(deck.id,c);setEditing(null);}}
           onDelete={function(id){onDelete(deck.id,id);setEditing(null);}}
-          onClose={function(){setEditing(null);}}/>
+          onClose={function(){setEditing(null);}}
+          onNavigateTo={function(c){setEditing(c);}}
+          onSaveAndNavigateTo={function(saved,next){safeUpsert(deck.id,saved);setEditing(next);}}/>
       )}
     </div>
   );
@@ -231,6 +233,14 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
       return Object.assign({}, p, { cards:nc, rootCard:p.rootCard || nextCard.id });
     });
     setEditCard(null);
+  }
+  function upsertCardAndNavigate(saved, next) {
+    setForm(function(p) {
+      var nextCard = Object.assign({ overview:[], intendedPath:false, prompt:"", answers:[{id:aid(),label:"",next:null}] }, saved || {});
+      var nc = Object.assign({}, p.cards, { [nextCard.id]: nextCard });
+      return Object.assign({}, p, { cards:nc, rootCard:p.rootCard || nextCard.id });
+    });
+    setEditCard(next);
   }
 
   function deleteCard(id) {
@@ -257,7 +267,7 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
   return (
     <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:"92vh",display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
 
         {!editMeta ? (
@@ -387,7 +397,10 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
         </div>
       </div>
 
-      {editCard && <CardEditorSheet card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection" onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);}}/>}
+      {editCard && <CardEditorSheet card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
+        onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);}}
+        onNavigateTo={function(c){setEditCard(c);}}
+        onSaveAndNavigateTo={upsertCardAndNavigate}/>}
     </div>
   );
 }
