@@ -145,11 +145,6 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
   }, []);
 
   function loadTeamSessions(teamId) {
-    // Non-admins can't scope by team — mark as null to signal "use mySessions"
-    if (authUser.role !== "admin") {
-      setTeamSessions(function(prev){ return Object.assign({}, prev, { [teamId]: null }); });
-      return;
-    }
     if (teamSessions[teamId] !== undefined) return; // already loaded or loading
     setLoadingTeam(teamId);
     apiGet("/sessions?scope=team:" + teamId)
@@ -174,7 +169,7 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
     currentSessions = mySessions;
   } else {
     var loaded = teamSessions[activeSubTab];
-    currentSessions = (loaded === undefined || loaded === null) ? mySessions : loaded;
+    currentSessions = (loaded === undefined) ? null : loaded;
   }
 
   var isLoadingTeam = activeSubTab !== "me" && loadingTeam === activeSubTab;
@@ -210,7 +205,6 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
 
   var isTeamTab = activeSubTab !== "me";
   var activeTeam = isTeamTab ? myTeams.find(function(t){ return t.id === activeSubTab; }) : null;
-  var isNonAdminTeamTab = isTeamTab && authUser.role !== "admin";
 
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -240,7 +234,7 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
               <button key={tab.id} onClick={function(){ handleSubTab(tab.id); }}
                 style={{background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),cursor:"pointer",padding:"10px 14px",fontSize:11,fontWeight:700,color:on?SESS_COLOR:"rgba(255,255,255,.35)",fontFamily:"inherit",whiteSpace:"nowrap",transition:"color .15s",letterSpacing:.3,flexShrink:0}}>
                 {tab.label}
-                {sessCount !== null && authUser.role === "admin" && (
+                {sessCount !== null && (
                   <span style={{marginLeft:4,fontSize:9,color:"rgba(255,255,255,.25)",fontWeight:400}}>({sessCount})</span>
                 )}
               </button>
@@ -253,16 +247,6 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
       <div style={{flex:1,overflowY:"auto"}}>
         <div style={{padding:"14px 14px 0"}}>
 
-          {/* Team context banner for non-admin viewing team tab */}
-          {isNonAdminTeamTab && activeTeam && (
-            <div style={{background:"rgba(0,180,255,.07)",border:"1px solid rgba(0,180,255,.18)",borderRadius:12,padding:"9px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:14}}>🏷️</span>
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:"#00B4FF"}}>Your stats for {activeTeam.name}</div>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>Showing your personal performance in team context</div>
-              </div>
-            </div>
-          )}
 
           {/* ── Loading ── */}
           {isLoading && (
@@ -278,7 +262,7 @@ export function HomeTab({ authUser, decks, orgTeams, onSwitchDeckAndPlay }) {
               <div style={{fontSize:36}}>📊</div>
               <div style={{fontSize:14,fontWeight:700,color:"rgba(255,255,255,.6)"}}>No sessions yet</div>
               <div style={{fontSize:12,color:"rgba(255,255,255,.3)",lineHeight:1.6,maxWidth:240}}>
-                {isTeamTab && authUser.role === "admin"
+                {isTeamTab
                   ? "No sessions recorded for this team yet."
                   : "Select a deck below and run your first session."}
               </div>

@@ -4,7 +4,7 @@ const {
   getSessions, getSessionById, upsertSession, deleteSession,
   getFeedback, createFeedback, updateFeedback, deleteFeedback, getFeedbackById,
   createShare, getSharesForSession, deleteShare, getShareRecord,
-  getOrgUsers,
+  getOrgUsers, getUserTeams,
 } = require("../db");
 const { requireAuth } = require("../auth");
 
@@ -41,8 +41,17 @@ router.get("/", async function(req, res, next) {
     const filters = { deckId, mode, outcome, from, to };
 
     let parsedScope = null;
-    if (req.user.role === "admin" && scope) {
-      parsedScope = parseScope(scope);
+    if (scope) {
+      if (req.user.role === "admin") {
+        parsedScope = parseScope(scope);
+      } else if (scope.startsWith("team:")) {
+        // Regular users can scope to a team they belong to
+        const requestedTeamId = scope.slice(5);
+        const userTeamIds = await getUserTeams(req.user.id);
+        if (userTeamIds.indexOf(requestedTeamId) > -1) {
+          parsedScope = { type: "team", teamId: requestedTeamId };
+        }
+      }
     }
 
     const sessions = await getSessions(parsedScope, req.user.orgId, req.user.id, filters);
