@@ -5,7 +5,7 @@ import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
 import { TipCtx } from "./Tooltip";
 import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
 import { CardEditorSheet } from "./Editor";
-import { TreeView, SwimlaneView } from "./Viewer";
+import { SwimlaneView } from "./Viewer";
 import { stripMarkup } from "../lib/richtext";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
@@ -14,6 +14,11 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
   var [editing,         setEditing]         = useState(null);
   var [search,          setSearch]          = useState("");
   var [collapsedGroups, setCollapsedGroups] = useState({});
+  var [dragViz,         setDragViz]         = useState(null);
+  var dragRef          = useRef({ active:false, groupType:null, draggedId:null, currentInsert:null });
+  var rowRefs          = useRef({});
+  var listRef          = useRef(null);
+  var dragOccurredRef  = useRef(false);
 
   function switchViewMode(v) {
     setViewMode(v);
@@ -54,6 +59,55 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
     onUpsert(deckId, card);
   }
 
+  function handleDragStart(e, card, groupType, sortedGroup) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    var startIndex = sortedGroup.findIndex(function(c){ return c.id === card.id; });
+    dragRef.current = { active:true, groupType:groupType, draggedId:card.id, currentInsert:startIndex };
+    dragOccurredRef.current = true;
+    setDragViz({ draggedId:card.id, groupType:groupType, insertIndex:startIndex });
+  }
+
+  function handleDragMove(e) {
+    if (!dragRef.current.active) return;
+    var groupType = dragRef.current.groupType;
+    var sorted = Object.values(deck.cards)
+      .filter(function(c){ return c.type === groupType; })
+      .sort(function(a,b){ return (a.sortIndex||0)-(b.sortIndex||0); });
+    var insertIndex = sorted.length;
+    for (var i = 0; i < sorted.length; i++) {
+      var el = rowRefs.current[sorted[i].id];
+      if (!el) continue;
+      var rect = el.getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) { insertIndex = i; break; }
+    }
+    dragRef.current.currentInsert = insertIndex;
+    setDragViz(function(prev){ return prev ? Object.assign({}, prev, { insertIndex:insertIndex }) : null; });
+  }
+
+  function handleDragEnd(e) {
+    if (!dragRef.current.active) return;
+    var groupType = dragRef.current.groupType;
+    var draggedId = dragRef.current.draggedId;
+    var insertIndex = dragRef.current.currentInsert;
+    dragRef.current.active = false;
+    setDragViz(null);
+    if (insertIndex === null || insertIndex === undefined) return;
+    var sorted = Object.values(deck.cards)
+      .filter(function(c){ return c.type === groupType; })
+      .sort(function(a,b){ return (a.sortIndex||0)-(b.sortIndex||0); });
+    var without = sorted.filter(function(c){ return c.id !== draggedId; });
+    var dragged = sorted.find(function(c){ return c.id === draggedId; });
+    if (!dragged) return;
+    var clamped = Math.max(0, Math.min(insertIndex, without.length));
+    without.splice(clamped, 0, dragged);
+    without.forEach(function(c, i) {
+      if ((c.sortIndex === undefined ? 0 : c.sortIndex) !== i) {
+        safeUpsert(deck.id, Object.assign({}, c, { sortIndex:i }));
+      }
+    });
+  }
+
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       <div style={{padding:"10px 14px 8px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
@@ -77,22 +131,25 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
             <input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Search cards…" style={inputSt({paddingLeft:32,height:36})}/>
           </div>
         )}
-        {viewMode==="tree" && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to edit · ↩ = cross-link · ⊕ = merge · ★ = intended path · Pinch to zoom</div>}
-        {viewMode==="tree" && readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to view · Pinch to zoom</div>}
+        {viewMode==="tree" && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to select · tap again to edit · ★ = intended path · Pinch or ctrl+scroll to zoom</div>}
+        {viewMode==="tree" && readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to view · ★ = intended path · Pinch or ctrl+scroll to zoom</div>}
       </div>
       {viewMode === "tree" ? (
         <SwimlaneView cards={deck.cards} rootCard={deck.rootCard}
           onEdit={function(c){setEditing(c);}}
           onSetRoot={readOnly ? null : (onUpdateDeck ? function(id){onUpdateDeck(deck.id, function(d){return Object.assign({},d,{rootCard:id});});} : null)}/>
       ) : (
-        <div style={{overflowY:"auto",flex:1,padding:"0 14px"}}>
+        <div ref={listRef} style={{overflowY:"auto",flex:1,padding:"0 14px"}}
+          onPointerMove={handleDragMove}
+          onPointerUp={handleDragEnd}
+          onPointerCancel={handleDragEnd}>
           <div style={{display:"flex",flexDirection:"column",paddingTop:8}}>
             {(function(){
               var groups = pitchTypes.map(function(t) {
                 var m = TM[t];
                 var group = allCards.filter(function(c) {
                   return c.type === t && (!search || c.title.toLowerCase().includes(search.toLowerCase()) || stripMarkup(c.prompt).toLowerCase().includes(search.toLowerCase()));
-                });
+                }).sort(function(a,b){ return (a.sortIndex||0)-(b.sortIndex||0); });
                 return { t:t, m:m, group:group };
               }).filter(function(g){ return g.group.length > 0; });
               if (groups.length === 0) {
@@ -111,43 +168,65 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
                     </div>
                     {!collapsed && (
                       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                        {g.group.map(function(card) {
-                          var m=TM[card.type]||TM.pitch; var isRoot=card.id===deck.rootCard;
-                          var hasParent = hasIntendedParentFn(card.id);
-                          var showStar = !readOnly && (isRoot || hasParent || card.intendedPath);
-                          var starCanToggle = !isRoot && (hasParent || card.intendedPath);
-                          var starOn = isRoot || card.intendedPath;
-                          return (
-                            <div key={card.id} onClick={function(){setEditing(card);}}
-                              style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+m.color,borderRadius:"0 14px 14px 0",padding:"12px 14px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
-                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap"}}>
-                                    <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>{card.title}</span>
-                                    {isRoot && <span style={{fontSize:9,background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.45)",padding:"1px 7px",borderRadius:99,letterSpacing:.5,textTransform:"uppercase"}}>root</span>}
-                                    {readOnly && card.intendedPath && <IntendedBadge/>}
+                        {(function(){
+                          var items = [];
+                          g.group.forEach(function(card, cardIdx) {
+                            var m=TM[card.type]||TM.pitch; var isRoot=card.id===deck.rootCard;
+                            var hasParent = hasIntendedParentFn(card.id);
+                            var showStar = !readOnly && (isRoot || hasParent || card.intendedPath);
+                            var starCanToggle = !isRoot && (hasParent || card.intendedPath);
+                            var starOn = isRoot || card.intendedPath;
+                            var isDragging = dragViz && dragViz.draggedId === card.id;
+                            var isDropHere = dragViz && dragViz.groupType === g.t && dragViz.insertIndex === cardIdx;
+                            if (isDropHere) {
+                              items.push(<div key={"drop-"+cardIdx} style={{height:2,background:deck.color,borderRadius:1}}/>);
+                            }
+                            items.push(
+                              <div key={card.id}
+                                ref={function(el){ if(el) rowRefs.current[card.id]=el; else delete rowRefs.current[card.id]; }}
+                                style={{display:"flex",alignItems:"stretch",opacity:isDragging?0.3:1,transition:"opacity .1s"}}>
+                                {!readOnly && (
+                                  <div onPointerDown={function(e){handleDragStart(e,card,g.t,g.group);}}
+                                    style={{display:"flex",alignItems:"center",padding:"0 7px",cursor:"grab",color:"rgba(255,255,255,.28)",fontSize:14,touchAction:"none",userSelect:"none",flexShrink:0,background:isDragging?"rgba(255,255,255,.03)":"rgba(255,255,255,.05)",borderTop:"1px solid rgba(255,255,255,.08)",borderBottom:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+m.color,borderRadius:"0 0 0 14px"}}>
+                                    ⠿
                                   </div>
-                                  {card.overview && card.overview.filter(function(b){return b&&b.trim();}).length > 0 && (
-                                    <div style={{fontSize:10,color:"rgba(255,255,255,.38)",marginBottom:4}}>◆ {card.overview.filter(function(b){return b&&b.trim();})[0]}</div>
-                                  )}
-                                  <div style={{fontSize:12,color:"rgba(255,255,255,.32)",lineHeight:1.4,overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{stripMarkup(card.prompt)}</div>
-                                </div>
-                                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5,flexShrink:0}}>
-                                  {showStar && (
-                                    <button onClick={function(e){
-                                      e.stopPropagation(); e.preventDefault();
-                                      if (starCanToggle) safeUpsert(deck.id, Object.assign({}, card, {intendedPath: !card.intendedPath}));
-                                    }}
-                                    title={isRoot ? "Root — always on intended path" : card.intendedPath ? "Remove from intended path" : "Add to intended path"}
-                                    style={{background:"none",border:"none",padding:"1px 2px",fontSize:15,color:starOn?"#66BB6A":"rgba(255,255,255,.3)",cursor:starCanToggle?"pointer":"default",fontFamily:"inherit",flexShrink:0,lineHeight:1,transition:"color .15s"}}>★</button>
-                                  )}
-                                  <TypeBadge type={card.type} small={true}/>
-                                  <span style={{fontSize:10,color:"rgba(255,255,255,.22)"}}>{card.answers.length} ans</span>
+                                )}
+                                <div onClick={function(){if(dragOccurredRef.current){dragOccurredRef.current=false;return;}setEditing(card);}}
+                                  style={{flex:1,background:isDragging?"rgba(255,255,255,.03)":"rgba(255,255,255,.07)",border:isDragging?"1px dashed rgba(255,255,255,.15)":"1px solid rgba(255,255,255,.08)",borderLeft:readOnly?"3px solid "+m.color:"1px solid rgba(255,255,255,.08)",borderRadius:"0 14px 14px 0",padding:"12px 14px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                    <div style={{flex:1,minWidth:0}}>
+                                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap"}}>
+                                        <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>{card.title}</span>
+                                        {isRoot && <span style={{fontSize:9,background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.45)",padding:"1px 7px",borderRadius:99,letterSpacing:.5,textTransform:"uppercase"}}>root</span>}
+                                        {readOnly && card.intendedPath && <IntendedBadge/>}
+                                      </div>
+                                      {card.overview && card.overview.filter(function(b){return b&&b.trim();}).length > 0 && (
+                                        <div style={{fontSize:10,color:"rgba(255,255,255,.38)",marginBottom:4}}>◆ {card.overview.filter(function(b){return b&&b.trim();})[0]}</div>
+                                      )}
+                                      <div style={{fontSize:12,color:"rgba(255,255,255,.32)",lineHeight:1.4,overflow:"hidden",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{stripMarkup(card.prompt)}</div>
+                                    </div>
+                                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5,flexShrink:0}}>
+                                      {showStar && (
+                                        <button onClick={function(e){
+                                          e.stopPropagation(); e.preventDefault();
+                                          if (starCanToggle) safeUpsert(deck.id, Object.assign({}, card, {intendedPath: !card.intendedPath}));
+                                        }}
+                                        title={isRoot ? "Root — always on intended path" : card.intendedPath ? "Remove from intended path" : "Add to intended path"}
+                                        style={{background:"none",border:"none",padding:"1px 2px",fontSize:15,color:starOn?"#66BB6A":"rgba(255,255,255,.3)",cursor:starCanToggle?"pointer":"default",fontFamily:"inherit",flexShrink:0,lineHeight:1,transition:"color .15s"}}>★</button>
+                                      )}
+                                      <TypeBadge type={card.type} small={true}/>
+                                      <span style={{fontSize:10,color:"rgba(255,255,255,.22)"}}>{card.answers.length} ans</span>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          });
+                          if (dragViz && dragViz.groupType === g.t && dragViz.insertIndex >= g.group.length) {
+                            items.push(<div key="drop-end" style={{height:2,background:deck.color,borderRadius:1}}/>);
+                          }
+                          return items;
+                        })()}
                       </div>
                     )}
                   </div>
@@ -207,7 +286,7 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
         </div>
       )}
       {editing && !readOnly && (
-        <CardEditorSheet card={editing} allCards={deck.cards} rootCard={deck.rootCard} accentColor={deck.color} lockedType={null}
+        <CardEditorSheet key={editing.id} card={editing} allCards={deck.cards} rootCard={deck.rootCard} accentColor={deck.color} lockedType={null}
           onSave={function(c){safeUpsert(deck.id,c);setEditing(null);}}
           onDelete={function(id){onDelete(deck.id,id);setEditing(null);}}
           onClose={function(){setEditing(null);}}
@@ -397,7 +476,7 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
         </div>
       </div>
 
-      {editCard && <CardEditorSheet card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
+      {editCard && <CardEditorSheet key={editCard.id} card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
         onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);}}
         onNavigateTo={function(c){setEditCard(c);}}
         onSaveAndNavigateTo={upsertCardAndNavigate}/>}

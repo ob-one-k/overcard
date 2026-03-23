@@ -532,11 +532,11 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                   var m2 = TM[c.type]||TM.pitch;
                   return (
                     <button key={c.id}
-                      onClick={function(){ if(onNavigateTo) onNavigateTo(c); }}
-                      style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"5px 10px",fontSize:11,cursor:onNavigateTo?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,color:"rgba(255,255,255,.6)"}}>
+                      onClick={function(){ if(onSaveAndNavigateTo) onSaveAndNavigateTo(form, c); else if(onNavigateTo) onNavigateTo(c); }}
+                      style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"5px 10px",fontSize:11,cursor:(onNavigateTo||onSaveAndNavigateTo)?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,color:"rgba(255,255,255,.6)"}}>
                       <span style={{color:m2.color}}>{m2.icon}</span>
                       <span>{c.title}</span>
-                      {onNavigateTo && <span style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>↵</span>}
+                      {(onNavigateTo||onSaveAndNavigateTo) && <span style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>↵</span>}
                     </button>
                   );
                 })}
@@ -637,14 +637,24 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                     <input value={ans.label} onChange={function(e){setAns(i,"label",e.target.value);}} placeholder="Prospect says..." style={inputSt({margin:0,flex:1})}/>
                     <button onClick={function(){delAns(i);}} style={Object.assign({},iconBtn(),{flexShrink:0})}>🗑</button>
                   </div>
-                  <button onClick={function(){setLinkIdx(linkIdx===i?null:i);}}
-                    style={{background:"none",border:"none",cursor:"pointer",padding:"2px 0",display:"flex",alignItems:"center",gap:6,fontFamily:"inherit"}}>
-                    <span style={{fontSize:13}}>🔗</span>
-                    <span style={{fontSize:12,color:ans.next?ac:"rgba(255,255,255,.28)"}}>
-                      {ans.next ? ("→ " + (allCards[ans.next] ? allCards[ans.next].title : ans.next)) : (lockedType==="objection" ? "End — returns to pitch" : "End of path")}
-                    </span>
-                    <span style={{fontSize:10,color:"rgba(255,255,255,.25)"}}>▾</span>
-                  </button>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <button onClick={function(){setLinkIdx(linkIdx===i?null:i);}}
+                      style={{background:"none",border:"none",cursor:"pointer",padding:"2px 0",display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",flex:1,minWidth:0}}>
+                      <span style={{fontSize:13}}>🔗</span>
+                      <span style={{fontSize:12,color:ans.next?ac:"rgba(255,255,255,.28)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {ans.next ? ("→ " + (allCards[ans.next] ? allCards[ans.next].title : ans.next)) : (lockedType==="objection" ? "End — returns to pitch" : "End of path")}
+                      </span>
+                      <span style={{fontSize:10,color:"rgba(255,255,255,.25)"}}>▾</span>
+                    </button>
+                    {ans.next && allCards[ans.next] && (onSaveAndNavigateTo || onNavigateTo) && (
+                      <button onClick={function(){
+                        var dest = allCards[ans.next];
+                        if (onSaveAndNavigateTo) onSaveAndNavigateTo(form, dest);
+                        else if (onNavigateTo) onNavigateTo(dest);
+                      }} title={"Go to: " + allCards[ans.next].title}
+                      style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:7,padding:"4px 7px",cursor:"pointer",fontSize:11,color:"rgba(255,255,255,.5)",fontFamily:"inherit",flexShrink:0}}>↗</button>
+                    )}
+                  </div>
                   {linkIdx === i && (
                     <div style={{marginTop:8,background:"#0c0d13",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden"}}>
                       {/* Scrollable list — preview panel below has pre-allocated height to prevent reflow on mobile */}
@@ -674,30 +684,38 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                           var m2 = TM[c.type] || TM.pitch;
                           var isPreviewing = previewCardId === c.id;
                           return (
-                            <button
-                              key={c.id}
-                              onPointerDown={function(e) {
-                                if (e.pointerType !== "touch") return;
-                                e.preventDefault();
-                                var isSameTap = touchPreviewRef.current && touchPreviewRef.current.cardId===c.id && touchPreviewRef.current.ansIdx===i;
-                                if (isSameTap) {
-                                  touchPreviewRef.current = null;
-                                  setPreviewCardId(null);
-                                  setAns(i,"next",c.id);
-                                  setLinkIdx(null);
-                                } else {
-                                  touchPreviewRef.current = {cardId:c.id, ansIdx:i};
-                                  setPreviewCardId(c.id);
-                                }
-                              }}
-                              onPointerEnter={function(e){ if(e.pointerType!=="touch") setPreviewCardId(c.id); }}
-                              onPointerLeave={function(e){ if(e.pointerType!=="touch") setPreviewCardId(null); }}
-                              onClick={function(){setAns(i,"next",c.id);setLinkIdx(null);setPreviewCardId(null);touchPreviewRef.current=null;}}
-                              style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:ans.next===c.id?"rgba(255,255,255,.09)":isPreviewing?"rgba(255,255,255,.06)":"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",color:"rgba(255,255,255,.75)",fontSize:13,padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"background .1s"}}>
-                              <span style={{color:m2.color,fontSize:12,flexShrink:0}}>{m2.icon}</span>
-                              <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title}</span>
-                              {ans.next === c.id && <span style={{color:ac,flexShrink:0}}>✓</span>}
-                            </button>
+                            <div key={c.id} style={{display:"flex",alignItems:"stretch",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+                              <button
+                                onPointerDown={function(e) {
+                                  if (e.pointerType !== "touch") return;
+                                  e.preventDefault();
+                                  var isSameTap = touchPreviewRef.current && touchPreviewRef.current.cardId===c.id && touchPreviewRef.current.ansIdx===i;
+                                  if (isSameTap) {
+                                    touchPreviewRef.current = null;
+                                    setPreviewCardId(null);
+                                    setAns(i,"next",c.id);
+                                    setLinkIdx(null);
+                                  } else {
+                                    touchPreviewRef.current = {cardId:c.id, ansIdx:i};
+                                    setPreviewCardId(c.id);
+                                  }
+                                }}
+                                onPointerEnter={function(e){ if(e.pointerType!=="touch") setPreviewCardId(c.id); }}
+                                onPointerLeave={function(e){ if(e.pointerType!=="touch") setPreviewCardId(null); }}
+                                onClick={function(){setAns(i,"next",c.id);setLinkIdx(null);setPreviewCardId(null);touchPreviewRef.current=null;}}
+                                style={{display:"flex",alignItems:"center",gap:8,flex:1,background:ans.next===c.id?"rgba(255,255,255,.09)":isPreviewing?"rgba(255,255,255,.06)":"transparent",border:"none",color:"rgba(255,255,255,.75)",fontSize:13,padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"background .1s"}}>
+                                <span style={{color:m2.color,fontSize:12,flexShrink:0}}>{m2.icon}</span>
+                                <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title}</span>
+                                {ans.next === c.id && <span style={{color:ac,flexShrink:0}}>✓</span>}
+                              </button>
+                              <button
+                                onPointerDown={function(e){e.stopPropagation();}}
+                                onClick={function(e){e.stopPropagation(); setPreviewCardId(isPreviewing?null:c.id);}}
+                                title="Preview card details"
+                                style={{background:"transparent",border:"none",borderLeft:"1px solid rgba(255,255,255,.05)",padding:"0 10px",cursor:"pointer",fontSize:13,color:isPreviewing?"rgba(255,255,255,.55)":"rgba(255,255,255,.2)",flexShrink:0,fontFamily:"inherit",transition:"color .1s"}}>
+                                {isPreviewing?"◉":"◎"}
+                              </button>
+                            </div>
                           );
                         })}
                       </div>
