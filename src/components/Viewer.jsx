@@ -1,50 +1,54 @@
 import { useState, useEffect, useRef } from "react";
 import { TM } from "../lib/constants";
 
-// ─── FLOW VIEW ─────────────────────────────────────────────────────────────────
+// ─── FLOW VIEW — TOP-TO-BOTTOM LAYOUT ──────────────────────────────────────────
+// Depth increases downward. Each BFS depth level is a horizontal row.
+// Cards within a row are spread horizontally. Edges exit card bottoms, enter card tops.
+
 var MIN_ZOOM    = 0.28;
 var MAX_ZOOM    = 1.80;
-var FL_CARD_W   = 224;
+var FL_CARD_W   = 220;
 var FL_CARD_H   = 46;
 var FL_ANS_H    = 22;
 var FL_BAR_H    = 28;
-var FL_CARD_GAP = 14;
-var FL_COL_W    = 280;
-var FL_PAD      = 40;
+var FL_CARD_GAP = 14;   // vertical gap used only for orphan section spacing
+var FL_H_GAP    = 22;   // horizontal gap between cards in the same row
+var FL_V_GAP    = 56;   // vertical gap between rows (the gutter zone)
+var FL_ROW_H    = FL_CARD_H + FL_V_GAP;  // row pitch (center-to-center row spacing)
+var FL_V_MID    = FL_V_GAP / 2;          // distance from card bottom to gutter center
+var FL_PAD      = 44;
 var FL_EDGE_IP  = "rgba(168,255,62,.70)";
 var FL_EDGE_NRM = "rgba(255,255,255,.22)";
 var FL_EDGE_LBK = "rgba(255,167,38,.60)";
 
-// ─── ORTHOGONAL FORWARD PATH ────────────────────────────────────────────────
-// Routes from right edge of source to left edge of target, changing Y only
-// inside the column gutters (56px wide), never while crossing a card column.
-function buildForwardPath(srcRight, srcY, dstLeft, dstY, fd, td, gutterOffset) {
+// ─── ORTHOGONAL FORWARD PATH (top-to-bottom) ────────────────────────────────
+// Exits card bottom, enters card top. Changes X only inside horizontal gutter
+// zones — never while crossing a row of cards.
+function buildForwardPath(srcX, srcBottom, dstX, dstTop, fd, td, gutterOffset) {
   var off = gutterOffset || 0;
-  var parts = ["M " + srcRight + "," + srcY.toFixed(1)];
+  var parts = ["M " + srcX.toFixed(1) + "," + srcBottom];
   for (var d = fd; d < td; d++) {
-    var gx = (FL_PAD + d * FL_COL_W + FL_CARD_W + 28 + off).toFixed(1);
-    var nextY = (srcY + (dstY - srcY) * (d - fd + 1) / (td - fd)).toFixed(1);
-    parts.push("H " + gx);
-    parts.push("V " + nextY);
+    var gy = (FL_PAD + d * FL_ROW_H + FL_CARD_H + FL_V_MID + off).toFixed(1);
+    var nextX = (srcX + (dstX - srcX) * (d - fd + 1) / (td - fd)).toFixed(1);
+    parts.push("V " + gy);    // travel down to gutter center
+    parts.push("H " + nextX); // change X inside the gutter
   }
-  parts.push("H " + dstLeft);
+  parts.push("V " + dstTop); // enter target from top
   return parts.join(" ");
 }
 
-// ─── LOOPBACK PATH ──────────────────────────────────────────────────────────
-// Routes below the main canvas area and re-enters the target card from the left.
-function buildLoopPath(fromPos, toPos, laneY) {
-  var sx = (fromPos.x + FL_CARD_W / 2).toFixed(1);
-  var sy = fromPos.y + FL_CARD_H;
-  var tx = toPos.x;
+// ─── LOOPBACK PATH (routes to the right of the canvas) ──────────────────────
+function buildLoopPath(fromPos, toPos, laneX) {
+  var sx = fromPos.x + FL_CARD_W;
+  var sy = (fromPos.y + FL_CARD_H / 2).toFixed(1);
+  var tx = toPos.x + FL_CARD_W;
   var ty = (toPos.y + FL_CARD_H / 2).toFixed(1);
-  var routeX = (tx - 14).toFixed(1);
-  return "M " + sx + "," + sy + " V " + laneY + " H " + routeX + " V " + ty + " H " + tx;
+  return "M " + sx + "," + sy + " H " + laneX + " V " + ty + " H " + tx;
 }
 
-// ─── GUTTER LANE OFFSET ALLOCATOR ───────────────────────────────────────────
-// Assigns small X offsets to parallel forward edges that share the same
-// (source-depth → target-depth) pair, so they don't overlap in the gutter.
+// ─── GUTTER OFFSET ALLOCATOR ────────────────────────────────────────────────
+// Assigns small Y offsets to parallel edges sharing the same (fd→td) gutter
+// so they don't overlap within the horizontal gutter band.
 function allocateGutterOffsets(edges) {
   var groups = {};
   edges.forEach(function(e) {
@@ -62,20 +66,20 @@ function allocateGutterOffsets(edges) {
   return offsets;
 }
 
-function avgParentY(id, cards, tempY) {
+function avgParentX(id, cards, tempX) {
   var parents = [];
   Object.keys(cards).forEach(function(pid) {
     if ((cards[pid].answers||[]).some(function(a){ return a && a.next === id; })) {
-      if (tempY[pid] !== undefined) parents.push(tempY[pid]);
+      if (tempX[pid] !== undefined) parents.push(tempX[pid]);
     }
   });
-  if (!parents.length) return tempY[id] || 0;
-  return parents.reduce(function(s, y) { return s + y; }, 0) / parents.length;
+  if (!parents.length) return tempX[id] || 0;
+  return parents.reduce(function(s, x) { return s + x; }, 0) / parents.length;
 }
 
 function buildFlowLayout(cards, rootCard, selectedId) {
   if (!rootCard || !cards || !cards[rootCard]) {
-    return { posMap: {}, edges: [], loopEdges: [], canvasW: 400, canvasH: 300, loopZoneTop: 300, orphans: [], depthMap: {} };
+    return { posMap: {}, edges: [], loopEdges: [], canvasW: 400, canvasH: 300, loopZoneLeft: 400, orphans: [], depthMap: {} };
   }
 
   // 1. BFS assign depths
@@ -95,75 +99,73 @@ function buildFlowLayout(cards, rootCard, selectedId) {
     });
   }
 
-  // 2. Group into columns
-  var columns = {};
+  // 2. Group into rows by depth
+  var rows = {};
   Object.keys(depth).forEach(function(id) {
     var d = depth[id];
-    if (!columns[d]) columns[d] = [];
-    columns[d].push(id);
+    if (!rows[d]) rows[d] = [];
+    rows[d].push(id);
   });
-  var maxDepth = Object.keys(columns).reduce(function(m, d) { return Math.max(m, +d); }, 0);
+  var maxDepth = Object.keys(rows).reduce(function(m, d) { return Math.max(m, +d); }, 0);
 
-  // 3. Barycenter sort (2 passes) to minimize edge crossings
-  var tempY = {};
-  Object.keys(columns).forEach(function(d) {
-    columns[d].forEach(function(id, i) { tempY[id] = i; });
+  // 3. Barycenter sort — sort cards within each row by average parent X
+  var tempX = {};
+  Object.keys(rows).forEach(function(d) {
+    rows[d].forEach(function(id, i) { tempX[id] = i; });
   });
   for (var pass = 0; pass < 2; pass++) {
     for (var d = 1; d <= maxDepth; d++) {
-      if (!columns[d]) continue;
-      columns[d] = columns[d].slice().sort(function(a, b) {
-        return avgParentY(a, cards, tempY) - avgParentY(b, cards, tempY);
+      if (!rows[d]) continue;
+      rows[d] = rows[d].slice().sort(function(a, b) {
+        return avgParentX(a, cards, tempX) - avgParentX(b, cards, tempX);
       });
-      // Force intended-path card to the vertical center of its column
-      var col = columns[d];
-      var ipId = col.find(function(id) { return cards[id] && cards[id].intendedPath; });
-      var ipIdx = ipId !== undefined ? col.indexOf(ipId) : -1;
-      if (ipIdx !== -1 && col.length > 1) {
-        var mid = Math.floor(col.length / 2);
-        col.splice(ipIdx, 1);
-        col.splice(mid, 0, ipId);
+      // Keep intended-path card centered in its row
+      var row = rows[d];
+      var ipId = row.find(function(id) { return cards[id] && cards[id].intendedPath; });
+      var ipIdx = ipId !== undefined ? row.indexOf(ipId) : -1;
+      if (ipIdx !== -1 && row.length > 1) {
+        var mid = Math.floor(row.length / 2);
+        row.splice(ipIdx, 1);
+        row.splice(mid, 0, ipId);
       }
-      col.forEach(function(id, i) { tempY[id] = i; });
+      row.forEach(function(id, i) { tempX[id] = i; });
     }
   }
 
-  // 4. Assign pixel positions — vertically center each column
-  var colHeights = {};
-  Object.keys(columns).forEach(function(d) {
-    colHeights[d] = columns[d].length * (FL_CARD_H + FL_CARD_GAP) - FL_CARD_GAP;
+  // 4. Assign pixel positions — center each row horizontally
+  var rowWidths = {};
+  Object.keys(rows).forEach(function(d) {
+    rowWidths[d] = rows[d].length * FL_CARD_W + (rows[d].length - 1) * FL_H_GAP;
   });
-  var maxColH = Object.keys(colHeights).reduce(function(m, d) { return Math.max(m, colHeights[d]); }, FL_CARD_H);
+  var maxRowW = Object.keys(rowWidths).reduce(function(m, d) { return Math.max(m, rowWidths[d]); }, FL_CARD_W);
 
   var posMap = {};
-  Object.keys(columns).forEach(function(d) {
-    var col = columns[d];
-    var colH = colHeights[d];
-    var startY = FL_PAD + (maxColH - colH) / 2;
-    col.forEach(function(id, i) {
+  Object.keys(rows).forEach(function(d) {
+    var row = rows[d];
+    var rowW = rowWidths[d];
+    var startX = FL_PAD + (maxRowW - rowW) / 2;
+    row.forEach(function(id, i) {
       posMap[id] = {
-        x: FL_PAD + (+d) * FL_COL_W,
-        y: startY + i * (FL_CARD_H + FL_CARD_GAP),
+        x: startX + i * (FL_CARD_W + FL_H_GAP),
+        y: FL_PAD + (+d) * FL_ROW_H,
       };
     });
   });
 
-  // 5a. Collect raw edges — split into forward (td > fd) and loopback (td <= fd)
+  // 5a. Collect raw edges — split forward vs loopback
   var rawForward = [], rawLoop = [];
   Object.keys(cards).forEach(function(fromId) {
     if (!posMap[fromId]) return;
     var card = cards[fromId];
     var fp = posMap[fromId];
-    var isFromSelected = fromId === selectedId;
     (card.answers || []).forEach(function(ans, ansIdx) {
       if (!ans || !ans.next || !posMap[ans.next]) return;
       var fd = depth[fromId], td = depth[ans.next];
       var tp = posMap[ans.next];
       var toCard = cards[ans.next];
-      var portY = isFromSelected
-        ? (fp.y + FL_CARD_H + ansIdx * FL_ANS_H + FL_ANS_H / 2)
-        : (fp.y + FL_CARD_H / 2);
       var edgeKey = fromId + "-" + (ans.id || ansIdx);
+      // portX: center of card bottom (spread slightly when selected)
+      var portX = (fp.x + FL_CARD_W / 2);
       if (td !== undefined && fd !== undefined && td <= fd) {
         rawLoop.push({
           from: fromId, to: ans.next, ansIdx: ansIdx,
@@ -178,7 +180,7 @@ function buildFlowLayout(cards, rootCard, selectedId) {
           from: fromId, to: ans.next, ansIdx: ansIdx,
           fd: fd !== undefined ? fd : 0,
           td: td !== undefined ? td : 0,
-          portY: portY,
+          portX: portX,
           toIntended: !!(toCard && toCard.intendedPath),
           key: edgeKey,
         });
@@ -186,43 +188,46 @@ function buildFlowLayout(cards, rootCard, selectedId) {
     });
   });
 
-  // 5b. Gutter offset allocation + build forward edge paths
+  // 5b. Gutter offsets + build forward edge paths
   var gutterOffsets = allocateGutterOffsets(rawForward);
   var edges = rawForward.map(function(e) {
     var fp = posMap[e.from], tp = posMap[e.to];
     var gOff = gutterOffsets[e.key] || 0;
+    var srcCX = fp.x + FL_CARD_W / 2;
+    var dstCX = tp.x + FL_CARD_W / 2;
     return Object.assign({}, e, {
-      d: buildForwardPath(fp.x + FL_CARD_W, e.portY, tp.x, tp.y + FL_CARD_H / 2, e.fd, e.td, gOff),
+      d: buildForwardPath(srcCX, fp.y + FL_CARD_H, dstCX, tp.y, e.fd, e.td, gOff),
     });
   });
 
-  // 6. Orphans (unreachable from root)
+  // 6. Orphans
   var orphans = Object.keys(cards).filter(function(id) { return depth[id] === undefined; });
   var orphanSectionH = orphans.length > 0 ? (50 + Math.ceil(orphans.length / 3) * (FL_CARD_H + 10)) : 0;
-  var canvasW = (maxDepth + 1) * FL_COL_W + FL_PAD * 2;
-  var loopZoneTop = maxColH + FL_PAD * 2 + orphanSectionH;
+  var mainCanvasW = maxRowW + FL_PAD * 2;
+  var canvasH = (maxDepth + 1) * FL_ROW_H + FL_PAD * 2 + orphanSectionH;
+  var loopZoneLeft = mainCanvasW + 10;
 
-  // 5c. Loop lane allocation — wider depth-spans get deeper lanes so arcs don't cross
+  // 5c. Loop lane allocation — wider spans go further right
   var loopsSorted = rawLoop.slice().sort(function(a, b) {
     return Math.abs(b.fd - b.td) - Math.abs(a.fd - a.td);
   });
   var loopLaneMap = {};
   loopsSorted.forEach(function(e, i) {
-    loopLaneMap[e.key] = loopZoneTop + 30 + i * 40;
+    loopLaneMap[e.key] = loopZoneLeft + 20 + i * 38;
   });
 
   var loopEdges = rawLoop.map(function(e) {
-    var laneY = loopLaneMap[e.key];
+    var laneX = loopLaneMap[e.key];
     return Object.assign({}, e, {
-      d: buildLoopPath(e.fromPos, e.toPos, laneY),
-      laneY: laneY,
+      d: buildLoopPath(e.fromPos, e.toPos, laneX),
+      laneX: laneX,
     });
   });
 
-  var loopZoneH = rawLoop.length > 0 ? (60 + rawLoop.length * 40) : 0;
-  var canvasH = loopZoneTop + loopZoneH;
+  var loopZoneW = rawLoop.length > 0 ? (50 + rawLoop.length * 38) : 0;
+  var canvasW = mainCanvasW + loopZoneW;
 
-  return { posMap: posMap, edges: edges, loopEdges: loopEdges, canvasW: canvasW, canvasH: canvasH, loopZoneTop: loopZoneTop, orphans: orphans, depthMap: depth };
+  return { posMap: posMap, edges: edges, loopEdges: loopEdges, canvasW: canvasW, canvasH: canvasH, loopZoneLeft: loopZoneLeft, mainCanvasW: mainCanvasW, orphans: orphans, depthMap: depth };
 }
 
 function getAncestors(selectedId, cards) {
@@ -265,7 +270,6 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
   var dragRef      = useRef({ active: false, startPX: 0, startPY: 0, startCX: 0, startCY: 0, moved: false });
   var canEdit      = !!onEdit;
 
-  // Layout is fully deterministic from data — no position state needed
   var layout = buildFlowLayout(cards, rootCard, selectedId);
 
   // Auto-fit on mount
@@ -291,7 +295,7 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
     setPan(np); panRef.current = np;
   }
 
-  // Pinch-to-zoom (must be non-passive to call preventDefault)
+  // Pinch-to-zoom
   useEffect(function() {
     var el = containerRef.current;
     if (!el) return;
@@ -373,7 +377,6 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
     }
   }
 
-  // Path highlighting: build set of "related" nodes when a card is selected
   var highlighted = {};
   if (selectedId) {
     highlighted[selectedId] = true;
@@ -405,18 +408,14 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
 
       {/* Toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,.06)", flexShrink: 0 }}>
-        <button
-          onClick={function() { var nz = Math.min(MAX_ZOOM, +(zoom + 0.15).toFixed(2)); setZoom(nz); zoomRef.current = nz; }}
+        <button onClick={function() { var nz = Math.min(MAX_ZOOM, +(zoom + 0.15).toFixed(2)); setZoom(nz); zoomRef.current = nz; }}
           style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.6)", borderRadius: 5, padding: "3px 9px", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>+</button>
         <span style={{ fontSize: 11, color: "rgba(255,255,255,.35)", minWidth: 36, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-        <button
-          onClick={function() { var nz = Math.max(MIN_ZOOM, +(zoom - 0.15).toFixed(2)); setZoom(nz); zoomRef.current = nz; }}
+        <button onClick={function() { var nz = Math.max(MIN_ZOOM, +(zoom - 0.15).toFixed(2)); setZoom(nz); zoomRef.current = nz; }}
           style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.6)", borderRadius: 5, padding: "3px 9px", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>−</button>
-        <button
-          onClick={function() { setZoom(1.0); zoomRef.current = 1.0; setPan({ x: 0, y: 0 }); panRef.current = { x: 0, y: 0 }; }}
+        <button onClick={function() { setZoom(1.0); zoomRef.current = 1.0; setPan({ x: 0, y: 0 }); panRef.current = { x: 0, y: 0 }; }}
           style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.4)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 11, marginLeft: 2, fontFamily: "inherit" }}>Reset</button>
-        <button
-          onClick={fitToView}
+        <button onClick={fitToView}
           style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.4)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 11, marginLeft: 2, fontFamily: "inherit" }}>Fit</button>
         <span style={{ marginLeft: "auto", fontSize: 9, color: "rgba(255,255,255,.2)" }}>
           Tap to select · tap again to edit · ★ = intended · Pinch or ctrl+scroll to zoom
@@ -432,7 +431,6 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
         onPointerUp={onBgPointerUp}
         onWheel={onWheel}
       >
-        {/* Scaled + panned inner canvas */}
         <div style={{
           position: "absolute",
           width: layout.canvasW, height: layout.canvasH,
@@ -440,7 +438,7 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
           transformOrigin: "0 0",
         }}>
 
-          {/* SVG edges layer */}
+          {/* SVG edges layer — renders below cards */}
           <svg style={{ position: "absolute", inset: 0, width: layout.canvasW, height: layout.canvasH, overflow: "visible", pointerEvents: "none" }}>
             <defs>
               <marker id="fl-arr-ip" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
@@ -454,13 +452,11 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
               </marker>
             </defs>
 
-            {/* Forward edges — orthogonal staircase through column gutters */}
+            {/* Forward edges — orthogonal staircase, bottom→top, X changes only in row gutters */}
             {layout.edges.map(function(edge) {
               var ip = edge.toIntended;
               return (
-                <path
-                  key={edge.key}
-                  d={edge.d}
+                <path key={edge.key} d={edge.d}
                   stroke={ip ? FL_EDGE_IP : FL_EDGE_NRM}
                   strokeWidth={ip ? 2.5 : 1.5}
                   fill="none"
@@ -470,12 +466,10 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
               );
             })}
 
-            {/* Loopback edges — dashed amber arcs routed below the main canvas */}
+            {/* Loopback edges — dashed amber, route to the right of the canvas */}
             {layout.loopEdges.map(function(edge) {
               return (
-                <path
-                  key={edge.key}
-                  d={edge.d}
+                <path key={edge.key} d={edge.d}
                   stroke={FL_EDGE_LBK}
                   strokeWidth="1.5"
                   strokeDasharray="5 3"
@@ -509,10 +503,10 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
                   position: "absolute", left: p.x, top: p.y,
                   width: FL_CARD_W, height: expandedH,
                   background: card.intendedPath ? "rgba(168,255,62,.07)" : isSelected ? "rgba(255,255,255,.10)" : "rgba(255,255,255,.06)",
-                  borderTop:    "1px solid " + borderColor,
+                  borderTop:    "3px solid " + (card.intendedPath ? "#A8FF3E" : meta.color),
                   borderRight:  "1px solid " + borderColor,
                   borderBottom: "1px solid " + borderColor,
-                  borderLeft:   "3px solid " + (card.intendedPath ? "#A8FF3E" : meta.color),
+                  borderLeft:   "1px solid " + borderColor,
                   borderRadius: 9,
                   cursor: "pointer",
                   overflow: "hidden",
@@ -534,7 +528,7 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
                   {card.intendedPath && <span style={{ fontSize: 9, color: "#A8FF3E", flexShrink: 0 }}>★</span>}
                 </div>
 
-                {/* Expanded state: answer rows + action bar */}
+                {/* Expanded: answer rows + action bar */}
                 {isSelected && (
                   <div style={{ flex: 1, borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", flexDirection: "column" }}>
                     {answers.map(function(ans, i) {
@@ -551,20 +545,18 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
                             {ans.label || "—"}
                           </span>
                           {isBack && <span style={{ fontSize: 9, color: "rgba(255,167,38,.7)", flexShrink: 0 }}>↻</span>}
-                          {hasLink && !isBack && <span style={{ fontSize: 9, color: "rgba(255,255,255,.3)", flexShrink: 0 }}>→</span>}
+                          {hasLink && !isBack && <span style={{ fontSize: 9, color: "rgba(255,255,255,.3)", flexShrink: 0 }}>↓</span>}
                         </div>
                       );
                     })}
                     {canEdit && (
                       <div style={{ height: FL_BAR_H, borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", flexShrink: 0, marginTop: "auto" }}>
-                        <button
-                          onClick={function(e) { e.stopPropagation(); onEdit(card); setSelectedId(null); }}
+                        <button onClick={function(e) { e.stopPropagation(); onEdit(card); setSelectedId(null); }}
                           style={{ flex: 1, fontSize: 10, color: "rgba(255,255,255,.7)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
                           ✏ Edit
                         </button>
                         {onSetRoot && !isRoot && (
-                          <button
-                            onClick={function(e) { e.stopPropagation(); onSetRoot(cardId); setSelectedId(null); }}
+                          <button onClick={function(e) { e.stopPropagation(); onSetRoot(cardId); setSelectedId(null); }}
                             style={{ flex: 1, fontSize: 10, color: "rgba(168,255,62,.8)", background: "none", border: "none", borderLeft: "1px solid rgba(255,255,255,.07)", cursor: "pointer", fontFamily: "inherit" }}>
                             ⬆ Root
                           </button>
@@ -577,19 +569,19 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
             );
           })}
 
-          {/* Loopback zone separator — shown below main cards when loopbacks exist */}
+          {/* Loopback zone separator — vertical line to the right of main cards */}
           {layout.loopEdges.length > 0 && (
-            <div style={{ position: "absolute", left: FL_PAD, top: layout.loopZoneTop + 8, width: layout.canvasW - FL_PAD * 2 }}>
-              <div style={{ height: 1, background: "rgba(255,167,38,.18)", marginBottom: 6 }} />
-              <div style={{ fontSize: 9, color: "rgba(255,167,38,.35)", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                ↩ Loops ({layout.loopEdges.length})
-              </div>
+            <div style={{ position: "absolute", left: layout.loopZoneLeft - 6, top: FL_PAD, width: 1, height: layout.canvasH - FL_PAD * 2, background: "rgba(255,167,38,.15)" }} />
+          )}
+          {layout.loopEdges.length > 0 && (
+            <div style={{ position: "absolute", left: layout.loopZoneLeft, top: FL_PAD + 4, fontSize: 9, color: "rgba(255,167,38,.35)", textTransform: "uppercase", letterSpacing: 0.8, writingMode: "vertical-rl" }}>
+              ↩ Loops ({layout.loopEdges.length})
             </div>
           )}
 
-          {/* Orphan section — positioned just above the loopback zone */}
+          {/* Orphan section */}
           {layout.orphans.length > 0 && (
-            <div style={{ position: "absolute", left: FL_PAD, top: layout.loopZoneTop - (50 + Math.ceil(layout.orphans.length / 3) * (FL_CARD_H + 10)), width: layout.canvasW - FL_PAD * 2 }}>
+            <div style={{ position: "absolute", left: FL_PAD, top: layout.canvasH - orphanSectionH(layout.orphans), width: layout.mainCanvasW - FL_PAD * 2 }}>
               <div style={{ height: 1, background: "rgba(255,255,255,.07)", marginBottom: 12 }} />
               <div style={{ fontSize: 9, color: "rgba(255,255,255,.2)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
                 Unconnected ({layout.orphans.length})
@@ -600,20 +592,16 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
                   if (!card) return null;
                   var meta = TM[card.type] || TM.pitch;
                   return (
-                    <div
-                      key={id}
-                      data-flow-card="1"
+                    <div key={id} data-flow-card="1"
                       onClick={function(e) { e.stopPropagation(); if (canEdit) onEdit(card); }}
                       style={{
                         width: FL_CARD_W, height: FL_CARD_H,
                         background: "rgba(255,255,255,.03)",
                         border: "1px dashed rgba(255,255,255,.12)",
-                        borderLeft: "3px solid rgba(255,255,255,.12)",
-                        borderRadius: 9,
-                        cursor: canEdit ? "pointer" : "default",
+                        borderTop: "3px solid rgba(255,255,255,.12)",
+                        borderRadius: 9, cursor: canEdit ? "pointer" : "default",
                         display: "flex", alignItems: "center", gap: 5,
-                        padding: "0 9px",
-                        opacity: 0.45,
+                        padding: "0 9px", opacity: 0.45,
                       }}
                     >
                       <span style={{ fontSize: 11 }}>{meta.icon}</span>
@@ -634,6 +622,10 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
   );
 }
 
-// Both names alias to FlowView — Cards.jsx uses SwimlaneView, ObjectionsTab uses SwimlaneView
+function orphanSectionH(orphans) {
+  return orphans.length > 0 ? (50 + Math.ceil(orphans.length / 3) * (FL_CARD_H + 10)) : 0;
+}
+
+// Both names alias to FlowView
 export var TreeView     = FlowView;
 export var SwimlaneView = FlowView;
