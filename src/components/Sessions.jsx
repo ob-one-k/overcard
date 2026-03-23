@@ -558,21 +558,70 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
           </div>
         )}
         {/* NOTES */}
-        {tab==="notes" && (
-          <div>
-            <SectionHdr>{n.length} note{n.length!==1?"s":""}</SectionHdr>
-            {n.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:12}}>No notes in this session.</div>}
-            {n.map(function(note, i) { return (
-              <div key={i} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.18)",borderRadius:11,padding:"11px 13px",marginBottom:9}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                  <span style={{fontSize:11,fontWeight:700,color:SESS_COLOR}}>{note.cardTitle}</span>
-                  <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+        {tab==="notes" && (function() {
+          // Build cardId → { isObjCard, stackLabel } from visit events
+          var cardCtx = {};
+          v.forEach(function(x) { cardCtx[x.cardId] = { isObjCard: !!x.isObjCard, stackLabel: x.stackLabel||null }; });
+
+          var callNotes = n.filter(function(note) { return !cardCtx[note.cardId] || !cardCtx[note.cardId].isObjCard; });
+          var objNotesList = n.filter(function(note) { return cardCtx[note.cardId] && cardCtx[note.cardId].isObjCard; });
+
+          // Group objection notes by stack label
+          var stackGroups = {};
+          var stackOrder = [];
+          objNotesList.forEach(function(note) {
+            var label = (cardCtx[note.cardId] && cardCtx[note.cardId].stackLabel) || "Objection";
+            if (!stackGroups[label]) { stackGroups[label] = []; stackOrder.push(label); }
+            stackGroups[label].push(note);
+          });
+
+          var hasObjNotes = objNotesList.length > 0;
+
+          return (
+            <div>
+              <SectionHdr>{n.length} note{n.length!==1?"s":""}</SectionHdr>
+              {n.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:12}}>No notes in this session.</div>}
+
+              {/* Call notes section */}
+              {callNotes.length > 0 && (
+                <div style={{marginBottom: hasObjNotes ? 18 : 0}}>
+                  {hasObjNotes && <div style={{fontSize:9,fontWeight:700,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:1.1,marginBottom:8}}>Call Notes ({callNotes.length})</div>}
+                  {callNotes.map(function(note, i) { return (
+                    <div key={i} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.18)",borderRadius:11,padding:"11px 13px",marginBottom:9}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                        <span style={{fontSize:11,fontWeight:700,color:SESS_COLOR}}>{note.cardTitle}</span>
+                        <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+                      </div>
+                      <div style={{fontSize:13,color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
+                    </div>
+                  );})}
                 </div>
-                <div style={{fontSize:13,color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
-              </div>
-            );})}
-          </div>
-        )}
+              )}
+
+              {/* Objection stack note sections */}
+              {stackOrder.map(function(label) {
+                var stackNotes = stackGroups[label];
+                return (
+                  <div key={label} style={{marginBottom:18}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                      <span style={{fontSize:9,fontWeight:700,color:OBJ_COLOR,textTransform:"uppercase",letterSpacing:1.1}}>🛡️ {label}</span>
+                      <span style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>({stackNotes.length} note{stackNotes.length!==1?"s":""})</span>
+                    </div>
+                    {stackNotes.map(function(note, i) { return (
+                      <div key={i} style={{background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.2)",borderRadius:11,padding:"11px 13px",marginBottom:9}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                          <span style={{fontSize:11,fontWeight:700,color:OBJ_COLOR}}>{note.cardTitle}</span>
+                          <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+                        </div>
+                        <div style={{fontSize:13,color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
+                      </div>
+                    );})}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
         {/* FEEDBACK */}
         {tab==="feedback" && (
           <div>
