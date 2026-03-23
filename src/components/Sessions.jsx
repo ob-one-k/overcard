@@ -487,9 +487,10 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:5,paddingBottom:i<v.length-1?5:0}}>
                         <div>
                           <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-                            <span style={{fontSize:12,color:"#fff",fontWeight:i===0?700:400}}>{x.cardTitle}</span>
+                            <span style={{fontSize:12,color:"#fff",fontWeight:(i===0||i===v.length-1)?700:400}}>{x.cardTitle}</span>
                             {x.intendedPath && <span style={{fontSize:8,color:"#66BB6A",background:"rgba(102,187,106,.12)",padding:"1px 4px",borderRadius:99}}>★</span>}
                             {x.isObjCard && x.stackLabel && <span style={{fontSize:9,color:OBJ_COLOR,background:"rgba(239,83,80,.1)",padding:"1px 5px",borderRadius:99}}>{x.stackLabel}</span>}
+                            {i===v.length-1 && <span style={{fontSize:8,color:"rgba(255,255,255,.4)",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 5px",borderRadius:99}}>ended here</span>}
                             {(cardNotes.length>0||cardFeedback.length>0) && <span style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>{cardNotes.length>0?"📝":""}{cardFeedback.length>0?"💬":""}</span>}
                           </div>
                           <div style={{fontSize:9,color:"rgba(255,255,255,.22)"}}>{fmtTime(x.ts)}</div>

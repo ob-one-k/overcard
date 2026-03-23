@@ -113,7 +113,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
 | `src/components/Home.jsx` | `HomeTab` |
 | `src/components/Play.jsx` | `ObjPicker`, `Navigator`, `PlayTab` |
-| `src/components/Viewer.jsx` | `TreeView`, `SwimlaneView` (alias for `FlowView` — top-to-bottom canvas layout) |
+| `src/components/Viewer.jsx` | `TreeView` (collapsible tree navigator), `SwimlaneView` (horizontal type-lane layout) |
 | `src/components/Sessions.jsx` | `ShareModal`, `SessionReview`, `SessionsTab`, `SessionAnalytics` |
 | `src/components/Cards.jsx` | `CardsTab`, `ObjStackEditor`, `ObjectionsTab` |
 | `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` |
@@ -212,7 +212,8 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Card reordering:** Cards within each type group support drag-and-drop reordering via a `⠿` grip handle (non-readOnly only). Uses Pointer Events API (`setPointerCapture`, `onPointerMove`, `onPointerUp`). On drop, `sortIndex` (integer) is written to every card in the group via `safeUpsert`. Display order is `(a.sortIndex||0) - (b.sortIndex||0)`. Autosave handles persistence.
 - **Linked From pills:** `CardEditorSheet` shows pills for all cards that link to the current card. Clicking a pill calls `onSaveAndNavigateTo(form, targetCard)` — saves current edits before navigating. `key={editing.id}` on `CardEditorSheet` forces a full remount when navigating between cards.
 - **Response card preview:** Inside the response link dropdown, each card row has a `◎/◉` eye toggle button that reveals a preview panel showing the card's type, title, overview bullets, and prompt snippet. On touch devices, a tap-twice pattern is used: first tap previews, second tap selects.
-- **Canvas viewer (FlowView):** Top-to-bottom DAG layout. BFS depth determines row (Y position). Cards in the same depth row spread horizontally. Forward edges exit card bottoms and enter card tops via V→H→V staircase routing — direction changes only inside gutter zones between rows, never while crossing a row of cards. Loopback edges (back-edges) route to the right of the canvas as dashed amber lines. `SwimlaneView` is a named export alias for `FlowView`.
+- **Tree viewer (TreeView):** Collapsible indented tree. `renderNode` recurses depth-first from `rootCard`. Cards already rendered (loop-backs) are displayed as amber `↻ loop back` pills — non-expandable. Cards with multiple inbound edges show `⊕`. Intended-path cards have a green left border and `★` badge. Pinch/ctrl+scroll zoom via CSS `zoom` on scroll container. Orphan cards (unreachable from root) listed in a separate "Unconnected" section at bottom.
+- **Swimlane viewer (SwimlaneView):** Horizontal type-based lane layout — 4 columns (pitch / discovery / close / objection). `buildTypeLayout` computes positions and answer port Y coordinates. `slEdgePath` generates bezier curves. Compact mode activates at zoom < 0.70. Click-to-select, second click triggers `onEdit`. Selection expansion pushes cards below the selected card down.
 
 ## Constants Reference
 
@@ -226,12 +227,10 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `DECK_ICONS` | `src/lib/constants.js` | 30 emoji options for deck picker |
 | `OBJ_ICONS` | `src/lib/constants.js` | 30 emoji options for objection stack picker |
 | `INFLECTIONS` | `src/lib/constants.js` | 20 delivery cue definitions |
-| `FL_CARD_W` | `src/components/Viewer.jsx` | Flow card width (220px) |
-| `FL_CARD_H` | `src/components/Viewer.jsx` | Flow card height (46px) |
-| `FL_H_GAP` | `src/components/Viewer.jsx` | Horizontal gap between cards in the same row (22px) |
-| `FL_V_GAP` | `src/components/Viewer.jsx` | Vertical gutter zone height between rows (56px) |
-| `FL_ROW_H` | `src/components/Viewer.jsx` | Row pitch = FL_CARD_H + FL_V_GAP (102px) |
-| `FL_PAD` | `src/components/Viewer.jsx` | Canvas padding (44px) |
+| `SL_CARD_W` | `src/components/Viewer.jsx` | Swimlane card width (210px) |
+| `SL_LANE_W` | `src/components/Viewer.jsx` | Swimlane lane width = SL_CARD_W + 28 (238px) |
+| `SL_COL_GAP` | `src/components/Viewer.jsx` | Gap between swimlane columns (48px) |
+| `LANE_ORDER` | `src/components/Viewer.jsx` | Swimlane column order: pitch / discovery / close / objection |
 | `TAB_ACCENTS` | `src/App.jsx` | Color accent per tab |
 | `USER_TABS` | `src/App.jsx` | Tabs for regular users: home, play, sessions, cards, objections |
 | `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: home, play, sessions, cards, objections, admin |
