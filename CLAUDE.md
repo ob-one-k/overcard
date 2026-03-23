@@ -113,7 +113,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
 | `src/components/Home.jsx` | `HomeTab` |
 | `src/components/Play.jsx` | `ObjPicker`, `Navigator`, `PlayTab` |
-| `src/components/Viewer.jsx` | `TreeView`, `SwimlaneView` |
+| `src/components/Viewer.jsx` | `TreeView`, `SwimlaneView` (alias for `FlowView` — top-to-bottom canvas layout) |
 | `src/components/Sessions.jsx` | `ShareModal`, `SessionReview`, `SessionsTab`, `SessionAnalytics` |
 | `src/components/Cards.jsx` | `CardsTab`, `ObjStackEditor`, `ObjectionsTab` |
 | `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` |
@@ -209,6 +209,10 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Dev login:** `DEV_ORGS` and `DEV_PASSWORD` defined unconditionally in `Panels.jsx`. The quick-select UI is shown based on context, not `import.meta.env.DEV`. Default credentials are configured in `server/seed.js` (development only).
 - **Read-only mode:** CardsTab and ObjectionsTab accept a `readOnly` prop. Non-admin users see cards/objections but cannot edit.
 - **Feedback notifications:** `feedbackCount` and `latestFeedbackAt` returned per session by API. Frontend stores `fbSeenTs` in localStorage to track read state.
+- **Card reordering:** Cards within each type group support drag-and-drop reordering via a `⠿` grip handle (non-readOnly only). Uses Pointer Events API (`setPointerCapture`, `onPointerMove`, `onPointerUp`). On drop, `sortIndex` (integer) is written to every card in the group via `safeUpsert`. Display order is `(a.sortIndex||0) - (b.sortIndex||0)`. Autosave handles persistence.
+- **Linked From pills:** `CardEditorSheet` shows pills for all cards that link to the current card. Clicking a pill calls `onSaveAndNavigateTo(form, targetCard)` — saves current edits before navigating. `key={editing.id}` on `CardEditorSheet` forces a full remount when navigating between cards.
+- **Response card preview:** Inside the response link dropdown, each card row has a `◎/◉` eye toggle button that reveals a preview panel showing the card's type, title, overview bullets, and prompt snippet. On touch devices, a tap-twice pattern is used: first tap previews, second tap selects.
+- **Canvas viewer (FlowView):** Top-to-bottom DAG layout. BFS depth determines row (Y position). Cards in the same depth row spread horizontally. Forward edges exit card bottoms and enter card tops via V→H→V staircase routing — direction changes only inside gutter zones between rows, never while crossing a row of cards. Loopback edges (back-edges) route to the right of the canvas as dashed amber lines. `SwimlaneView` is a named export alias for `FlowView`.
 
 ## Constants Reference
 
@@ -222,9 +226,12 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `DECK_ICONS` | `src/lib/constants.js` | 30 emoji options for deck picker |
 | `OBJ_ICONS` | `src/lib/constants.js` | 30 emoji options for objection stack picker |
 | `INFLECTIONS` | `src/lib/constants.js` | 20 delivery cue definitions |
-| `SL_CARD_W/H` | `src/components/Viewer.jsx` | Swimlane card dimensions (162x82) |
-| `SL_LANE_W` | `src/components/Viewer.jsx` | Swimlane column width (186) |
-| `SL_COL_GAP` | `src/components/Viewer.jsx` | Gap between swimlane columns (36) |
+| `FL_CARD_W` | `src/components/Viewer.jsx` | Flow card width (220px) |
+| `FL_CARD_H` | `src/components/Viewer.jsx` | Flow card height (46px) |
+| `FL_H_GAP` | `src/components/Viewer.jsx` | Horizontal gap between cards in the same row (22px) |
+| `FL_V_GAP` | `src/components/Viewer.jsx` | Vertical gutter zone height between rows (56px) |
+| `FL_ROW_H` | `src/components/Viewer.jsx` | Row pitch = FL_CARD_H + FL_V_GAP (102px) |
+| `FL_PAD` | `src/components/Viewer.jsx` | Canvas padding (44px) |
 | `TAB_ACCENTS` | `src/App.jsx` | Color accent per tab |
 | `USER_TABS` | `src/App.jsx` | Tabs for regular users: home, play, sessions, cards, objections |
 | `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: home, play, sessions, cards, objections, admin |
@@ -257,6 +264,13 @@ Deploy steps:
 5. Seed via Render Shell: `node server/seed.js`
 
 **Frontend** is deployed separately on Vercel. `buildCommand` in `render.yaml` is `npm install` only — Vite build runs on Vercel, not Render.
+
+### Vercel (Frontend)
+
+1. Connect repo to Vercel — it auto-detects the Vite project
+2. Build command: `npm run build`, Output directory: `dist`
+3. No extra environment variables required (Vite proxies `/api/*` at build time only; in production the frontend calls the same origin or the Render URL directly via `VITE_API_URL` if on a separate domain)
+4. After Vercel deploys, copy the Vercel deployment URL and set it as `CORS_ORIGIN` in the Render dashboard (Environment → `CORS_ORIGIN`)
 
 > Render free PostgreSQL has 90-day data retention. Upgrade for production persistence.
 

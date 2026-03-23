@@ -12,7 +12,7 @@ A sales pitch deck training platform. Build structured call flows with branching
 - **Analytics** — Aggregated metrics: close rate, average duration, intended path adherence, call funnel, top objections, top cards by visit count
 - **Sharing** — Session owners can share completed sessions with teammates for feedback
 - **Feedback** — Admins and share recipients can leave card-specific or general feedback on sessions
-- **Swimlane View** — Column-based card flow visualization organized by type (pitch, discovery, close, objection) with SVG connection edges
+- **Canvas Viewer** — Top-to-bottom card flow visualization as a DAG. Cards are arranged by depth (BFS rows) and spread horizontally within each row. Edges use orthogonal staircase routing through gutter zones — never overlapping card rows. Loopback edges appear as dashed amber lines routed to the right. Supports fit-to-screen, zoom, and pan.
 - **Tree View** — Hierarchical card tree with collapse/expand, zoom controls, loop detection, and orphan identification
 - **Admin Panel** — Manage users (create, edit, delete, password reset) and teams (create, edit, assign admins/members)
 - **Deck Management** — Multiple decks per org with color, icon, and visibility settings (public/private with team/user access controls)
