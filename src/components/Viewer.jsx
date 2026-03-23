@@ -1,332 +1,309 @@
 import { useState, useEffect, useRef } from "react";
-import { TM } from "../lib/constants";
+import { TM, SESS_COLOR } from "../lib/constants";
+import { inputSt } from "../lib/styles";
+import { TypeBadge, SectionHdr } from "./ui";
 
-// ─── FLOW VIEW — TOP-TO-BOTTOM LAYOUT ──────────────────────────────────────────
-// Depth increases downward. Each BFS depth level is a horizontal row.
-// Cards within a row are spread horizontally. Edges exit card bottoms, enter card tops.
+// ─── TREE VIEW ────────────────────────────────────────────────────────────────
+var MIN_ZOOM = 0.40, MAX_ZOOM = 1.55;
 
-var MIN_ZOOM    = 0.28;
-var MAX_ZOOM    = 1.80;
-var FL_CARD_W   = 220;
-var FL_CARD_H   = 46;
-var FL_ANS_H    = 22;
-var FL_BAR_H    = 28;
-var FL_CARD_GAP = 14;   // vertical gap used only for orphan section spacing
-var FL_H_GAP    = 22;   // horizontal gap between cards in the same row
-var FL_V_GAP    = 56;   // vertical gap between rows (the gutter zone)
-var FL_ROW_H    = FL_CARD_H + FL_V_GAP;  // row pitch (center-to-center row spacing)
-var FL_V_MID    = FL_V_GAP / 2;          // distance from card bottom to gutter center
-var FL_PAD      = 44;
-var FL_EDGE_IP  = "rgba(168,255,62,.70)";
-var FL_EDGE_NRM = "rgba(255,255,255,.22)";
-var FL_EDGE_LBK = "rgba(255,167,38,.60)";
+export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
+  var [collapsed, setCollapsed] = useState({});
+  var scrollRef = useRef(null);
+  var [zoom, setZoom] = useState(1.0);
+  var pinchRef = useRef(null);
 
-// ─── ORTHOGONAL FORWARD PATH (top-to-bottom) ────────────────────────────────
-// Exits card bottom, enters card top. Changes X only inside horizontal gutter
-// zones — never while crossing a row of cards.
-function buildForwardPath(srcX, srcBottom, dstX, dstTop, fd, td, gutterOffset) {
-  var off = gutterOffset || 0;
-  var parts = ["M " + srcX.toFixed(1) + "," + srcBottom];
-  for (var d = fd; d < td; d++) {
-    var gy = (FL_PAD + d * FL_ROW_H + FL_CARD_H + FL_V_MID + off).toFixed(1);
-    var nextX = (srcX + (dstX - srcX) * (d - fd + 1) / (td - fd)).toFixed(1);
-    parts.push("V " + gy);    // travel down to gutter center
-    parts.push("H " + nextX); // change X inside the gutter
-  }
-  parts.push("V " + dstTop); // enter target from top
-  return parts.join(" ");
-}
+  function toggleCollapse(id) { setCollapsed(function(p) { return Object.assign({}, p, {[id]:!p[id]}); }); }
+  function getDist(e) { return Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY); }
+  function onTouchStart(e) { if (e.touches.length===2) pinchRef.current={dist:getDist(e),zoom}; else pinchRef.current=null; }
+  function onTouchMove(e) { if (e.touches.length===2&&pinchRef.current){e.preventDefault();setZoom(Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,pinchRef.current.zoom*getDist(e)/pinchRef.current.dist)));}}
+  function onTouchEnd(e) { if(e.touches.length<2) pinchRef.current=null; }
+  function onWheel(e) { if(e.ctrlKey||e.metaKey){e.preventDefault();setZoom(function(z){return Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,z*(1-e.deltaY*0.002)));});}}
 
-// ─── LOOPBACK PATH (routes to the right of the canvas) ──────────────────────
-function buildLoopPath(fromPos, toPos, laneX) {
-  var sx = fromPos.x + FL_CARD_W;
-  var sy = (fromPos.y + FL_CARD_H / 2).toFixed(1);
-  var tx = toPos.x + FL_CARD_W;
-  var ty = (toPos.y + FL_CARD_H / 2).toFixed(1);
-  return "M " + sx + "," + sy + " H " + laneX + " V " + ty + " H " + tx;
-}
+  var inboundCount = {};
+  Object.values(cards).forEach(function(c) { (c.answers||[]).forEach(function(a) { if(a && a.next) inboundCount[a.next]=(inboundCount[a.next]||0)+1; }); });
+  var renderedOnce = new Set();
 
-// ─── GUTTER OFFSET ALLOCATOR ────────────────────────────────────────────────
-// Assigns small Y offsets to parallel edges sharing the same (fd→td) gutter
-// so they don't overlap within the horizontal gutter band.
-function allocateGutterOffsets(edges) {
-  var groups = {};
-  edges.forEach(function(e) {
-    var key = e.fd + "-" + e.td;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(e.key);
-  });
-  var offsets = {};
-  Object.keys(groups).forEach(function(key) {
-    var g = groups[key];
-    g.forEach(function(ek, i) {
-      offsets[ek] = (i - (g.length - 1) / 2) * 8;
-    });
-  });
-  return offsets;
-}
-
-function avgParentX(id, cards, tempX) {
-  var parents = [];
-  Object.keys(cards).forEach(function(pid) {
-    if ((cards[pid].answers||[]).some(function(a){ return a && a.next === id; })) {
-      if (tempX[pid] !== undefined) parents.push(tempX[pid]);
+  function renderNode(cardId, depth, ansLabel) {
+    if (!cardId || !cards[cardId]) return null;
+    var card = cards[cardId]; var meta = TM[card.type]||TM.pitch;
+    var isRoot = cardId===rootCard; var isMerge = (inboundCount[cardId]||0)>1;
+    if (renderedOnce.has(cardId)) {
+      return (
+        <div key={"xlink-"+cardId+"-"+depth} style={{paddingLeft:depth*16,marginBottom:2}}>
+          {ansLabel && <div style={{fontSize:9,color:"rgba(255,255,255,.18)",fontStyle:"italic",marginBottom:1,paddingLeft:26,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ansLabel}</div>}
+          <div style={{display:"flex",alignItems:"center",gap:5,paddingLeft:16}}>
+            <button onClick={function(){onEdit(card);}}
+              style={{background:"rgba(255,167,38,.06)",border:"1px dashed rgba(255,167,38,.3)",borderRadius:7,padding:"4px 8px 4px 7px",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontFamily:"inherit",maxWidth:"100%"}}>
+              <span style={{fontSize:10,color:"#FFA726",flexShrink:0}}>↻</span>
+              <span style={{fontSize:10,color:meta.color,flexShrink:0}}>{meta.icon}</span>
+              <span style={{fontSize:10,color:"rgba(255,167,38,.8)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:120}}>{card.title}</span>
+              <span style={{fontSize:8,color:"rgba(255,255,255,.2)",flexShrink:0,borderLeft:"1px solid rgba(255,255,255,.1)",paddingLeft:5,marginLeft:1}}>loop back</span>
+            </button>
+          </div>
+        </div>
+      );
     }
-  });
-  if (!parents.length) return tempX[id] || 0;
-  return parents.reduce(function(s, x) { return s + x; }, 0) / parents.length;
+    renderedOnce.add(cardId);
+    var children = (card.answers||[]).filter(function(a){return a && a.next;}); var isCollapsed = collapsed[cardId];
+    return (
+      <div key={cardId+"-"+depth} style={{marginBottom:2}}>
+        {ansLabel && depth>0 && <div style={{paddingLeft:depth*16+24,fontSize:9,color:"rgba(255,255,255,.2)",fontStyle:"italic",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ansLabel}</div>}
+        <div style={{display:"flex",alignItems:"center",gap:4,paddingLeft:depth*16}}>
+          {children.length > 0 ? (
+            <button onClick={function(){toggleCollapse(cardId);}} style={{width:18,height:18,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:4,cursor:"pointer",fontSize:8,color:"rgba(255,255,255,.45)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {isCollapsed?"▶":"▼"}
+            </button>
+          ) : <div style={{width:18,height:18,flexShrink:0}}/>}
+          <button onClick={function(){onEdit(card);}} style={{flex:1,background:card.intendedPath?"rgba(102,187,106,.06)":"rgba(255,255,255,.07)",border:"1px solid "+(card.intendedPath?"rgba(102,187,106,.18)":"rgba(255,255,255,.07)"),borderLeft:"2px solid "+(card.intendedPath?"#66BB6A":meta.color),borderRadius:8,padding:"6px 9px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",transition:"background .14s",textAlign:"left",minWidth:0}}>
+            <span style={{fontSize:12,flexShrink:0}}>{meta.icon}</span>
+            <span style={{fontSize:12,color:"#fff",fontWeight:500,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title}</span>
+            {isRoot && <span style={{fontSize:8,background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.4)",padding:"1px 5px",borderRadius:99,flexShrink:0,textTransform:"uppercase",letterSpacing:.4}}>root</span>}
+            {card.intendedPath && <span style={{fontSize:9,color:"#66BB6A",flexShrink:0}}>★</span>}
+            {isMerge && <span style={{fontSize:9,color:meta.color,flexShrink:0,opacity:.7}}>⊕</span>}
+          </button>
+          {!isRoot && onSetRoot && (
+            <button onClick={function(e){e.stopPropagation();onSetRoot(cardId);}}
+              title="Set as root"
+              style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.07)",borderRadius:6,padding:"4px 6px",cursor:"pointer",fontSize:9,color:"rgba(255,255,255,.3)",flexShrink:0,fontFamily:"inherit"}}
+            >⬆</button>
+          )}
+        </div>
+        {children.length>0 && !isCollapsed && (
+          <div style={{position:"relative",marginLeft:depth*16+9}}>
+            <div style={{position:"absolute",left:9,top:0,bottom:6,width:1,background:"rgba(255,255,255,.06)"}}/>
+            <div style={{paddingLeft:9}}>
+              {children.map(function(ans) { return renderNode(ans.next, depth+1, ans.label); })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  var reachable = new Set();
+  function collectR(id, seen) { if(!id||!cards[id]||seen.has(id))return; seen.add(id); (cards[id].answers||[]).forEach(function(a){ if(a) collectR(a.next,seen); }); }
+  collectR(rootCard, reachable);
+  var orphans = Object.values(cards).filter(function(c) { return !reachable.has(c.id); });
+
+  var hasIntended = Object.values(cards).some(function(c){return c.intendedPath;});
+  var hasLoops = (function(){var s=new Set(); var found=false; function walk(id){if(!id||!cards[id])return;if(s.has(id)){found=true;return;}s.add(id);(cards[id].answers||[]).forEach(function(a){if(a)walk(a.next);});} walk(rootCard); return found;})();
+  var hasMerge = Object.keys(inboundCount).some(function(k){return inboundCount[k]>1;});
+
+  return (
+    <div style={{flex:1,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+      {/* Legend — bottom bar, only shows relevant symbols */}
+      <div style={{flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)",padding:"5px 12px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",background:"rgba(4,10,28,.7)"}}>
+        <span style={{fontSize:8,color:"rgba(255,255,255,.2)",textTransform:"uppercase",letterSpacing:.8,marginRight:2}}>Key</span>
+        <span style={{fontSize:9,color:"rgba(255,255,255,.25)",display:"flex",alignItems:"center",gap:3}}>
+          <span style={{display:"inline-block",width:8,height:14,borderLeft:"2px solid #66BB6A",marginRight:1}}/>
+          <span style={{color:"#66BB6A"}}>★</span>
+          <span style={{color:"rgba(255,255,255,.35)"}}>intended path</span>
+        </span>
+        {hasLoops && <span style={{fontSize:9,color:"rgba(255,167,38,.6)",display:"flex",alignItems:"center",gap:3}}>
+          <span style={{border:"1px dashed rgba(255,167,38,.35)",borderRadius:3,padding:"0 3px",fontSize:8}}>↻</span>
+          <span style={{color:"rgba(255,255,255,.35)"}}>loop back</span>
+        </span>}
+        {hasMerge && <span style={{fontSize:9,color:"rgba(255,255,255,.3)",display:"flex",alignItems:"center",gap:3}}>
+          <span>⊕</span>
+          <span>multiple paths in</span>
+        </span>}
+        <span style={{fontSize:9,color:"rgba(255,255,255,.2)",display:"flex",alignItems:"center",gap:3}}>
+          <span style={{fontSize:8,background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.4)",padding:"0 4px",borderRadius:3,textTransform:"uppercase",letterSpacing:.3}}>root</span>
+          <span>entry card</span>
+        </span>
+        {Math.abs(zoom-1) > 0.05 && (
+          <span style={{marginLeft:"auto",fontSize:9,color:"rgba(255,255,255,.3)",fontFamily:"inherit"}}>{Math.round(zoom*100)}%</span>
+        )}
+      </div>
+      <div ref={scrollRef} style={{flex:1,overflowY:"auto",overflowX:"auto"}}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onWheel={onWheel}>
+        <div style={{padding:"10px 12px",zoom:zoom,minWidth:"min-content"}}>
+          {rootCard ? renderNode(rootCard,0,null) : <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"40px 0",fontSize:14}}>No root card set.</div>}
+          {orphans.length > 0 && (
+            <div style={{marginTop:16}}>
+              <SectionHdr>Unconnected ({orphans.length})</SectionHdr>
+              {orphans.map(function(c) { var m=TM[c.type]||TM.pitch; return (
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}>
+                  <div style={{width:18,flexShrink:0}}/>
+                  <button onClick={function(){onEdit(c);}} style={{flex:1,background:"rgba(255,255,255,.02)",border:"1px dashed rgba(255,255,255,.1)",borderLeft:"2px solid rgba(255,255,255,.12)",borderRadius:8,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontFamily:"inherit",textAlign:"left",opacity:.45}}>
+                    <span style={{fontSize:12}}>{m.icon}</span>
+                    <span style={{fontSize:11,color:"rgba(255,255,255,.55)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title}</span>
+                    <span style={{fontSize:8,color:"rgba(255,255,255,.2)"}}>orphan</span>
+                  </button>
+                </div>
+              );})}
+            </div>
+          )}
+          <div style={{height:12}}/>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function buildFlowLayout(cards, rootCard, selectedId) {
-  if (!rootCard || !cards || !cards[rootCard]) {
-    return { posMap: {}, edges: [], loopEdges: [], canvasW: 400, canvasH: 300, loopZoneLeft: 400, orphans: [], depthMap: {} };
+// ─── SWIMLANE VIEW ────────────────────────────────────────────────────────────
+var SL_CARD_W    = 210;
+var SL_CARD_GAP  = 18;
+var SL_LANE_W    = SL_CARD_W + 28;
+var SL_COL_GAP   = 48;
+var SL_LANE_HDR  = 42;
+var SL_PAD       = 20;
+var LANE_ORDER   = ["pitch","discovery","close","objection"];
+var SL_HDR_H     = 32;   // header row height (icon + title + badges)
+var SL_ANS_H     = 22;   // height of each answer row
+var SL_ANS_MAX   = 5;    // max answer rows before "+N more" stub
+var COMPACT_CARD_H = 42; // compact mode (<70% zoom): header-only unselected height
+var COMPACT_ANS_H  = 26; // compact mode: answer row height when selected
+var SL_EDGE_INTENDED = "rgba(168,255,62,.55)";
+var SL_EDGE_NORMAL   = "rgba(255,255,255,.20)";
+
+function cardHeight(card) {
+  var linked   = (card.answers || []).filter(function(a){ return a.next; }).length;
+  var unlinked = (card.answers || []).filter(function(a){ return !a.next && a.label; }).length;
+  var total    = linked + unlinked;
+  var shown    = Math.min(total, SL_ANS_MAX);
+  var overflow = total > SL_ANS_MAX ? 1 : 0;
+  return SL_HDR_H + shown * SL_ANS_H + overflow * SL_ANS_H + 8;
+}
+
+function buildTypeLayout(cards, rootCard, selectedId, selExpansion, isCompact) {
+  var laneCards = {};
+  LANE_ORDER.forEach(function(t){ laneCards[t] = []; });
+  if (rootCard && cards[rootCard]) {
+    laneCards[cards[rootCard].type || "pitch"].unshift(rootCard);
   }
-
-  // 1. BFS assign depths
-  var depth = {};
-  var bfsQueue = [rootCard];
-  depth[rootCard] = 0;
-  var visited = {};
-  while (bfsQueue.length) {
-    var cur = bfsQueue.shift();
-    if (visited[cur]) continue;
-    visited[cur] = true;
-    ((cards[cur] && cards[cur].answers) || []).forEach(function(a) {
-      if (a && a.next && cards[a.next] && depth[a.next] === undefined) {
-        depth[a.next] = depth[cur] + 1;
-        bfsQueue.push(a.next);
-      }
-    });
-  }
-
-  // 2. Group into rows by depth
-  var rows = {};
-  Object.keys(depth).forEach(function(id) {
-    var d = depth[id];
-    if (!rows[d]) rows[d] = [];
-    rows[d].push(id);
+  Object.keys(cards).forEach(function(id) {
+    if (id === rootCard) return;
+    var t = cards[id].type || "pitch";
+    if (!laneCards[t]) laneCards[t] = [];
+    laneCards[t].push(id);
   });
-  var maxDepth = Object.keys(rows).reduce(function(m, d) { return Math.max(m, +d); }, 0);
+  var activeLanes = LANE_ORDER.filter(function(t){ return laneCards[t].length > 0; });
 
-  // 3. Barycenter sort — sort cards within each row by average parent X
-  var tempX = {};
-  Object.keys(rows).forEach(function(d) {
-    rows[d].forEach(function(id, i) { tempX[id] = i; });
+  var laneX = {};
+  activeLanes.forEach(function(t, i) {
+    laneX[t] = SL_PAD + i * (SL_LANE_W + SL_COL_GAP);
   });
-  for (var pass = 0; pass < 2; pass++) {
-    for (var d = 1; d <= maxDepth; d++) {
-      if (!rows[d]) continue;
-      rows[d] = rows[d].slice().sort(function(a, b) {
-        return avgParentX(a, cards, tempX) - avgParentX(b, cards, tempX);
-      });
-      // Keep intended-path card centered in its row
-      var row = rows[d];
-      var ipId = row.find(function(id) { return cards[id] && cards[id].intendedPath; });
-      var ipIdx = ipId !== undefined ? row.indexOf(ipId) : -1;
-      if (ipIdx !== -1 && row.length > 1) {
-        var mid = Math.floor(row.length / 2);
-        row.splice(ipIdx, 1);
-        row.splice(mid, 0, ipId);
-      }
-      row.forEach(function(id, i) { tempX[id] = i; });
-    }
-  }
-
-  // 4. Assign pixel positions — center each row horizontally
-  var rowWidths = {};
-  Object.keys(rows).forEach(function(d) {
-    rowWidths[d] = rows[d].length * FL_CARD_W + (rows[d].length - 1) * FL_H_GAP;
-  });
-  var maxRowW = Object.keys(rowWidths).reduce(function(m, d) { return Math.max(m, rowWidths[d]); }, FL_CARD_W);
 
   var posMap = {};
-  Object.keys(rows).forEach(function(d) {
-    var row = rows[d];
-    var rowW = rowWidths[d];
-    var startX = FL_PAD + (maxRowW - rowW) / 2;
-    row.forEach(function(id, i) {
-      posMap[id] = {
-        x: startX + i * (FL_CARD_W + FL_H_GAP),
-        y: FL_PAD + (+d) * FL_ROW_H,
-      };
-    });
-  });
-
-  // 5a. Collect raw edges — split forward vs loopback
-  var rawForward = [], rawLoop = [];
-  Object.keys(cards).forEach(function(fromId) {
-    if (!posMap[fromId]) return;
-    var card = cards[fromId];
-    var fp = posMap[fromId];
-    (card.answers || []).forEach(function(ans, ansIdx) {
-      if (!ans || !ans.next || !posMap[ans.next]) return;
-      var fd = depth[fromId], td = depth[ans.next];
-      var tp = posMap[ans.next];
-      var toCard = cards[ans.next];
-      var edgeKey = fromId + "-" + (ans.id || ansIdx);
-      // portX: center of card bottom (spread slightly when selected)
-      var portX = (fp.x + FL_CARD_W / 2);
-      if (td !== undefined && fd !== undefined && td <= fd) {
-        rawLoop.push({
-          from: fromId, to: ans.next, ansIdx: ansIdx,
-          fd: fd !== undefined ? fd : 0,
-          td: td !== undefined ? td : 0,
-          fromPos: fp, toPos: tp,
-          toIntended: !!(toCard && toCard.intendedPath),
-          key: edgeKey,
-        });
+  var laneExtent = {}; // tracks true bottom of each lane including selection expansion
+  activeLanes.forEach(function(t) {
+    var y = SL_PAD + SL_LANE_HDR;
+    laneCards[t].forEach(function(id) {
+      var card = cards[id];
+      var h = isCompact ? COMPACT_CARD_H : cardHeight(card);
+      var linked   = (card.answers || []).filter(function(a){ return a.next; });
+      var unlinked = (card.answers || []).filter(function(a){ return !a.next && a.label; });
+      var portYs;
+      if (isCompact) {
+        // All edges exit from the card's vertical midpoint in compact mode
+        portYs = linked.map(function() { return y + COMPACT_CARD_H / 2; });
       } else {
-        rawForward.push({
-          from: fromId, to: ans.next, ansIdx: ansIdx,
-          fd: fd !== undefined ? fd : 0,
-          td: td !== undefined ? td : 0,
-          portX: portX,
-          toIntended: !!(toCard && toCard.intendedPath),
-          key: edgeKey,
+        var allVisible = linked.concat(unlinked).slice(0, SL_ANS_MAX);
+        portYs = allVisible.map(function(_, rowIdx) {
+          return y + SL_HDR_H + rowIdx * SL_ANS_H + SL_ANS_H / 2;
         });
       }
+      posMap[id] = {
+        x: laneX[t] + 12, y: y, h: h,
+        lane: t, laneX: laneX[t],
+        answerPortYs: portYs,
+        linkedAnswers: linked,
+      };
+      y += h + SL_CARD_GAP;
+      // Push cards below the selected one down by its expansion amount
+      if (selectedId && id === selectedId && selExpansion) y += selExpansion;
+    });
+    laneExtent[t] = y;
+  });
+
+  var maxLaneH = activeLanes.reduce(function(mx, t) {
+    return Math.max(mx, (laneExtent[t] || 0) - (SL_PAD + SL_LANE_HDR));
+  }, 0);
+  var canvasW = SL_PAD * 2 + activeLanes.length * SL_LANE_W + Math.max(0, activeLanes.length - 1) * SL_COL_GAP;
+  var canvasH = SL_PAD * 2 + SL_LANE_HDR + maxLaneH + 36;
+
+  var edges = [];
+  Object.keys(cards).forEach(function(id) {
+    var fp = posMap[id];
+    if (!fp) return;
+    fp.linkedAnswers.forEach(function(a, ansIdx) {
+      if (!posMap[a.next]) return;
+      var portIdx = Math.min(ansIdx, SL_ANS_MAX - 1);
+      var portY = fp.answerPortYs[portIdx] !== undefined ? fp.answerPortYs[portIdx] : fp.y + fp.h / 2;
+      edges.push({
+        from: id, to: a.next,
+        portY: portY,
+        toIntended: !!(cards[a.next] && cards[a.next].intendedPath),
+      });
     });
   });
 
-  // 5b. Gutter offsets + build forward edge paths
-  var gutterOffsets = allocateGutterOffsets(rawForward);
-  var edges = rawForward.map(function(e) {
-    var fp = posMap[e.from], tp = posMap[e.to];
-    var gOff = gutterOffsets[e.key] || 0;
-    var srcCX = fp.x + FL_CARD_W / 2;
-    var dstCX = tp.x + FL_CARD_W / 2;
-    return Object.assign({}, e, {
-      d: buildForwardPath(srcCX, fp.y + FL_CARD_H, dstCX, tp.y, e.fd, e.td, gOff),
-    });
-  });
-
-  // 6. Orphans
-  var orphans = Object.keys(cards).filter(function(id) { return depth[id] === undefined; });
-  var orphanSectionH = orphans.length > 0 ? (50 + Math.ceil(orphans.length / 3) * (FL_CARD_H + 10)) : 0;
-  var mainCanvasW = maxRowW + FL_PAD * 2;
-  var canvasH = (maxDepth + 1) * FL_ROW_H + FL_PAD * 2 + orphanSectionH;
-  var loopZoneLeft = mainCanvasW + 10;
-
-  // 5c. Loop lane allocation — wider spans go further right
-  var loopsSorted = rawLoop.slice().sort(function(a, b) {
-    return Math.abs(b.fd - b.td) - Math.abs(a.fd - a.td);
-  });
-  var loopLaneMap = {};
-  loopsSorted.forEach(function(e, i) {
-    loopLaneMap[e.key] = loopZoneLeft + 20 + i * 38;
-  });
-
-  var loopEdges = rawLoop.map(function(e) {
-    var laneX = loopLaneMap[e.key];
-    return Object.assign({}, e, {
-      d: buildLoopPath(e.fromPos, e.toPos, laneX),
-      laneX: laneX,
-    });
-  });
-
-  var loopZoneW = rawLoop.length > 0 ? (50 + rawLoop.length * 38) : 0;
-  var canvasW = mainCanvasW + loopZoneW;
-
-  return { posMap: posMap, edges: edges, loopEdges: loopEdges, canvasW: canvasW, canvasH: canvasH, loopZoneLeft: loopZoneLeft, mainCanvasW: mainCanvasW, orphans: orphans, depthMap: depth };
+  return { laneCards: laneCards, activeLanes: activeLanes, laneX: laneX, posMap: posMap, edges: edges, canvasW: canvasW, canvasH: canvasH };
 }
 
-function getAncestors(selectedId, cards) {
-  var ancestors = {};
-  function walk(id) {
-    Object.keys(cards).forEach(function(pid) {
-      if (ancestors[pid]) return;
-      if ((cards[pid].answers || []).some(function(a) { return a && a.next === id; })) {
-        ancestors[pid] = true;
-        walk(pid);
-      }
-    });
+function slEdgePath(fp, tp, portY) {
+  var srcRight = fp.x + SL_CARD_W;
+  var dstLeft  = tp.x;
+  var dstMidY  = tp.y + SL_HDR_H / 2;
+  var loopX    = fp.laneX + SL_LANE_W + SL_COL_GAP * 0.38;
+
+  if (fp.lane === tp.lane) {
+    var x1 = srcRight, y1 = portY;
+    var x2 = srcRight, y2 = dstMidY;
+    var farX = tp.y < fp.y ? loopX + 18 : loopX;
+    return {
+      d: "M "+x1+","+y1+" C "+farX+","+y1+" "+farX+","+y2+" "+x2+","+y2,
+      x1:x1, y1:y1, x2:x2, y2:y2
+    };
+  } else {
+    var x1 = srcRight, y1 = portY;
+    var x2 = dstLeft,  y2 = dstMidY;
+    var dx = x2 - x1;
+    if (dx >= 0) {
+      var cp = Math.max(36, Math.abs(dx) * 0.42);
+      return {
+        d: "M "+x1+","+y1+" C "+(x1+cp)+","+y1+" "+(x2-cp)+","+y2+" "+x2+","+y2,
+        x1:x1, y1:y1, x2:x2, y2:y2
+      };
+    } else {
+      var drop = Math.max(52, Math.abs(y2 - y1) * 0.3 + 40);
+      var mx = (x1 + x2) / 2;
+      return {
+        d: "M "+x1+","+y1
+          +" C "+(x1+36)+","+y1+" "+(x1+36)+","+(y1+drop)+" "+mx+","+(y1+drop)
+          +" C "+(x2-36)+","+(y1+drop)+" "+(x2-36)+","+y2+" "+x2+","+y2,
+        x1:x1, y1:y1, x2:x2, y2:y2
+      };
+    }
   }
-  walk(selectedId);
-  return ancestors;
 }
 
-function getDescendants(selectedId, cards) {
-  var desc = {};
-  function walk(id) {
-    ((cards[id] && cards[id].answers) || []).forEach(function(a) {
-      if (a && a.next && !desc[a.next]) {
-        desc[a.next] = true;
-        walk(a.next);
-      }
-    });
-  }
-  walk(selectedId);
-  return desc;
-}
-
-export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
-  var [zoom,       setZoom]       = useState(1.0);
-  var zoomRef      = useRef(1.0);
-  var [pan,        setPan]        = useState({ x: 0, y: 0 });
-  var panRef       = useRef({ x: 0, y: 0 });
+export function SwimlaneView({ cards, rootCard, onEdit, onSetRoot }) {
+  var [zoom, setZoom]       = useState(1.0);
   var [selectedId, setSelectedId] = useState(null);
-  var containerRef = useRef(null);
-  var pinchRef     = useRef(null);
-  var dragRef      = useRef({ active: false, startPX: 0, startPY: 0, startCX: 0, startCY: 0, moved: false });
-  var canEdit      = !!onEdit;
+  var scrollRef  = useRef(null);
+  var pinchRef   = useRef(null);
+  var zoomRef    = useRef(1.0);
 
-  var layout = buildFlowLayout(cards, rootCard, selectedId);
+  useEffect(function() { zoomRef.current = zoom; }, [zoom]);
 
-  // Auto-fit on mount
+  // Attach non-passive touchmove for pinch zoom — scoped to this viewer
   useEffect(function() {
-    if (!containerRef.current || !layout.canvasW) return;
-    var cW = containerRef.current.clientWidth;
-    var cH = containerRef.current.clientHeight;
-    var nz = Math.min(1.0, Math.min((cW - 20) / layout.canvasW, (cH - 20) / layout.canvasH));
-    nz = Math.max(MIN_ZOOM, nz);
-    var np = { x: (cW - layout.canvasW * nz) / 2, y: (cH - layout.canvasH * nz) / 2 };
-    setZoom(nz); zoomRef.current = nz;
-    setPan(np); panRef.current = np;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function fitToView() {
-    if (!containerRef.current || !layout.canvasW) return;
-    var cW = containerRef.current.clientWidth;
-    var cH = containerRef.current.clientHeight;
-    var nz = Math.min(1.0, Math.min((cW - 20) / layout.canvasW, (cH - 20) / layout.canvasH));
-    nz = Math.max(MIN_ZOOM, nz);
-    var np = { x: (cW - layout.canvasW * nz) / 2, y: (cH - layout.canvasH * nz) / 2 };
-    setZoom(nz); zoomRef.current = nz;
-    setPan(np); panRef.current = np;
-  }
-
-  // Pinch-to-zoom
-  useEffect(function() {
-    var el = containerRef.current;
+    var el = scrollRef.current;
     if (!el) return;
-    function dist(e) { return Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); }
-    function onTS(e) {
-      if (e.touches.length === 2) {
-        var rect = el.getBoundingClientRect();
-        pinchRef.current = {
-          d: dist(e), z: zoomRef.current,
-          mx: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
-          my: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top,
-        };
-      }
-    }
+    function dist(e) { return Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY); }
+    function onTS(e) { if (e.touches.length===2) pinchRef.current={d:dist(e),z:zoomRef.current}; }
     function onTM(e) {
-      if (e.touches.length === 2 && pinchRef.current) {
+      if (e.touches.length===2 && pinchRef.current) {
         e.preventDefault();
-        var nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchRef.current.z * dist(e) / pinchRef.current.d));
-        var mx = pinchRef.current.mx, my = pinchRef.current.my;
-        var np = {
-          x: mx - (mx - panRef.current.x) * (nz / zoomRef.current),
-          y: my - (my - panRef.current.y) * (nz / zoomRef.current),
-        };
-        zoomRef.current = nz; panRef.current = np;
-        setZoom(nz); setPan(Object.assign({}, np));
+        setZoom(Math.min(1.55, Math.max(0.40, pinchRef.current.z * dist(e) / pinchRef.current.d)));
       }
     }
-    function onTE(e) { if (e.touches.length < 2) pinchRef.current = null; }
-    el.addEventListener("touchstart", onTS, { passive: true });
-    el.addEventListener("touchmove",  onTM, { passive: false });
-    el.addEventListener("touchend",   onTE, { passive: true });
+    function onTE(e) { if (e.touches.length<2) pinchRef.current=null; }
+    el.addEventListener("touchstart", onTS, {passive:true});
+    el.addEventListener("touchmove",  onTM, {passive:false});
+    el.addEventListener("touchend",   onTE, {passive:true});
     return function() {
       el.removeEventListener("touchstart", onTS);
       el.removeEventListener("touchmove",  onTM);
@@ -334,298 +311,191 @@ export function FlowView({ cards, rootCard, onEdit, onSetRoot }) {
     };
   }, []);
 
-  function onWheel(e) {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    var rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { left: 0, top: 0 };
-    var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    var nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * (1 - e.deltaY * 0.002)));
-    var np = {
-      x: mx - (mx - panRef.current.x) * (nz / zoomRef.current),
-      y: my - (my - panRef.current.y) * (nz / zoomRef.current),
-    };
-    zoomRef.current = nz; panRef.current = np;
-    setZoom(nz); setPan(Object.assign({}, np));
+  if (!rootCard || !cards || Object.keys(cards).length === 0) {
+    return <div style={{padding:32,textAlign:"center",color:"rgba(255,255,255,.3)",fontSize:13}}>No cards yet.</div>;
   }
 
-  function onBgPointerDown(e) {
-    if (e.target.closest("[data-flow-card]")) return;
-    dragRef.current = { active: true, startPX: e.clientX, startPY: e.clientY, startCX: panRef.current.x, startCY: panRef.current.y, moved: false };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }
-  function onBgPointerMove(e) {
-    var d = dragRef.current;
-    if (!d.active) return;
-    var dx = e.clientX - d.startPX, dy = e.clientY - d.startPY;
-    if (!d.moved && Math.sqrt(dx * dx + dy * dy) < 6) return;
-    d.moved = true;
-    var np = { x: d.startCX + dx, y: d.startCY + dy };
-    panRef.current = np;
-    setPan(Object.assign({}, np));
-  }
-  function onBgPointerUp() {
-    if (dragRef.current.active && !dragRef.current.moved) setSelectedId(null);
-    dragRef.current = Object.assign({}, dragRef.current, { active: false, moved: false });
-  }
+  var isCompact = zoom < 0.70;
+  var canEdit   = !!onEdit;
 
-  function onCardClick(e, cardId, card) {
-    e.stopPropagation();
-    if (selectedId === cardId) {
-      if (canEdit) { onEdit(card); setSelectedId(null); }
-    } else {
-      setSelectedId(cardId);
+  // Compute how much extra height the selected card adds beyond its base height
+  var selExpansion = 0;
+  if (selectedId && canEdit) {
+    var sc = cards[selectedId];
+    if (sc) {
+      if (isCompact) {
+        var scLinked   = (sc.answers||[]).filter(function(a){return a.next;}).length;
+        var scUnlinked = (sc.answers||[]).filter(function(a){return !a.next && a.label;}).length;
+        var scTotal    = scLinked + scUnlinked;
+        var scShown    = Math.min(scTotal, SL_ANS_MAX);
+        var scOverflow = scTotal > SL_ANS_MAX ? 1 : 0;
+        selExpansion = (scShown + scOverflow) * COMPACT_ANS_H + 28;
+      } else {
+        selExpansion = 28; // just the action bar in normal mode
+      }
     }
   }
 
-  var highlighted = {};
-  if (selectedId) {
-    highlighted[selectedId] = true;
-    var anc = getAncestors(selectedId, cards);
-    var desc = getDescendants(selectedId, cards);
-    Object.keys(anc).forEach(function(k) { highlighted[k] = true; });
-    Object.keys(desc).forEach(function(k) { highlighted[k] = true; });
-  }
-
-  function cardOpacity(cardId) {
-    if (!selectedId) return 1;
-    return highlighted[cardId] ? 1 : 0.15;
-  }
-  function edgeOpacity(edge) {
-    if (!selectedId) return 1;
-    return (highlighted[edge.from] && highlighted[edge.to]) ? 1 : 0.07;
-  }
-
-  if (!cards || Object.keys(cards).length === 0) {
-    return (
-      <div style={{ padding: 32, textAlign: "center", color: "rgba(255,255,255,.3)", fontSize: 13 }}>
-        No cards yet.
-      </div>
-    );
-  }
+  var layout   = buildTypeLayout(cards, rootCard, selectedId, selExpansion, isCompact);
+  var laneCards= layout.laneCards, activeLanes=layout.activeLanes, laneX=layout.laneX;
+  var posMap   = layout.posMap, edges=layout.edges, canvasW=layout.canvasW, canvasH=layout.canvasH;
 
   return (
-    <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-
+    <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
       {/* Toolbar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,.06)", flexShrink: 0 }}>
-        <button onClick={function() { var nz = Math.min(MAX_ZOOM, +(zoom + 0.15).toFixed(2)); setZoom(nz); zoomRef.current = nz; }}
-          style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.6)", borderRadius: 5, padding: "3px 9px", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>+</button>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,.35)", minWidth: 36, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-        <button onClick={function() { var nz = Math.max(MIN_ZOOM, +(zoom - 0.15).toFixed(2)); setZoom(nz); zoomRef.current = nz; }}
-          style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.6)", borderRadius: 5, padding: "3px 9px", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>−</button>
-        <button onClick={function() { setZoom(1.0); zoomRef.current = 1.0; setPan({ x: 0, y: 0 }); panRef.current = { x: 0, y: 0 }; }}
-          style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.4)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 11, marginLeft: 2, fontFamily: "inherit" }}>Reset</button>
-        <button onClick={fitToView}
-          style={{ background: "rgba(255,255,255,.07)", border: "none", color: "rgba(255,255,255,.4)", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 11, marginLeft: 2, fontFamily: "inherit" }}>Fit</button>
-        <span style={{ marginLeft: "auto", fontSize: 9, color: "rgba(255,255,255,.2)" }}>
-          Tap to select · tap again to edit · ★ = intended · Pinch or ctrl+scroll to zoom
-        </span>
+      <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
+        <button onClick={function(){setZoom(function(z){return Math.min(1.55,+(z+0.15).toFixed(2));});}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:5,padding:"3px 9px",cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>+</button>
+        <span style={{fontSize:11,color:"rgba(255,255,255,.35)",minWidth:36,textAlign:"center",fontFamily:"inherit"}}>{Math.round(zoom*100)}%</span>
+        <button onClick={function(){setZoom(function(z){return Math.max(0.40,+(z-0.15).toFixed(2));});}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:5,padding:"3px 9px",cursor:"pointer",fontSize:14,fontFamily:"inherit"}}>−</button>
+        <button onClick={function(){setZoom(1.0);}} style={{background:"rgba(255,255,255,.07)",border:"none",color:"rgba(255,255,255,.4)",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11,marginLeft:2,fontFamily:"inherit"}}>Reset</button>
+        {isCompact && <span style={{marginLeft:"auto",fontSize:9,color:"rgba(168,255,62,.6)",letterSpacing:.5,textTransform:"uppercase",fontWeight:700}}>Compact</span>}
       </div>
 
-      {/* Canvas viewport */}
-      <div
-        ref={containerRef}
-        style={{ flex: 1, overflow: "hidden", position: "relative", cursor: "grab", userSelect: "none" }}
-        onPointerDown={onBgPointerDown}
-        onPointerMove={onBgPointerMove}
-        onPointerUp={onBgPointerUp}
-        onWheel={onWheel}
-      >
-        <div style={{
-          position: "absolute",
-          width: layout.canvasW, height: layout.canvasH,
-          transform: "translate(" + pan.x + "px," + pan.y + "px) scale(" + zoom + ")",
-          transformOrigin: "0 0",
-        }}>
+      {/* Scroll area */}
+      <div ref={scrollRef} style={{overflow:"auto",flex:1,userSelect:"none"}}>
+        {/* Wrapper sized to zoomed canvas so scrollbars appear correctly */}
+        <div style={{position:"relative",width:canvasW*zoom+32,height:canvasH*zoom+32,minWidth:"100%",flexShrink:0}}>
+          {/* Scaled canvas */}
+          <div style={{position:"absolute",top:0,left:0,width:canvasW,height:canvasH,transform:"scale("+zoom+")",transformOrigin:"top left"}}>
 
-          {/* SVG edges layer — renders below cards */}
-          <svg style={{ position: "absolute", inset: 0, width: layout.canvasW, height: layout.canvasH, overflow: "visible", pointerEvents: "none" }}>
-            <defs>
-              <marker id="fl-arr-ip" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                <polygon points="0,0 8,4 0,8" fill={FL_EDGE_IP} />
-              </marker>
-              <marker id="fl-arr-nm" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                <polygon points="0,0 8,4 0,8" fill={FL_EDGE_NRM} />
-              </marker>
-              <marker id="fl-arr-loop" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                <polygon points="0,0 8,4 0,8" fill={FL_EDGE_LBK} />
-              </marker>
-            </defs>
-
-            {/* Forward edges — orthogonal staircase, bottom→top, X changes only in row gutters */}
-            {layout.edges.map(function(edge) {
-              var ip = edge.toIntended;
+            {/* Column lane headers */}
+            {activeLanes.map(function(t, i) {
+              var meta = TM[t] || TM.pitch;
+              var x = laneX[t];
               return (
-                <path key={edge.key} d={edge.d}
-                  stroke={ip ? FL_EDGE_IP : FL_EDGE_NRM}
-                  strokeWidth={ip ? 2.5 : 1.5}
-                  fill="none"
-                  opacity={edgeOpacity(edge)}
-                  markerEnd={ip ? "url(#fl-arr-ip)" : "url(#fl-arr-nm)"}
-                />
-              );
-            })}
-
-            {/* Loopback edges — dashed amber, route to the right of the canvas */}
-            {layout.loopEdges.map(function(edge) {
-              return (
-                <path key={edge.key} d={edge.d}
-                  stroke={FL_EDGE_LBK}
-                  strokeWidth="1.5"
-                  strokeDasharray="5 3"
-                  fill="none"
-                  opacity={edgeOpacity(edge)}
-                  markerEnd="url(#fl-arr-loop)"
-                />
-              );
-            })}
-          </svg>
-
-          {/* Card nodes */}
-          {Object.keys(layout.posMap).map(function(cardId) {
-            var p    = layout.posMap[cardId];
-            var card = cards[cardId];
-            if (!card || !p) return null;
-            var meta       = TM[card.type] || TM.pitch;
-            var isRoot     = cardId === rootCard;
-            var isSelected = cardId === selectedId;
-            var answers    = card.answers || [];
-            var expandedH  = isSelected ? (FL_CARD_H + answers.length * FL_ANS_H + (canEdit ? FL_BAR_H : 0)) : FL_CARD_H;
-            var op         = cardOpacity(cardId);
-            var borderColor = isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)";
-
-            return (
-              <div
-                key={cardId}
-                data-flow-card="1"
-                onClick={function(e) { onCardClick(e, cardId, card); }}
-                style={{
-                  position: "absolute", left: p.x, top: p.y,
-                  width: FL_CARD_W, height: expandedH,
-                  background: card.intendedPath ? "rgba(168,255,62,.07)" : isSelected ? "rgba(255,255,255,.10)" : "rgba(255,255,255,.06)",
-                  borderTop:    "3px solid " + (card.intendedPath ? "#A8FF3E" : meta.color),
-                  borderRight:  "1px solid " + borderColor,
-                  borderBottom: "1px solid " + borderColor,
-                  borderLeft:   "1px solid " + borderColor,
-                  borderRadius: 9,
-                  cursor: "pointer",
-                  overflow: "hidden",
-                  opacity: op,
-                  boxShadow: isSelected ? ("0 0 0 2px " + meta.color + "44,0 6px 20px rgba(0,0,0,.55)") : "0 2px 8px rgba(0,0,0,.3)",
-                  transition: "opacity .16s, box-shadow .15s, height .12s",
-                  zIndex: isSelected ? 10 : 2,
-                  display: "flex", flexDirection: "column",
-                  touchAction: "none",
-                }}
-              >
-                {/* Header row */}
-                <div style={{ height: FL_CARD_H, padding: "0 9px", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                  <span style={{ fontSize: 11 }}>{meta.icon}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {card.title || "(untitled)"}
-                  </span>
-                  {isRoot && <span style={{ fontSize: 8, background: "rgba(0,180,255,.2)", color: "#00B4FF", borderRadius: 99, padding: "1px 5px", fontWeight: 700, flexShrink: 0 }}>root</span>}
-                  {card.intendedPath && <span style={{ fontSize: 9, color: "#A8FF3E", flexShrink: 0 }}>★</span>}
+                <div key={t+"-hdr"} style={{position:"absolute",left:x,top:SL_PAD,width:SL_LANE_W,height:SL_LANE_HDR-6,background:meta.color+"16",border:"1px solid "+meta.color+"35",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",gap:5,pointerEvents:"none",userSelect:"none"}}>
+                  <span style={{fontSize:13}}>{meta.icon}</span>
+                  <span style={{fontSize:10,fontWeight:700,color:meta.color,textTransform:"uppercase",letterSpacing:1.1}}>{meta.label}</span>
+                  <span style={{fontSize:9,color:"rgba(255,255,255,.28)",marginLeft:1}}>{laneCards[t].length}</span>
                 </div>
+              );
+            })}
 
-                {/* Expanded: answer rows + action bar */}
-                {isSelected && (
-                  <div style={{ flex: 1, borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", flexDirection: "column" }}>
-                    {answers.map(function(ans, i) {
-                      var fd = layout.depthMap[cardId], td = layout.depthMap[ans.next];
-                      var isBack = ans.next && td !== undefined && fd !== undefined && td <= fd;
-                      var hasLink = !!ans.next;
-                      return (
-                        <div key={ans.id || i} style={{
-                          height: FL_ANS_H, padding: "0 9px",
-                          display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
-                          borderTop: i > 0 ? "1px solid rgba(255,255,255,.05)" : "none",
-                        }}>
-                          <span style={{ fontSize: 9, color: hasLink ? "rgba(255,255,255,.75)" : "rgba(255,255,255,.3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {ans.label || "—"}
-                          </span>
-                          {isBack && <span style={{ fontSize: 9, color: "rgba(255,167,38,.7)", flexShrink: 0 }}>↻</span>}
-                          {hasLink && !isBack && <span style={{ fontSize: 9, color: "rgba(255,255,255,.3)", flexShrink: 0 }}>↓</span>}
-                        </div>
-                      );
-                    })}
-                    {canEdit && (
-                      <div style={{ height: FL_BAR_H, borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", flexShrink: 0, marginTop: "auto" }}>
-                        <button onClick={function(e) { e.stopPropagation(); onEdit(card); setSelectedId(null); }}
-                          style={{ flex: 1, fontSize: 10, color: "rgba(255,255,255,.7)", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
-                          ✏ Edit
-                        </button>
-                        {onSetRoot && !isRoot && (
-                          <button onClick={function(e) { e.stopPropagation(); onSetRoot(cardId); setSelectedId(null); }}
-                            style={{ flex: 1, fontSize: 10, color: "rgba(168,255,62,.8)", background: "none", border: "none", borderLeft: "1px solid rgba(255,255,255,.07)", cursor: "pointer", fontFamily: "inherit" }}>
-                            ⬆ Root
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+            {/* Vertical lane dividers */}
+            {activeLanes.slice(0,-1).map(function(t, i) {
+              var nextX = laneX[activeLanes[i+1]];
+              var sepX = laneX[t] + SL_LANE_W + (nextX - laneX[t] - SL_LANE_W) / 2;
+              return (
+                <div key={t+"-div"} style={{position:"absolute",left:sepX,top:SL_PAD,height:canvasH-SL_PAD*2,width:1,background:"rgba(255,255,255,.055)",pointerEvents:"none"}}/>
+              );
+            })}
 
-          {/* Loopback zone separator — vertical line to the right of main cards */}
-          {layout.loopEdges.length > 0 && (
-            <div style={{ position: "absolute", left: layout.loopZoneLeft - 6, top: FL_PAD, width: 1, height: layout.canvasH - FL_PAD * 2, background: "rgba(255,167,38,.15)" }} />
-          )}
-          {layout.loopEdges.length > 0 && (
-            <div style={{ position: "absolute", left: layout.loopZoneLeft, top: FL_PAD + 4, fontSize: 9, color: "rgba(255,167,38,.35)", textTransform: "uppercase", letterSpacing: 0.8, writingMode: "vertical-rl" }}>
-              ↩ Loops ({layout.loopEdges.length})
-            </div>
-          )}
+            {/* Edges SVG — rendered below cards */}
+            <svg style={{position:"absolute",inset:0,width:canvasW,height:canvasH,overflow:"visible",pointerEvents:"none"}}>
+              <defs>
+                <marker id="arr-normal" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+                  <polygon points="0,0 7,3.5 0,7" fill={SL_EDGE_NORMAL}/>
+                </marker>
+                <marker id="arr-intended" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+                  <polygon points="0,0 7,3.5 0,7" fill={SL_EDGE_INTENDED}/>
+                </marker>
+              </defs>
+              {edges.map(function(edge, i) {
+                var fp = posMap[edge.from], tp = posMap[edge.to];
+                if (!fp || !tp) return null;
+                var ep = slEdgePath(fp, tp, edge.portY);
+                var stroke   = edge.toIntended ? SL_EDGE_INTENDED : SL_EDGE_NORMAL;
+                var markerId = edge.toIntended ? "url(#arr-intended)" : "url(#arr-normal)";
+                var strokeW  = edge.toIntended ? 1.8 : 1.3;
+                return (
+                  <g key={i}>
+                    <path d={ep.d} stroke={stroke} strokeWidth={strokeW} fill="none" markerEnd={markerId}/>
+                    <circle cx={ep.x1} cy={ep.y1} r={2.5} fill={stroke}/>
+                  </g>
+                );
+              })}
+            </svg>
 
-          {/* Orphan section */}
-          {layout.orphans.length > 0 && (
-            <div style={{ position: "absolute", left: FL_PAD, top: layout.canvasH - orphanSectionH(layout.orphans), width: layout.mainCanvasW - FL_PAD * 2 }}>
-              <div style={{ height: 1, background: "rgba(255,255,255,.07)", marginBottom: 12 }} />
-              <div style={{ fontSize: 9, color: "rgba(255,255,255,.2)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
-                Unconnected ({layout.orphans.length})
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {layout.orphans.map(function(id) {
-                  var card = cards[id];
-                  if (!card) return null;
-                  var meta = TM[card.type] || TM.pitch;
-                  return (
-                    <div key={id} data-flow-card="1"
-                      onClick={function(e) { e.stopPropagation(); if (canEdit) onEdit(card); }}
-                      style={{
-                        width: FL_CARD_W, height: FL_CARD_H,
-                        background: "rgba(255,255,255,.03)",
-                        border: "1px dashed rgba(255,255,255,.12)",
-                        borderTop: "3px solid rgba(255,255,255,.12)",
-                        borderRadius: 9, cursor: canEdit ? "pointer" : "default",
-                        display: "flex", alignItems: "center", gap: 5,
-                        padding: "0 9px", opacity: 0.45,
-                      }}
-                    >
-                      <span style={{ fontSize: 11 }}>{meta.icon}</span>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,.5)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {card.title || "(untitled)"}
-                      </span>
-                      <span style={{ fontSize: 8, color: "rgba(255,255,255,.2)" }}>orphan</span>
+            {/* Cards */}
+            {Object.keys(posMap).map(function(cardId) {
+              var pos  = posMap[cardId];
+              var card = cards[cardId];
+              if (!card) return null;
+              var meta       = TM[card.type] || TM.pitch;
+              var isRoot     = cardId === rootCard;
+              var isSelected = cardId === selectedId;
+              var linked   = (card.answers || []).filter(function(a){ return a.next; });
+              var unlinked = (card.answers || []).filter(function(a){ return !a.next && a.label; });
+              var allRows  = linked.concat(unlinked);
+              var shown    = allRows.slice(0, SL_ANS_MAX);
+              var overflow = allRows.length - shown.length;
+              var inboundCt = edges.filter(function(e){ return e.to === cardId; }).length;
+              var isMerge   = inboundCt > 1;
+              // cardH = base height + selection expansion (only for selected card)
+              var expansion = (isSelected && canEdit) ? selExpansion : 0;
+              var cardH = isCompact ? (COMPACT_CARD_H + expansion) : (pos.h + expansion);
+              // In compact mode, answer rows only visible when selected
+              var showAnswers = !isCompact || (isSelected && canEdit);
+              var ansH = isCompact ? COMPACT_ANS_H : SL_ANS_H;
+              return (
+                <div key={cardId}
+                  onClick={function(){ if(canEdit){ if(isSelected) onEdit(card); else setSelectedId(cardId); } else setSelectedId(isSelected?null:cardId); }}
+                  style={{
+                    position:"absolute", left:pos.x, top:pos.y,
+                    width:SL_CARD_W, height:cardH,
+                    background: card.intendedPath ? "rgba(168,255,62,.06)" : "rgba(255,255,255,.06)",
+                    borderTop:"3px solid "+meta.color,
+                    borderRight:"1.5px solid "+(isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)"),
+                    borderBottom:"1.5px solid "+(isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)"),
+                    borderLeft:"1.5px solid "+(isSelected ? meta.color : card.intendedPath ? "rgba(168,255,62,.28)" : "rgba(255,255,255,.10)"),
+                    borderRadius:10, cursor: canEdit ? "pointer" : "default",
+                    overflow:"hidden",
+                    boxShadow: isSelected ? ("0 0 0 3px "+meta.color+"33,0 8px 28px rgba(0,0,0,.6)") : "0 2px 8px rgba(0,0,0,.35)",
+                    transition:"box-shadow .18s, height .18s, border-color .18s",
+                    zIndex: isSelected ? 10 : 1,
+                    display:"flex", flexDirection:"column",
+                  }}>
+                  {/* Header row — compact uses larger text, fills full card height when not selected */}
+                  {isCompact ? (
+                    <div style={{height:COMPACT_CARD_H,padding:"0 9px",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                      <span style={{fontSize:14,flexShrink:0}}>{meta.icon}</span>
+                      <span style={{fontSize:13,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title || card.type}</span>
+                      {isRoot && <span style={{fontSize:7,background:"rgba(0,180,255,.22)",color:"#00B4FF",borderRadius:99,padding:"1px 4px",fontWeight:700,flexShrink:0}}>root</span>}
+                      {card.intendedPath && <span style={{fontSize:11,color:"#A8FF3E",flexShrink:0}}>★</span>}
+                      {isMerge && <span style={{fontSize:9,color:meta.color,opacity:.7,flexShrink:0}}>⊕</span>}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
+                  ) : (
+                    <div style={{height:SL_HDR_H,padding:"0 8px",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+                      <span style={{fontSize:11}}>{meta.icon}</span>
+                      <span style={{fontSize:11,fontWeight:700,color:"#fff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title || card.type}</span>
+                      {isRoot && <span style={{fontSize:8,background:"rgba(0,180,255,.22)",color:"#00B4FF",borderRadius:99,padding:"1px 5px",fontWeight:700,flexShrink:0}}>root</span>}
+                      {isMerge && <span style={{fontSize:9,color:meta.color,opacity:.65,flexShrink:0}}>⊕</span>}
+                      {card.intendedPath && <span style={{fontSize:9,color:"#A8FF3E",flexShrink:0}}>★</span>}
+                    </div>
+                  )}
+                  {/* Divider + answer rows — hidden in compact mode until selected */}
+                  {showAnswers && shown.length > 0 && <div style={{height:1,background:"rgba(255,255,255,.07)",flexShrink:0}}/>}
+                  {showAnswers && shown.map(function(ans, rowIdx) {
+                    var hasLink = !!ans.next;
+                    return (
+                      <div key={ans.id || rowIdx} style={{height:ansH,padding:"0 8px",display:"flex",alignItems:"center",gap:5,flexShrink:0,borderTop:rowIdx>0?"1px solid rgba(255,255,255,.05)":"none"}}>
+                        <span style={{fontSize:isCompact?10:9,color:hasLink?"rgba(255,255,255,.72)":"rgba(255,255,255,.28)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ans.label||"—"}</span>
+                        {hasLink && <span style={{display:"inline-block",width:5,height:5,borderRadius:"50%",background:"rgba(255,255,255,.35)",flexShrink:0}}/>}
+                        {hasLink && <span style={{fontSize:9,color:"rgba(255,255,255,.28)",flexShrink:0,lineHeight:1}}>→</span>}
+                      </div>
+                    );
+                  })}
+                  {/* Overflow stub */}
+                  {showAnswers && overflow > 0 && (
+                    <div style={{height:ansH,padding:"0 8px",display:"flex",alignItems:"center",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.05)"}}>
+                      <span style={{fontSize:9,color:"rgba(255,255,255,.25)",fontStyle:"italic"}}>+{overflow} more</span>
+                    </div>
+                  )}
+                  {/* Selection action bar */}
+                  {isSelected && canEdit && (
+                    <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(4,10,28,.95)",borderTop:"1px solid rgba(255,255,255,.09)",display:"flex"}}>
+                      <button onClick={function(e){e.stopPropagation();onEdit(card);setSelectedId(null);}} style={{flex:1,fontSize:10,color:"rgba(255,255,255,.7)",background:"none",border:"none",padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>✏ Edit</button>
+                      {onSetRoot && !isRoot && (
+                        <button onClick={function(e){e.stopPropagation();onSetRoot(cardId);setSelectedId(null);}} style={{flex:1,fontSize:10,color:"rgba(168,255,62,.8)",background:"none",border:"none",borderLeft:"1px solid rgba(255,255,255,.07)",padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>⬆ Root</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-function orphanSectionH(orphans) {
-  return orphans.length > 0 ? (50 + Math.ceil(orphans.length / 3) * (FL_CARD_H + 10)) : 0;
-}
-
-// Both names alias to FlowView
-export var TreeView     = FlowView;
-export var SwimlaneView = FlowView;

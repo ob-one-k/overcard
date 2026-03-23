@@ -5,7 +5,7 @@ import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
 import { TipCtx } from "./Tooltip";
 import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
 import { CardEditorSheet } from "./Editor";
-import { SwimlaneView } from "./Viewer";
+import { TreeView, SwimlaneView } from "./Viewer";
 import { stripMarkup } from "../lib/richtext";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
@@ -131,11 +131,11 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
             <input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Search cards…" style={inputSt({paddingLeft:32,height:36})}/>
           </div>
         )}
-        {viewMode==="tree" && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to select · tap again to edit · ★ = intended path · Pinch or ctrl+scroll to zoom</div>}
-        {viewMode==="tree" && readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to view · ★ = intended path · Pinch or ctrl+scroll to zoom</div>}
+        {viewMode==="tree" && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>▶/▼ to expand · click card to edit · ★ = intended path · Pinch or ctrl+scroll to zoom</div>}
+        {viewMode==="tree" && readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>▶/▼ to expand · click card to view · ★ = intended path · Pinch or ctrl+scroll to zoom</div>}
       </div>
       {viewMode === "tree" ? (
-        <SwimlaneView cards={deck.cards} rootCard={deck.rootCard}
+        <TreeView cards={deck.cards} rootCard={deck.rootCard}
           onEdit={function(c){setEditing(c);}}
           onSetRoot={readOnly ? null : (onUpdateDeck ? function(id){onUpdateDeck(deck.id, function(d){return Object.assign({},d,{rootCard:id});});} : null)}/>
       ) : (
@@ -402,7 +402,7 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
         </div>
 
         {viewMode === "tree" ? (
-          <SwimlaneView cards={form.cards || {}} rootCard={form.rootCard} onEdit={function(c){setEditCard(c);}}
+          <TreeView cards={form.cards || {}} rootCard={form.rootCard} onEdit={function(c){setEditCard(c);}}
             onSetRoot={function(id){setForm(function(p){return Object.assign({},p,{rootCard:id});});}} />
         ) : (
           <div style={{overflowY:"auto",flex:1,padding:"14px 20px"}}>
@@ -654,7 +654,7 @@ export function ObjectionsTab({ deck, onUpdateDeck, readOnly }) {
                       {!readOnly && <button onClick={function(){openStackCard(activeStack, null);}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)",fontSize:11})}>Edit</button>}
                     </div>
                     {cardCount > 0 ? (
-                      <SwimlaneView
+                      <TreeView
                         cards={activeStack.cards}
                         rootCard={activeStack.rootCard}
                         onEdit={readOnly ? function(card){setViewCard(card); setViewCardStack(activeStack);} : function(card){openStackCard(activeStack, card);}}
