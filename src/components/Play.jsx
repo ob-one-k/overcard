@@ -48,7 +48,7 @@ export function ObjPicker({ stacks, onSelect, onClose, deckCards }) {
 // Core card navigator — used inside active Play sessions.
 // sessionMode=true records visit events and shows the + Note button.
 // cardEnterTime tracks dwell time per card.
-export function Navigator({ deck, sessionMode, onEvent, onNavigationChange }) {
+export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getAudioOffset }) {
   var [pitchHist, setPitchHist] = useState(deck.rootCard ? [deck.rootCard] : []);
   var [objMode,   setObjMode]   = useState(null);
   var [showPicker, setShowPicker] = useState(false);
@@ -79,7 +79,9 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange }) {
 
   function emitVisit(c, dur) {
     if (!sessionMode || !onEvent) return;
-    onEvent({ type:"visit", cardId:c.id, cardTitle:c.title, cardType:c.type, isObjCard:inObj, stackLabel:inObj&&objMode?objMode.stack.label:null, intendedPath:!!c.intendedPath, ts:Date.now(), durationMs:dur });
+    var audioEnd   = getAudioOffset ? getAudioOffset() : null;
+    var audioStart = audioEnd !== null ? Math.max(0, audioEnd - dur) : null;
+    onEvent({ type:"visit", cardId:c.id, cardTitle:c.title, cardType:c.type, isObjCard:inObj, stackLabel:inObj&&objMode?objMode.stack.label:null, intendedPath:!!c.intendedPath, ts:Date.now(), durationMs:dur, audioStartMs:audioStart, audioEndMs:audioEnd });
   }
 
   function navigate(nextCardId, isObj, newObjMode) {
@@ -291,11 +293,41 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [nameError, setNameError]       = useState(false);
   var [navDepth,  setNavDepth]        = useState(1);
   var [navInObj,  setNavInObj]        = useState(false);
+  // Audio recording state
+  var [audioDevices,   setAudioDevices]   = useState([]);
+  var [selectedDevice, setSelectedDevice] = useState("");
+  var [recordAudio,    setRecordAudio]    = useState(false);
+  var [deviceError,    setDeviceError]    = useState(null);
+  // Audio recording refs
+  var mediaRecorderRef = useRef(null);
+  var audioChunksRef   = useRef([]);
+  var recorderStartMs  = useRef(null);
+
+  // Enumerate audio input devices when new-session form is shown
+  useEffect(function() {
+    if (playView !== "new") return;
+    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices) return;
+    setDeviceError(null);
+    navigator.mediaDevices.enumerateDevices()
+      .then(function(devices) {
+        var mics = devices.filter(function(d) { return d.kind === "audioinput"; });
+        setAudioDevices(mics);
+        if (mics.length > 0 && !selectedDevice) setSelectedDevice(mics[0].deviceId);
+      })
+      .catch(function() { setDeviceError("Could not list audio devices"); });
+  }, [playView]);
 
   // Handle deck changes: deck switch is handled in MainApp's switchDeck, so this effect
   // only fires if deck.id changes while an active session exists (should not happen normally)
   useEffect(function() {
     if (playView === "active" && activeSession && activeSession.deckId !== deck.id) {
+      // Stop any active recording without saving audio
+      var rec = mediaRecorderRef.current;
+      if (rec && rec.state !== "inactive") {
+        rec.onstop = function() { rec.stream.getTracks().forEach(function(t){ t.stop(); }); };
+        rec.stop();
+      }
+      mediaRecorderRef.current = null;
       var finished = Object.assign({}, activeSession, {
         endTs: Date.now(),
         status: "completed",
@@ -323,6 +355,32 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
       sold: false, soldCardId: null, soldCardTitle: null,
       events: [],
     };
+    // Reset recorder state
+    audioChunksRef.current = [];
+    recorderStartMs.current = null;
+    mediaRecorderRef.current = null;
+    // Start microphone recording if opted in
+    if (recordAudio && selectedDevice && typeof MediaRecorder !== "undefined") {
+      navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: selectedDevice } } })
+        .then(function(stream) {
+          var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+            ? "audio/webm;codecs=opus"
+            : MediaRecorder.isTypeSupported("audio/webm")
+              ? "audio/webm"
+              : "audio/ogg";
+          var recorder = new MediaRecorder(stream, { mimeType: mimeType });
+          recorder.ondataavailable = function(e) {
+            if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+          };
+          mediaRecorderRef.current = recorder;
+          recorderStartMs.current = Date.now();
+          recorder.start(1000); // collect a chunk every second
+        })
+        .catch(function(err) {
+          console.warn("overcard: audio recording unavailable:", err);
+          mediaRecorderRef.current = null;
+        });
+    }
     setNavDepth(1);
     setNavInObj(false);
     setActiveSession(s);
@@ -337,32 +395,77 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
   function finishSession(sold, soldCard, outcomeOverride) {
     setSaving(true);
     var outcome = outcomeOverride || (sold ? "sold" : "completed");
-    var finished = Object.assign({}, activeSession, {
-      endTs: Date.now(),
-      status: "completed",
-      outcome: outcome,
-      sold: !!sold,
-      soldCardId: sold && soldCard ? soldCard.id : null,
-      soldCardTitle: sold && soldCard ? soldCard.title : null,
-      events: sessionEvents,
-    });
-    apiPost("/sessions", finished)
-      .then(function() {
-        setSaving(false);
-        setActiveSession(null);
-        setSessionEvents([]);
-        setPlayView("home");
-        setNewName(""); setNewDesc(""); setNameError(false);
-        onPortalToReview(finished.id);
-      })
-      .catch(function() {
-        setSaving(false);
-        setActiveSession(null);
-        setSessionEvents([]);
-        setPlayView("home");
-        setNameError(false);
-        onPortalToReview(null);
+
+    // Build audio segment metadata from visit events that have audio offsets
+    var audioSegs = sessionEvents
+      .filter(function(ev) { return ev.type === "visit" && ev.audioStartMs !== null && ev.audioStartMs !== undefined; })
+      .map(function(ev, i) {
+        return {
+          segmentIndex: i,
+          cardId:       ev.cardId,
+          cardTitle:    ev.cardTitle,
+          cardType:     ev.cardType,
+          isObjCard:    !!ev.isObjCard,
+          stackLabel:   ev.stackLabel || null,
+          startMs:      ev.audioStartMs,
+          endMs:        ev.audioEndMs,
+        };
       });
+
+    var finished = Object.assign({}, activeSession, {
+      endTs:          Date.now(),
+      status:         "completed",
+      outcome:        outcome,
+      sold:           !!sold,
+      soldCardId:     sold && soldCard ? soldCard.id : null,
+      soldCardTitle:  sold && soldCard ? soldCard.title : null,
+      events:         sessionEvents,
+      audioSegments:  audioSegs.length > 0 ? audioSegs : null,
+    });
+
+    function doSave() {
+      apiPost("/sessions", finished)
+        .then(function() {
+          setSaving(false);
+          setActiveSession(null);
+          setSessionEvents([]);
+          setPlayView("home");
+          setNewName(""); setNewDesc(""); setNameError(false);
+          onPortalToReview(finished.id);
+        })
+        .catch(function() {
+          setSaving(false);
+          setActiveSession(null);
+          setSessionEvents([]);
+          setPlayView("home");
+          setNameError(false);
+          onPortalToReview(null);
+        });
+    }
+
+    var recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.onstop = function() {
+        // Release mic
+        recorder.stream.getTracks().forEach(function(t) { t.stop(); });
+        mediaRecorderRef.current = null;
+        // Only save blob if we have segments (i.e. recording actually captured card visits)
+        if (audioSegs.length > 0) {
+          var blob = new Blob(audioChunksRef.current, { type: recorder.mimeType });
+          import("../lib/audioStore.js").then(function(mod) {
+            mod.saveAudioBlob(finished.id, blob, recorder.mimeType)
+              .catch(function() {}) // silent fail — session saves regardless
+              .finally(doSave);
+          }).catch(doSave);
+        } else {
+          doSave();
+        }
+      };
+      recorder.stop();
+    } else {
+      if (mediaRecorderRef.current) mediaRecorderRef.current = null;
+      doSave();
+    }
   }
 
   if (playView === "active" && activeSession) {
@@ -392,7 +495,9 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
             </button>
           </div>
         </div>
-        <Navigator deck={deck} sessionMode={true} onEvent={handleEvent} onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); }}/>
+        <Navigator deck={deck} sessionMode={true} onEvent={handleEvent}
+          onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); }}
+          getAudioOffset={function() { return recorderStartMs.current !== null ? Date.now() - recorderStartMs.current : null; }}/>
       </div>
     );
   }
@@ -457,6 +562,55 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
               placeholder={pendingType==="live"?"Prospect info, context, goals…":"What you're working on, focus areas…"}
               rows={2}
               style={Object.assign({},inputSt({resize:"none",fontSize:13,lineHeight:1.5}),{marginBottom:12,minHeight:58})}/>
+            {/* Audio recording toggle — only shown when MediaRecorder API is available */}
+            {typeof MediaRecorder !== "undefined" && navigator.mediaDevices && (
+              <div style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.18)",borderRadius:12,padding:"11px 14px",marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:recordAudio?10:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:14}}>🎙️</span>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,.85)"}}>Record audio</div>
+                      <div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>Segment by card visit</div>
+                    </div>
+                  </div>
+                  <button onClick={function(){setRecordAudio(function(v){return !v;});}}
+                    style={{width:38,height:22,borderRadius:99,border:"none",cursor:"pointer",background:recordAudio?"#A8FF3E":"rgba(255,255,255,.15)",transition:"background .15s",position:"relative",flexShrink:0}}>
+                    <div style={{position:"absolute",top:3,left:recordAudio?18:3,width:16,height:16,borderRadius:"50%",background:recordAudio?"#000":"rgba(255,255,255,.7)",transition:"left .15s"}}/>
+                  </button>
+                </div>
+                {recordAudio && (
+                  <div>
+                    {audioDevices.length === 0 ? (
+                      <div>
+                        <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginBottom:7}}>No devices listed yet.</div>
+                        <button onClick={function(){
+                          navigator.mediaDevices.getUserMedia({ audio: true })
+                            .then(function(stream){ stream.getTracks().forEach(function(t){t.stop();}); })
+                            .catch(function(){})
+                            .finally(function(){
+                              navigator.mediaDevices.enumerateDevices().then(function(devices){
+                                var mics = devices.filter(function(d){return d.kind==="audioinput";});
+                                setAudioDevices(mics);
+                                if (mics.length > 0) setSelectedDevice(mics[0].deviceId);
+                              });
+                            });
+                        }} style={Object.assign({},ghostSm({color:"#A8FF3E",borderColor:"rgba(168,255,62,.35)"}),{width:"100%",justifyContent:"center"})}>
+                          Allow microphone access
+                        </button>
+                      </div>
+                    ) : (
+                      <select value={selectedDevice} onChange={function(e){setSelectedDevice(e.target.value);}}
+                        style={inputSt({marginBottom:0,fontSize:12,padding:"7px 10px"})}>
+                        {audioDevices.map(function(d, i){
+                          return <option key={d.deviceId} value={d.deviceId}>{d.label || ("Microphone " + (i+1))}</option>;
+                        })}
+                      </select>
+                    )}
+                    {deviceError && <div style={{fontSize:10,color:"#EF5350",marginTop:5}}>{deviceError}</div>}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{display:"flex",gap:8}}>
               <button onClick={function(){setPlayView("home");setNewName("");setNewDesc("");}} style={Object.assign({},ghostBtn(),{flex:1,padding:"10px"})}>Cancel</button>
               <button onClick={startSession}

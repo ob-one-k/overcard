@@ -4,6 +4,8 @@ import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker } from "./ui";
 import { RichPromptDisplay } from "./Tooltip";
+import { AudioPlayer } from "./AudioPlayer";
+import { deleteAudioBlob } from "../lib/audioStore";
 
 // ─── SESSION STATS HELPERS ────────────────────────────────────────────────────
 export function sessionVisits(s) { return (s.events||[]).filter(function(e){return e.type==="visit";}); }
@@ -205,6 +207,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   var [showShare, setShowShare] = useState(false);
   var [pathCardIdx, setPathCardIdx] = useState(null);
   var [reviewShares, setReviewShares] = useState(null);
+  var audioSeekRef = useRef(null); // used by Path tab "▶ Segment" button
 
   var isAdmin = !!(authUser && authUser.role === "admin");
   var isOwner = !!(authUser && session.userId === authUser.id);
@@ -334,14 +337,16 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
         )}
       </div>
       <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
-        {[["overview","Overview"],["path","Path"],["notes","Notes"],["feedback","Feedback"]].map(function(t) {
+        {[["overview","Overview"],["path","Path"],["playback","Playback"],["notes","Notes"],["feedback","Feedback"]].map(function(t) {
           var on = tab===t[0];
           var isFbTab = t[0]==="feedback";
+          var isPlaybackTab = t[0]==="playback";
           return (
             <button key={t[0]} onClick={function(){setTab(t[0]);if(isFbTab){setFeedbackSeenOnce(true);if(onMarkFeedbackSeen)onMarkFeedbackSeen(session.id);}}}
               style={{flex:1,background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),padding:"9px 2px",cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:on?700:400,color:on?SESS_COLOR:"rgba(255,255,255,.35)",transition:"all .15s",position:"relative"}}>
               {t[1]}
               {isFbTab && showFbBadge && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:"#EF5350",display:"inline-block"}}/>}
+              {isPlaybackTab && session.audioSegments && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:SESS_COLOR,display:"inline-block"}}/>}
             </button>
           );
         })}
@@ -503,7 +508,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                   {isSelected && (
                     <div style={{marginLeft:31,marginBottom:8,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderLeft:"2px solid "+(x.isObjCard?OBJ_COLOR:m.color),borderRadius:"0 10px 10px 0",padding:"11px 12px"}}>
                       {/* Stats row */}
-                      <div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap"}}>
+                      <div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
                         <div style={{background:"rgba(255,255,255,.08)",borderRadius:8,padding:"5px 11px",textAlign:"center"}}>
                           <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>{fmtMs(x.durationMs||0)}</div>
                           <div style={{fontSize:8,color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>Time spent</div>
@@ -512,6 +517,22 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                           <div style={{fontSize:14,fontWeight:700,color:m.color}}>{m.icon}</div>
                           <div style={{fontSize:8,color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>{m.label}</div>
                         </div>
+                        {session.audioSegments && (function() {
+                          var seg = (session.audioSegments||[]).find(function(s){ return s.segmentIndex === i; });
+                          if (!seg) return null;
+                          return (
+                            <button
+                              onClick={function() {
+                                setTab("playback");
+                                setTimeout(function() {
+                                  if (audioSeekRef.current) audioSeekRef.current(seg.startMs);
+                                }, 150);
+                              }}
+                              style={Object.assign({}, ghostSm({color:SESS_COLOR,borderColor:"rgba(168,255,62,.3)",fontSize:11}), {display:"flex",alignItems:"center",gap:5,padding:"5px 11px"})}>
+                              ▶ Segment
+                            </button>
+                          );
+                        })()}
                       </div>
                       {/* Flow: came from / led to */}
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
@@ -556,6 +577,10 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
               );
             })}
           </div>
+        )}
+        {/* PLAYBACK */}
+        {tab==="playback" && (
+          <AudioPlayer session={session} seekRef={audioSeekRef} />
         )}
         {/* NOTES */}
         {tab==="notes" && (function() {
@@ -754,6 +779,7 @@ export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onIniti
   function deleteSession(id) {
     apiDel("/sessions/" + id).then(function() {
       setSessions(function(prev) { return prev.filter(function(s){return s.id!==id;}); });
+      deleteAudioBlob(id).catch(function(){}); // clean up local IndexedDB recording
     }).catch(function(e){ console.error("overcard:", e); });
   }
 

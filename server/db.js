@@ -141,6 +141,8 @@ async function initSchema() {
     await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`);
     // Migration: add activeToken for single-session enforcement
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "activeToken" TEXT`);
+    // Migration: add audioSegments for per-card audio recording metadata
+    await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "audioSegments" JSONB`);
 
     // Seed manifest — tracks which records were seeded and their last-seeded content hash
     // Enables smart re-seeding: refresh unmodified seed records, preserve user edits
@@ -219,10 +221,11 @@ function parseDeck(row) {
 function parseSession(row) {
   if (!row) return null;
   return Object.assign({}, row, {
-    sold:    !!row.sold,
-    events:  parseJsonField(row.events,  []),
-    notes:   parseJsonField(row.notes,   []),
-    metrics: parseJsonField(row.metrics, null),
+    sold:          !!row.sold,
+    events:        parseJsonField(row.events,        []),
+    notes:         parseJsonField(row.notes,         []),
+    metrics:       parseJsonField(row.metrics,       null),
+    audioSegments: parseJsonField(row.audioSegments, null),
   });
 }
 
@@ -597,13 +600,13 @@ async function upsertSession(session, userId, orgId) {
   const { rows } = await pool.query(`
     INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
       name,account,contact,mode,status,outcome,"startTs","endTs",sold,"soldCardId","soldCardTitle",
-      events,notes,metrics)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+      events,notes,metrics,"audioSegments")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
     ON CONFLICT (id) DO UPDATE SET
       "deckId"=$4,"deckName"=$5,"deckColor"=$6,"deckIcon"=$7,
       name=$8,account=$9,contact=$10,mode=$11,status=$12,outcome=$13,
       "startTs"=$14,"endTs"=$15,sold=$16,"soldCardId"=$17,"soldCardTitle"=$18,
-      events=$19,notes=$20,metrics=$21
+      events=$19,notes=$20,metrics=$21,"audioSegments"=$22
     WHERE sessions."userId"=$3
     RETURNING *
   `, [
@@ -614,6 +617,7 @@ async function upsertSession(session, userId, orgId) {
     session.startTs, session.endTs || null, session.sold ? true : false,
     session.soldCardId || null, session.soldCardTitle || null,
     JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
+    JSON.stringify(session.audioSegments || null),
   ]);
   return rows[0] ? parseSession(rows[0]) : getSessionById(session.id);
 }
@@ -627,15 +631,16 @@ async function insertSession(session) {
   await pool.query(`
     INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
       name,account,contact,mode,status,outcome,"startTs","endTs",sold,"soldCardId","soldCardTitle",
-      events,notes,metrics)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+      events,notes,metrics,"audioSegments")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
     ON CONFLICT (id) DO UPDATE SET
       "deckId"=EXCLUDED."deckId","deckName"=EXCLUDED."deckName","deckColor"=EXCLUDED."deckColor",
       "deckIcon"=EXCLUDED."deckIcon",name=EXCLUDED.name,account=EXCLUDED.account,contact=EXCLUDED.contact,
       mode=EXCLUDED.mode,status=EXCLUDED.status,outcome=EXCLUDED.outcome,
       "startTs"=EXCLUDED."startTs","endTs"=EXCLUDED."endTs",sold=EXCLUDED.sold,
       "soldCardId"=EXCLUDED."soldCardId","soldCardTitle"=EXCLUDED."soldCardTitle",
-      events=EXCLUDED.events,notes=EXCLUDED.notes,metrics=EXCLUDED.metrics
+      events=EXCLUDED.events,notes=EXCLUDED.notes,metrics=EXCLUDED.metrics,
+      "audioSegments"=EXCLUDED."audioSegments"
   `, [
     session.id, session.orgId, session.userId,
     session.deckId, session.deckName, session.deckColor || "#F5A623", session.deckIcon || "💼",
@@ -644,6 +649,7 @@ async function insertSession(session) {
     session.startTs, session.endTs || null, session.sold ? true : false,
     session.soldCardId || null, session.soldCardTitle || null,
     JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
+    null, // seed sessions never have audio recordings
   ]);
 }
 
