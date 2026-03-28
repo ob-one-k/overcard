@@ -5,7 +5,7 @@ import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
 import { CardEditorSheet } from "./components/Editor";
-import { TreeView, SwimlaneView } from "./components/Viewer";
+import { TreeView } from "./components/Viewer";
 import { PlayTab } from "./components/Play";
 import { SessionReview, SessionsTab, SessionAnalytics } from "./components/Sessions";
 import { CardsTab, ObjectionsTab } from "./components/Cards";

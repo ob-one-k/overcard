@@ -5,7 +5,7 @@ import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
 import { TipCtx } from "./Tooltip";
 import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
 import { CardEditorSheet } from "./Editor";
-import { TreeView, SwimlaneView } from "./Viewer";
+import { TreeView } from "./Viewer";
 import { stripMarkup } from "../lib/richtext";
 import DesktopCtx from "../lib/DesktopCtx";
 import { CardsDesktop } from "./desktop/CardsDesktop";
