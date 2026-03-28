@@ -465,7 +465,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 }
 
 // ─── CARD EDITOR SHEET ────────────────────────────────────────────────────────
-export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo }) {
+export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo, inline }) {
   var isBlank = !card.prompt && !card.title;
   var [form, setForm] = useState({
     id: card.id || uid(),
@@ -507,22 +507,33 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
     return c.id !== form.id && (c.answers||[]).some(function(a){ return a.next === form.id; });
   });
 
+  // ── When inline=true: skip fixed overlay + backdrop + Handle; fill height directly ──
+  var outerStyle = inline
+    ? {display:"flex",flexDirection:"column",height:"100%"}
+    : {position:"fixed",inset:0,zIndex:300,display:"flex",flexDirection:"column"};
+  var sheetStyle = inline
+    ? {display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#081428"}
+    : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
+  var headerPad = inline ? "8px 18px 12px" : "8px 20px 14px";
+  var contentPad = inline ? "16px 18px" : "18px 20px";
+  var buttonPad  = inline ? "12px 18px" : "14px 20px";
+
   return (
-    <div style={{position:"fixed",inset:0,zIndex:300,display:"flex",flexDirection:"column"}}>
-      <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
-        <Handle/>
-        <div style={{padding:"8px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+    <div style={outerStyle}>
+      {!inline && <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)"}}/>}
+      <div style={sheetStyle}>
+        {!inline && <Handle/>}
+        <div style={{padding:headerPad,display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
           <div>
-            <div style={{fontSize:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>{isBlank?"New Card":"Edit Card"}</div>
-            {!isBlank && <div style={{fontSize:10,color:"rgba(255,255,255,.25)",marginTop:2}}>ID: {form.id}</div>}
+            <div style={{fontSize:inline?15:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>{isBlank?"New Card":"Edit Card"}</div>
+            {!isBlank && <div style={{fontSize:inline?9:10,color:"rgba(255,255,255,.25)",marginTop:2}}>ID: {form.id}</div>}
           </div>
           <div style={{display:"flex",gap:8}}>
             {!isBlank && onDelete && <button onClick={function(){onDelete(form.id);}} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
             <button onClick={onClose} style={iconBtn()}>✕</button>
           </div>
         </div>
-        <div style={{overflowY:"auto",flex:1,padding:"18px 20px"}}>
+        <div style={{overflowY:"auto",flex:1,padding:contentPad}}>
           {/* Linked From — cards that have an answer pointing to this card */}
           {linkedFromCards.length > 0 && (
             <div style={{marginBottom:14}}>
@@ -753,7 +764,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
             })}
           </div>
         </div>
-        <div style={{padding:"14px 20px",borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",gap:10}}>
+        <div style={{padding:buttonPad,borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",gap:10,flexShrink:0}}>
           <button onClick={onClose} style={Object.assign({},ghostBtn(),{flex:1})}>Cancel</button>
           <button onClick={function(){if(validate())onSave(isRootCard?Object.assign({},form,{intendedPath:true}):form);}} style={Object.assign({},solidBtn(ac),{flex:2})}>{isBlank?"Create Card":"Save Changes"}</button>
         </div>

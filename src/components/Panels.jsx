@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useContext } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
+import DesktopCtx from "../lib/DesktopCtx";
+import { DesktopModal } from "./DesktopModal";
 
 // ─── DECK SWITCHER SHEET ──────────────────────────────────────────────────────
 export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, onEditDeck, orgUsers, orgTeams }) {
+  var desktop = useContext(DesktopCtx);
   var [showNew, setShowNew] = useState(false);
   var [nf, setNf] = useState({ name:"", icon:"💼", color:"#F5A623", visibility:"public", accessList:[] });
   var [editingDeck, setEditingDeck] = useState(null);
@@ -28,20 +31,15 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
     setShowNew(false); setNf({name:"",icon:"💼",color:"#F5A623",visibility:"public",accessList:[]}); onClose();
   }
 
-  return (
-    <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
-      <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"80vh",display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
-        <Handle/>
-        <div style={{padding:"4px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
-          <div style={{fontSize:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>Switch Deck</div>
-          <div style={{display:"flex",gap:8}}>
-            {isAdmin && <button onClick={function(){setShowNew(function(p){return !p;});}} style={ghostSm()}>+ New Deck</button>}
-            <button onClick={onClose} style={iconBtn()}>✕</button>
-          </div>
+  // ── Inner content (shared between mobile sheet and desktop modal) ──
+  var innerContent = (
+    <div style={{overflowY:"auto",flex:1,padding:"14px 20px"}}>
+      {isAdmin && (
+        <div style={{marginBottom:12}}>
+          <button onClick={function(){setShowNew(function(p){return !p;});}} style={ghostSm({width:"100%",textAlign:"center",padding:"9px"})}>+ New Deck</button>
         </div>
-        <div style={{overflowY:"auto",flex:1,padding:"14px 20px"}}>
-          {showNew && (
+      )}
+      {showNew && (
             <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"16px",marginBottom:14}}>
               <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:14,fontFamily:"'Lora',serif"}}>New Pitch Deck</div>
               <label style={labelSt()}>Name</label>
@@ -194,7 +192,30 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
               );
             })}
           </div>
+    </div>
+  );
+
+  if (desktop.isDesktop) {
+    return (
+      <DesktopModal title="Switch Deck" width={560} onClose={onClose}>
+        {innerContent}
+      </DesktopModal>
+    );
+  }
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
+      <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
+      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"80vh",display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+        <Handle/>
+        <div style={{padding:"4px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+          <div style={{fontSize:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>Switch Deck</div>
+          <div style={{display:"flex",gap:8}}>
+            {isAdmin && <button onClick={function(){setShowNew(function(p){return !p;});}} style={ghostSm()}>+ New Deck</button>}
+            <button onClick={onClose} style={iconBtn()}>✕</button>
+          </div>
         </div>
+        {innerContent}
       </div>
     </div>
   );
@@ -449,6 +470,7 @@ export function LoginScreen({ onLogin, kickReason }) {
 
 // ─── PROFILE SHEET ────────────────────────────────────────────────────────────
 export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
+  var desktop = useContext(DesktopCtx);
   var [busy, setBusy] = useState(false);
   function logout() {
     setBusy(true);
@@ -458,6 +480,41 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
       .then(function(){ onLogout(); })
       .catch(function(){ onLogout(); });
   }
+
+  var profileContent = (
+    <div style={{padding:"20px 20px 24px",display:"flex",flexDirection:"column",gap:14,fontFamily:"inherit"}}>
+      {/* Avatar + name */}
+      <div style={{display:"flex",alignItems:"center",gap:14}}>
+        <div style={{width:52,height:52,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:700,color:"#fff",flexShrink:0}}>
+          {authUser.displayName[0].toUpperCase()}
+        </div>
+        <div>
+          <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>{authUser.displayName}</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginTop:2}}>{authUser.email}</div>
+        </div>
+      </div>
+      {/* Role + team */}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:99,background:authUser.role==="admin"?"rgba(168,255,62,.18)":"rgba(0,180,255,.1)",color:authUser.role==="admin"?SESS_COLOR:"#00B4FF",border:"1px solid "+(authUser.role==="admin"?"rgba(168,255,62,.3)":"rgba(0,180,255,.2)"),textTransform:"uppercase",letterSpacing:.6}}>
+          {authUser.role}
+        </span>
+        {teamName && <span style={{fontSize:10,padding:"3px 10px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.45)",border:"1px solid rgba(255,255,255,.1)"}}>{teamName}</span>}
+      </div>
+      <button onClick={logout} disabled={busy}
+        style={Object.assign({},ghostBtn(),{padding:"11px",marginTop:4,color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>
+        {busy ? "Signing out…" : "Sign Out"}
+      </button>
+    </div>
+  );
+
+  if (desktop.isDesktop) {
+    return (
+      <DesktopModal title="Profile" width={400} onClose={onClose}>
+        {profileContent}
+      </DesktopModal>
+    );
+  }
+
   return (
     <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
@@ -467,29 +524,7 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
           <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>Profile</div>
           <button onClick={onClose} style={iconBtn()}>✕</button>
         </div>
-        <div style={{padding:"20px 20px 0",display:"flex",flexDirection:"column",gap:14}}>
-          {/* Avatar + name */}
-          <div style={{display:"flex",alignItems:"center",gap:14}}>
-            <div style={{width:52,height:52,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:700,color:"#fff",flexShrink:0}}>
-              {authUser.displayName[0].toUpperCase()}
-            </div>
-            <div>
-              <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>{authUser.displayName}</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginTop:2}}>{authUser.email}</div>
-            </div>
-          </div>
-          {/* Role + team */}
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:99,background:authUser.role==="admin"?"rgba(168,255,62,.18)":"rgba(0,180,255,.1)",color:authUser.role==="admin"?SESS_COLOR:"#00B4FF",border:"1px solid "+(authUser.role==="admin"?"rgba(168,255,62,.3)":"rgba(0,180,255,.2)"),textTransform:"uppercase",letterSpacing:.6}}>
-              {authUser.role}
-            </span>
-            {teamName && <span style={{fontSize:10,padding:"3px 10px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.45)",border:"1px solid rgba(255,255,255,.1)"}}>{teamName}</span>}
-          </div>
-          <button onClick={logout} disabled={busy}
-            style={Object.assign({},ghostBtn(),{padding:"11px",marginTop:4,color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>
-            {busy ? "Signing out…" : "Sign Out"}
-          </button>
-        </div>
+        {profileContent}
       </div>
     </div>
   );

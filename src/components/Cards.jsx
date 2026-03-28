@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useContext } from "react";
 import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS } from "../lib/constants";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
@@ -7,9 +7,15 @@ import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
 import { CardEditorSheet } from "./Editor";
 import { TreeView, SwimlaneView } from "./Viewer";
 import { stripMarkup } from "../lib/richtext";
+import DesktopCtx from "../lib/DesktopCtx";
+import { CardsDesktop } from "./desktop/CardsDesktop";
+import { ObjectionsDesktop } from "./desktop/ObjectionsDesktop";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
 export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+  var desktop = useContext(DesktopCtx);
+  if (desktop.isDesktop) return <CardsDesktop deck={deck} onUpsert={onUpsert} onDelete={onDelete} onUpdateDeck={onUpdateDeck} readOnly={readOnly}/>;
+
   var [viewMode,        setViewMode]        = useState("list");
   var [editing,         setEditing]         = useState(null);
   var [search,          setSearch]          = useState("");
@@ -298,7 +304,7 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
 }
 
 // ─── OBJECTIONS TAB ───────────────────────────────────────────────────────────
-function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, deckCards }) {
+export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, deckCards, inline }) {
   var [form, setForm]         = useState(Object.assign({}, stack, { cards:Object.assign({}, stack.cards || {}) }));
   var [editCard, setEditCard] = useState(initialEditCard || null);
   var [editMeta, setEditMeta] = useState(false);
@@ -343,11 +349,18 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
     return hay.indexOf(search.toLowerCase()) !== -1;
   });
 
+  var outerSt = inline
+    ? {display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}
+    : {position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"};
+  var sheetSt = inline
+    ? {display:"flex",flexDirection:"column",flex:1,background:"#081428",overflow:"hidden"}
+    : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
+
   return (
-    <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
-      <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
-        <Handle/>
+    <div style={outerSt}>
+      {!inline && <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>}
+      <div style={sheetSt}>
+        {!inline && <Handle/>}
 
         {!editMeta ? (
           <div style={{padding:"8px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
@@ -485,6 +498,9 @@ function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, dec
 }
 
 export function ObjectionsTab({ deck, onUpdateDeck, readOnly }) {
+  var desktop = useContext(DesktopCtx);
+  if (desktop.isDesktop) return <ObjectionsDesktop deck={deck} onUpdateDeck={onUpdateDeck} readOnly={readOnly}/>;
+
   var [editing, setEditing]       = useState(null);
   var [pendingCard, setPendingCard] = useState(null);
   var [showNew, setShowNew]       = useState(false);

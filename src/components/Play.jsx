@@ -4,9 +4,46 @@ import { apiPost } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge as IntendedBadgeComp } from "./ui";
 import { TipCtx, RichPromptDisplay, OverviewDisplay } from "./Tooltip";
+import DesktopCtx from "../lib/DesktopCtx";
+import { DesktopModal } from "./DesktopModal";
+import { PlayDesktop } from "./desktop/PlayDesktop";
 
 // ─── OBJECTION PICKER (in-session sheet) ──────────────────────────────────────
 export function ObjPicker({ stacks, onSelect, onClose, deckCards }) {
+  var desktop = useContext(DesktopCtx);
+
+  var pickerContent = (
+    <div style={{display:"flex",flexDirection:"column",gap:8,padding:"14px 20px 24px",maxHeight:"62vh",overflowY:"auto"}}>
+      <div style={{fontSize:11,color:"rgba(255,255,255,.3)",marginBottom:2}}>Select a stack to handle the objection</div>
+      {stacks.length === 0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.3)",padding:"28px 0",fontSize:14}}>No objection stacks yet.</div>}
+      {stacks.map(function(stack, i) {
+        return (
+          <button key={stack.id} onClick={function(){onSelect(stack);}}
+            style={{background:"rgba(239,83,80,.06)",border:"1.5px solid rgba(239,83,80,.18)",borderRadius:16,padding:"15px 17px",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14,animation:"answerItem .3s cubic-bezier(.22,1,.36,1) "+(i*.06)+"s both"}}>
+            <div style={{width:44,height:44,borderRadius:14,background:"rgba(239,83,80,.15)",border:"1px solid rgba(239,83,80,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{stack.icon}</div>
+            <div>
+              <div style={{fontSize:15,fontWeight:700,color:"#fff",marginBottom:2}}>{stack.label}</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.3)",marginBottom:2}}>{Object.keys(stack.cards).length} response paths</div>
+              {stack.targetCard && stack.targetCard !== "__pick" && deckCards && deckCards[stack.targetCard]
+                ? <div style={{fontSize:10,color:"rgba(239,83,80,.55)"}}>→ then: {deckCards[stack.targetCard].title}</div>
+                : <div style={{fontSize:10,color:"rgba(255,255,255,.22)"}}>↩ returns to current card</div>
+              }
+            </div>
+            <span style={{marginLeft:"auto",color:"rgba(239,83,80,.6)",fontSize:18}}>›</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (desktop.isDesktop || desktop.isTablet) {
+    return (
+      <DesktopModal title="Handle an Objection" width={460} onClose={onClose}>
+        {pickerContent}
+      </DesktopModal>
+    );
+  }
+
   return (
     <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)"}}/>
@@ -286,6 +323,9 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
 // On finish, auto-portals the user to the Session review in Sessions tab.
 export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
     playView, setPlayView, activeSession, setActiveSession, sessionEvents, setSessionEvents }) {
+  var desktop = useContext(DesktopCtx);
+  if (desktop.isDesktop) return <PlayDesktop deck={deck} activeId={activeId} onPortalToReview={onPortalToReview} onSwitchDeck={onSwitchDeck} playView={playView} setPlayView={setPlayView} activeSession={activeSession} setActiveSession={setActiveSession} sessionEvents={sessionEvents} setSessionEvents={setSessionEvents}/>;
+
   var [pendingType, setPendingType]   = useState("practice");
   var [newName, setNewName]           = useState("");
   var [newDesc, setNewDesc]           = useState("");

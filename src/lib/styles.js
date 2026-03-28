@@ -31,6 +31,12 @@ export function badgeSt(color, bg) {
 export function dividerV(h) {
   return { width:1, height: h || 24, background:"rgba(255,255,255,.07)", flexShrink:0 };
 }
+export function modalOverlay() {
+  return { position:"fixed", inset:0, zIndex:500, background:"rgba(0,0,0,.72)", backdropFilter:"blur(12px)", display:"flex", alignItems:"center", justifyContent:"center" };
+}
+export function modalDialog(w) {
+  return { background:"#081428", borderRadius:20, border:"1px solid rgba(255,255,255,.1)", width:w||480, maxWidth:"calc(100vw - 32px)", maxHeight:"85vh", overflowY:"auto", position:"relative", boxShadow:"0 24px 80px rgba(0,0,0,.8)" };
+}
 export var SHEET_MAX_H = (function() {
   try {
     var el = document.createElement("div");

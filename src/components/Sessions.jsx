@@ -6,6 +6,9 @@ import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker } from "
 import { RichPromptDisplay } from "./Tooltip";
 import { AudioPlayer } from "./AudioPlayer";
 import { deleteAudioBlob } from "../lib/audioStore";
+import DesktopCtx from "../lib/DesktopCtx";
+import { DesktopModal } from "./DesktopModal";
+import { SessionsDesktop } from "./desktop/SessionsDesktop";
 
 // ─── SESSION STATS HELPERS ────────────────────────────────────────────────────
 export function sessionVisits(s) { return (s.events||[]).filter(function(e){return e.type==="visit";}); }
@@ -19,6 +22,7 @@ export function fmtDateTime(ts) { return fmtDate(ts)+" · "+fmtTime(ts); }
 
 // ─── SHARE MODAL ──────────────────────────────────────────────────────────────
 export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
+  var desktop = useContext(DesktopCtx);
   var [shares, setShares]       = useState(null);
   var [selected, setSelected]   = useState([]);
   var [context, setContext]     = useState("");
@@ -83,17 +87,11 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
     });
   });
 
-  return (
-    <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,.55)"}}
-      onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#13151c",border:"1px solid rgba(255,255,255,.1)",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:430,maxHeight:"85vh",overflowY:"auto",padding:"18px 16px 32px",animation:"sheetUp .2s ease both"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>Share session</div>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.4)",fontSize:18,padding:"2px 6px",fontFamily:"inherit"}}>×</button>
-        </div>
-        <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:14,lineHeight:1.5}}>
-          Share <span style={{color:"#fff",fontWeight:700}}>{session.name}</span> with teammates or managers. They can view the session and leave feedback.
-        </div>
+  var shareContent = (
+    <div style={{padding:"16px 16px 24px"}}>
+      <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:14,lineHeight:1.5}}>
+        Share <span style={{color:"#fff",fontWeight:700}}>{session.name}</span> with teammates or managers. They can view the session and leave feedback.
+      </div>
 
         {/* ── Add entire team ── */}
         {teams.length > 0 && (
@@ -189,6 +187,26 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
             })}
           </div>
         )}
+    </div>
+  );
+
+  if (desktop.isDesktop) {
+    return (
+      <DesktopModal title="Share Session" width={500} onClose={onClose}>
+        {shareContent}
+      </DesktopModal>
+    );
+  }
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,.55)"}}
+      onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#13151c",border:"1px solid rgba(255,255,255,.1)",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:430,maxHeight:"85vh",overflowY:"auto",padding:"18px 16px 32px",animation:"sheetUp .2s ease both"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>Share session</div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.4)",fontSize:18,padding:"2px 6px",fontFamily:"inherit"}}>×</button>
+        </div>
+        {shareContent}
       </div>
     </div>
   );
@@ -731,6 +749,9 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
 // Three sub-views: list, review (single session), analytics (aggregate)
 // All data is scoped to the currently active deck.
 export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onInitialReview, viewScope, setViewScope, authUser, orgUsers, orgTeams }) {
+  var desktop = useContext(DesktopCtx);
+  if (desktop.isDesktop) return <SessionsDesktop deckId={deckId} deckName={deckName} deckColor={deckColor} deckRootCard={deckRootCard} onInitialReview={onInitialReview} viewScope={viewScope} setViewScope={setViewScope} authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams}/>;
+
   var [view,           setView]           = useState("list");
   var [sessions,       setSessions]       = useState(null);
   var [reviewId,       setReviewId]       = useState(onInitialReview || null);

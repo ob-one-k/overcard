@@ -11,6 +11,9 @@ import { SessionReview, SessionsTab, SessionAnalytics } from "./components/Sessi
 import { CardsTab, ObjectionsTab } from "./components/Cards";
 import { DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel } from "./components/Panels";
 import { HomeTab } from "./components/Home";
+import { useDesktop } from "./lib/useDesktop";
+import DesktopCtx from "./lib/DesktopCtx";
+import { DesktopShell } from "./components/DesktopShell";
 
 // ─── TAB CONFIG ─────────────────────────────────────────────────────────────
 // Fixed per-tab accent colors — each represents the tab's purpose, on-theme
@@ -96,6 +99,7 @@ export default function App() {
 
 // ─── APP ────────────────────────────────────────────────────────────────────
 function MainApp({ authUser, onLogout }) {
+  var desktop     = useDesktop();
   var TABS        = authUser.role === "admin" ? ADMIN_TABS : USER_TABS;
   var [decks,     setDecks]    = useState([]);
   var [activeId,  setActiveId] = useState("d1");
@@ -105,8 +109,8 @@ function MainApp({ authUser, onLogout }) {
   var [serverOk,  setServerOk] = useState(true);
   // Portal: when a session finishes, this holds the session ID to open in Sessions tab
   var [pendingReview, setPendingReview] = useState(null);
-  // Track whether we're in an active session to lock tab switching
-  var [sessionActive, setSessionActive] = useState(false);
+  // Track whether we're in an active session — derived from activeSession state
+  var sessionActive = !!activeSession;
   // Play tab state lifted here so it persists across tab switches
   var [playView,       setPlayView]       = useState("new");
   var [activeSession,  setActiveSession]  = useState(null);
@@ -220,7 +224,6 @@ function MainApp({ authUser, onLogout }) {
   function switchDeck(id) {
     localStorage.setItem("overcard_activeId", id);
     setActiveId(id);
-    setSessionActive(false);
     setPendingReview(null);
     // Reset play state when deck changes (mirrors existing PlayTab useEffect logic)
     setPlayView("home");
@@ -244,7 +247,6 @@ function MainApp({ authUser, onLogout }) {
 
   // ── Portal from Play → Sessions ──────────────────────────────────────────────
   function handlePortalToReview(sessionId) {
-    setSessionActive(false);
     if (sessionId) {
       setPendingReview(sessionId);
       switchTab("sessions");
@@ -287,7 +289,79 @@ function MainApp({ authUser, onLogout }) {
 
   var tabAccent = TAB_ACCENTS[tab] || TAB_ACCENTS.home;
 
+  // Shared tab content — rendered in both mobile and desktop layouts
+  var tabContent = (
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      {tab==="home" && (
+        <HomeTab
+          authUser={authUser}
+          decks={decks}
+          orgTeams={orgTeams}
+          orgUsers={orgUsers}
+          onSwitchDeckAndPlay={handleSwitchDeckAndPlay}
+        />
+      )}
+      <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
+        <PlayTab
+          deck={deck}
+          activeId={activeId}
+          onPortalToReview={handlePortalToReview}
+          onSwitchDeck={switchDeck}
+          playView={playView}
+          setPlayView={setPlayView}
+          activeSession={activeSession}
+          setActiveSession={setActiveSession}
+          sessionEvents={sessionEvents}
+          setSessionEvents={setSessionEvents}
+        />
+      </div>
+      {tab==="sessions" && (
+        <SessionsTab
+          key={deck.id+"-sessions"}
+          deckId={deck.id}
+          deckName={deck.name}
+          deckColor={deck.color}
+          deckRootCard={deck.rootCard}
+          onInitialReview={pendingReview}
+          viewScope={viewScope}
+          setViewScope={setViewScope}
+          authUser={authUser}
+          orgUsers={orgUsers}
+          orgTeams={orgTeams}
+        />
+      )}
+      {tab==="cards" && (
+        <CardsTab
+          key={deck.id+"-cards"}
+          deck={deck}
+          onUpsert={upsertCard}
+          onDelete={deleteCard}
+          onUpdateDeck={updateDeck}
+          readOnly={authUser.role !== "admin"}
+        />
+      )}
+      {tab==="objections" && (
+        <ObjectionsTab
+          key={deck.id+"-obj"}
+          deck={deck}
+          onUpdateDeck={updateDeck}
+          readOnly={authUser.role !== "admin"}
+        />
+      )}
+      {tab==="admin" && authUser.role === "admin" && (
+        <AdminPanel
+          authUser={authUser}
+          orgUsers={orgUsers}
+          orgTeams={orgTeams}
+          onRefreshUsers={refreshOrgUsers}
+          onRefreshTeams={refreshOrgTeams}
+        />
+      )}
+    </div>
+  );
+
   return (
+    <DesktopCtx.Provider value={desktop}>
     <TipCtx.Provider value={tipCtxVal}>
       <GlobalInflTooltip/>
       <div onClick={handleAppClick}>
@@ -304,6 +378,8 @@ function MainApp({ authUser, onLogout }) {
           @keyframes fadeIn    {from{opacity:0}to{opacity:1}}
           @keyframes savePulse {0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
           @keyframes btnPop    {0%{transform:scale(1)}40%{transform:scale(0.91)}100%{transform:scale(1)}}
+          @keyframes modalIn   {from{opacity:0;transform:translate(-50%,-55%)}to{opacity:1;transform:translate(-50%,-50%)}}
+          @keyframes pulse     {0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 5px transparent}100%{box-shadow:0 0 0 0 transparent}}
           button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
           button:not(:disabled):active{transform:scale(0.92)!important;filter:brightness(0.80);}
           button:not(:disabled):hover{filter:brightness(1.12);}
@@ -315,6 +391,29 @@ function MainApp({ authUser, onLogout }) {
           ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px;}
         `}</style>
 
+        {/* ── DESKTOP LAYOUT ── */}
+        {desktop.isDesktop && (
+          <DesktopShell
+            tabs={TABS}
+            tab={tab}
+            onTabClick={handleTabClick}
+            deck={deck}
+            decks={decks}
+            authUser={authUser}
+            sessionActive={sessionActive}
+            saveStatus={saveStatus}
+            saveLabel={saveLabel}
+            saveColor={saveColor}
+            serverOk={serverOk}
+            onOpenDeckSwitcher={function(){setShowDS(true);}}
+            onOpenProfile={function(){setShowProfile(true);}}
+          >
+            {tabContent}
+          </DesktopShell>
+        )}
+
+        {/* ── MOBILE LAYOUT (unchanged) ── */}
+        {!desktop.isDesktop && (
         <div style={{width:"100%",maxWidth:430,margin:"0 auto",height:"100dvh",display:"flex",flexDirection:"column",background:"linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)",boxShadow:"0 0 0 1px rgba(255,255,255,.04)"}}>
 
           {/* Server offline banner */}
@@ -347,73 +446,7 @@ function MainApp({ authUser, onLogout }) {
           </div>
 
           {/* Content area */}
-          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-            {tab==="home" && (
-              <HomeTab
-                authUser={authUser}
-                decks={decks}
-                orgTeams={orgTeams}
-                orgUsers={orgUsers}
-                onSwitchDeckAndPlay={handleSwitchDeckAndPlay}
-              />
-            )}
-            <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
-              <PlayTab
-                deck={deck}
-                activeId={activeId}
-                onPortalToReview={handlePortalToReview}
-                onSwitchDeck={switchDeck}
-                playView={playView}
-                setPlayView={setPlayView}
-                activeSession={activeSession}
-                setActiveSession={setActiveSession}
-                sessionEvents={sessionEvents}
-                setSessionEvents={setSessionEvents}
-              />
-            </div>
-            {tab==="sessions" && (
-              <SessionsTab
-                key={deck.id+"-sessions"}
-                deckId={deck.id}
-                deckName={deck.name}
-                deckColor={deck.color}
-                deckRootCard={deck.rootCard}
-                onInitialReview={pendingReview}
-                viewScope={viewScope}
-                setViewScope={setViewScope}
-                authUser={authUser}
-                orgUsers={orgUsers}
-                orgTeams={orgTeams}
-              />
-            )}
-            {tab==="cards" && (
-              <CardsTab
-                key={deck.id+"-cards"}
-                deck={deck}
-                onUpsert={upsertCard}
-                onDelete={deleteCard}
-                onUpdateDeck={updateDeck}
-                readOnly={authUser.role !== "admin"}
-              />
-            )}
-            {tab==="objections" && (
-              <ObjectionsTab
-                key={deck.id+"-obj"}
-                deck={deck}
-                onUpdateDeck={updateDeck}
-                readOnly={authUser.role !== "admin"}
-              />
-            )}
-            {tab==="admin" && authUser.role === "admin" && (
-              <AdminPanel
-                authUser={authUser}
-                orgUsers={orgUsers}
-                orgTeams={orgTeams}
-                onRefreshUsers={refreshOrgUsers}
-                onRefreshTeams={refreshOrgTeams}
-              />
-            )}
-          </div>
+          {tabContent}
 
           {/* Tab bar */}
           <div style={{flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:"rgba(4,10,28,.98)",backdropFilter:"blur(20px)",padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"}}>
@@ -430,6 +463,7 @@ function MainApp({ authUser, onLogout }) {
             })}
           </div>
         </div>
+        )}
 
         {showDS && (
           <DeckSwitcherSheet
@@ -457,5 +491,6 @@ function MainApp({ authUser, onLogout }) {
         )}
       </div>
     </TipCtx.Provider>
+    </DesktopCtx.Provider>
   );
 }
