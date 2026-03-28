@@ -19,12 +19,33 @@ function OutcomeBadge({ session }) {
   return <span style={{fontSize:9,background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.5)",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Live</span>;
 }
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function outcomePriority(s) {
+  if ((s.mode||"live") === "practice") return 5;
+  if (s.sold || s.outcome === "sold") return 1;
+  if (s.outcome === "booked") return 2;
+  if (s.outcome === "not_contacted") return 4;
+  return 3;
+}
+
+function computeFilteredStats(list) {
+  var live = list.filter(function(s){ return (s.mode||"live") === "live"; });
+  var sold = live.filter(function(s){ return s.sold || s.outcome === "sold"; });
+  var winRate = live.length > 0 ? Math.round(sold.length / live.length * 100) : null;
+  var durSecs = list.filter(function(s){ return s.endTs; }).map(function(s){ return sessionDurSec(s) || 0; });
+  var avgSec = durSecs.length > 0 ? Math.round(durSecs.reduce(function(a,b){return a+b;},0)/durSecs.length) : null;
+  return { total:list.length, winRate:winRate, avgSec:avgSec, soldCount:sold.length };
+}
+
 // ─── SESSIONS DESKTOP ─────────────────────────────────────────────────────────
 // Two-pane: session list (left ~380px) + session review (right flex:1)
+// Left pane: stat strip + search + filters (mode, sort, date range, reset) + scrollable list
 export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onInitialReview, viewScope, setViewScope, authUser, orgUsers, orgTeams }) {
   var [sessions,    setSessions]    = useState(null);
   var [selectedId,  setSelectedId]  = useState(onInitialReview || null);
   var [fType,       setFType]       = useState("all");
+  var [sortBy,      setSortBy]      = useState("date");
+  var [search,      setSearch]      = useState("");
   var [fFrom,       setFFrom]       = useState("");
   var [fTo,         setFTo]         = useState("");
   var [fbSeenTs,    setFbSeenTs]    = useState(function(){ try { return JSON.parse(localStorage.getItem("rc_fb_seen") || "{}"); } catch(e){ return {}; } });
@@ -65,28 +86,61 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
     }).catch(function(e){ console.error("overcard:", e); });
   }
 
+  function resetFilters() {
+    setSearch(""); setFType("all"); setFFrom(""); setFTo(""); setSortBy("date");
+  }
+
   function getFiltered() {
     if (!sessions) return [];
-    return sessions.filter(function(s) {
+    var list = sessions.filter(function(s) {
       if (fType !== "all" && (s.mode||"live") !== fType) return false;
+      if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
       if (fFrom) { var d = new Date(fFrom); d.setHours(0,0,0,0); if (s.startTs < d.getTime()) return false; }
       if (fTo)   { var d2 = new Date(fTo); d2.setHours(23,59,59,999); if (s.startTs > d2.getTime()) return false; }
       return true;
     });
+    if (sortBy === "duration") {
+      list = list.slice().sort(function(a,b){ return (sessionDurSec(b)||0) - (sessionDurSec(a)||0); });
+    } else if (sortBy === "outcome") {
+      list = list.slice().sort(function(a,b){ return outcomePriority(a) - outcomePriority(b); });
+    }
+    return list;
   }
 
   var filtered = getFiltered();
   var selectedSession = sessions ? sessions.find(function(s){ return s.id === selectedId; }) : null;
   var accent = "#FFD54F";
+  var filtersActive = search || fType !== "all" || fFrom || fTo || sortBy !== "date";
+  var stats = sessions !== null && filtered.length > 0 ? computeFilteredStats(filtered) : null;
 
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
 
       {/* ── Left pane: session list ── */}
-      <div style={{width:380,minWidth:380,display:"flex",flexDirection:"column",borderRight:"1px solid rgba(255,255,255,.06)",overflow:"hidden"}}>
+      <div style={{width:400,minWidth:400,display:"flex",flexDirection:"column",borderRight:"1px solid rgba(255,255,255,.06)",overflow:"hidden"}}>
 
-        {/* Filters bar */}
-        <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0,background:"rgba(8,25,55,.25)"}}>
+        {/* Stat strip — live summary of currently filtered results */}
+        {stats && (
+          <div style={{display:"flex",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",background:"rgba(0,0,0,.18)"}}>
+            {[
+              {v:stats.total,             l:"sessions",  c:"rgba(255,255,255,.75)"},
+              {v:stats.winRate !== null ? stats.winRate+"%" : "—", l:"close rate", c:"#66BB6A"},
+              {v:stats.avgSec !== null ? fmtSec(stats.avgSec) : "—", l:"avg time",   c:"rgba(255,213,79,.85)"},
+              {v:stats.soldCount,          l:"sold",      c:"#A8FF3E"},
+            ].map(function(st, i) {
+              return (
+                <div key={i} style={{flex:1,padding:"8px 0 7px",textAlign:"center",borderRight:i<3?"1px solid rgba(255,255,255,.05)":"none"}}>
+                  <div style={{fontSize:15,fontWeight:700,color:st.c,lineHeight:1}}>{st.v}</div>
+                  <div style={{fontSize:8,color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.7,marginTop:3}}>{st.l}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Filter bar */}
+        <div style={{padding:"10px 12px 8px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0,background:"rgba(8,25,55,.25)"}}>
+
           {/* Admin scope selector */}
           {isAdmin && (
             <div style={{marginBottom:8}}>
@@ -100,23 +154,59 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
               </select>
             </div>
           )}
-          {/* Mode + Date filters */}
-          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-            {["all","live","practice"].map(function(ft) {
-              var on = fType === ft;
-              return (
-                <button key={ft} onClick={function(){ setFType(ft); }}
-                  style={{background:on?accent+"18":"rgba(255,255,255,.05)",border:"1px solid "+(on?accent+"55":"rgba(255,255,255,.1)"),borderRadius:99,padding:"4px 10px",cursor:"pointer",fontSize:10,color:on?accent:"rgba(255,255,255,.4)",fontFamily:"inherit",fontWeight:on?700:400}}>
-                  {ft==="all"?"All":ft==="live"?"📞 Live":"🎯 Practice"}
-                </button>
-              );
-            })}
-            <div style={{flex:1,minWidth:90}}>
-              <DarkDatePicker value={fFrom} onChange={function(e){ setFFrom(e.target.value); }} style={{fontSize:10,padding:"4px 8px",minWidth:0}}/>
+
+          {/* Search input */}
+          <div style={{position:"relative",marginBottom:8}}>
+            <span style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:"rgba(255,255,255,.25)",fontSize:11,pointerEvents:"none"}}>🔎</span>
+            <input
+              value={search}
+              onChange={function(e){ setSearch(e.target.value); }}
+              placeholder="Search sessions…"
+              style={inputSt({paddingLeft:28,height:32,fontSize:12})}/>
+          </div>
+
+          {/* Mode pills + sort pills on one row */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:4,marginBottom:6}}>
+            {/* Mode filter */}
+            <div style={{display:"flex",gap:4}}>
+              {["all","live","practice"].map(function(ft) {
+                var on = fType === ft;
+                return (
+                  <button key={ft} onClick={function(){ setFType(ft); }}
+                    style={{background:on?accent+"18":"rgba(255,255,255,.05)",border:"1px solid "+(on?accent+"55":"rgba(255,255,255,.1)"),borderRadius:99,padding:"3px 9px",cursor:"pointer",fontSize:10,color:on?accent:"rgba(255,255,255,.4)",fontFamily:"inherit",fontWeight:on?700:400}}>
+                    {ft==="all"?"All":ft==="live"?"📞":"🎯"}
+                  </button>
+                );
+              })}
             </div>
-            <div style={{flex:1,minWidth:90}}>
-              <DarkDatePicker value={fTo} onChange={function(e){ setFTo(e.target.value); }} style={{fontSize:10,padding:"4px 8px",minWidth:0}}/>
+            {/* Sort control */}
+            <div style={{display:"flex",gap:3}}>
+              {[["date","↓ Date"],["duration","⏱ Time"],["outcome","✦ Result"]].map(function(pair) {
+                var sk = pair[0]; var lbl = pair[1]; var on = sortBy === sk;
+                return (
+                  <button key={sk} onClick={function(){ setSortBy(sk); }}
+                    style={{background:on?"rgba(255,255,255,.1)":"transparent",border:"1px solid "+(on?"rgba(255,255,255,.2)":"rgba(255,255,255,.07)"),borderRadius:99,padding:"3px 7px",cursor:"pointer",fontSize:9,color:on?"rgba(255,255,255,.85)":"rgba(255,255,255,.3)",fontFamily:"inherit",fontWeight:on?700:400}}>
+                    {lbl}
+                  </button>
+                );
+              })}
             </div>
+          </div>
+
+          {/* Date range + reset */}
+          <div style={{display:"flex",gap:5,alignItems:"center"}}>
+            <div style={{flex:1}}>
+              <DarkDatePicker value={fFrom} onChange={function(e){ setFFrom(e.target.value); }} style={{fontSize:10,padding:"4px 8px"}}/>
+            </div>
+            <div style={{flex:1}}>
+              <DarkDatePicker value={fTo} onChange={function(e){ setFTo(e.target.value); }} style={{fontSize:10,padding:"4px 8px"}}/>
+            </div>
+            {filtersActive && (
+              <button onClick={resetFilters}
+                style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.3)",fontSize:11,fontFamily:"inherit",padding:"4px 6px",flexShrink:0,whiteSpace:"nowrap"}}>
+                × Reset
+              </button>
+            )}
           </div>
         </div>
 
@@ -126,7 +216,9 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
             <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)",fontSize:13}}>Loading…</div>
           )}
           {sessions !== null && filtered.length === 0 && (
-            <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)",fontSize:13}}>No sessions yet</div>
+            <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)",fontSize:13}}>
+              {search || filtersActive ? "No sessions match" : "No sessions yet"}
+            </div>
           )}
           {filtered.map(function(s) {
             var sel = s.id === selectedId;

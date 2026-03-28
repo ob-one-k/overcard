@@ -11,6 +11,8 @@ import { SessionReview, SessionsTab, SessionAnalytics } from "./components/Sessi
 import { CardsTab, ObjectionsTab } from "./components/Cards";
 import { DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel } from "./components/Panels";
 import { HomeTab } from "./components/Home";
+import { HomeDesktop } from "./components/desktop/HomeDesktop";
+import { CommandPalette } from "./components/CommandPalette";
 import { useDesktop } from "./lib/useDesktop";
 import DesktopCtx from "./lib/DesktopCtx";
 import { DesktopShell } from "./components/DesktopShell";
@@ -122,6 +124,8 @@ function MainApp({ authUser, onLogout }) {
   var [orgTeams,    setOrgTeams]    = useState([]);
   // Profile sheet visibility
   var [showProfile, setShowProfile] = useState(false);
+  // Command palette visibility (desktop only)
+  var [showCmdPalette, setShowCmdPalette] = useState(false);
   // Dirty deck tracking for per-deck autosave
   var dirtyIds = useRef(new Set());
 
@@ -293,13 +297,9 @@ function MainApp({ authUser, onLogout }) {
   var tabContent = (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {tab==="home" && (
-        <HomeTab
-          authUser={authUser}
-          decks={decks}
-          orgTeams={orgTeams}
-          orgUsers={orgUsers}
-          onSwitchDeckAndPlay={handleSwitchDeckAndPlay}
-        />
+        desktop.isDesktop
+          ? <HomeDesktop authUser={authUser} decks={decks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
+          : <HomeTab     authUser={authUser} decks={decks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
       )}
       <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
         <PlayTab
@@ -407,6 +407,21 @@ function MainApp({ authUser, onLogout }) {
             serverOk={serverOk}
             onOpenDeckSwitcher={function(){setShowDS(true);}}
             onOpenProfile={function(){setShowProfile(true);}}
+            onOpenCommandPalette={function(){setShowCmdPalette(true);}}
+            tabContextData={{
+              play: {
+                sessionName: activeSession ? activeSession.name : null,
+                startTs:     activeSession ? activeSession.startTs : null,
+              },
+              cards: {
+                cardCount:    deck ? Object.keys(deck.cards||{}).length : null,
+                intendedCount: deck ? Object.values(deck.cards||{}).filter(function(c){ return c.intendedPath; }).length : null,
+              },
+              objections: {
+                stackCount:   deck ? (deck.objStacks||[]).length : null,
+                healthyCount: deck ? (deck.objStacks||[]).filter(function(s){ return !!s.rootCard && Object.keys(s.cards||{}).length > 0; }).length : null,
+              },
+            }}
           >
             {tabContent}
           </DesktopShell>
@@ -487,6 +502,15 @@ function MainApp({ authUser, onLogout }) {
               onLogout();
             }}
             onClose={function(){ setShowProfile(false); }}
+          />
+        )}
+        {desktop.isDesktop && showCmdPalette && (
+          <CommandPalette
+            tabs={TABS}
+            decks={decks}
+            onNavigateTab={function(tabId){ handleTabClick(tabId); }}
+            onSwitchDeck={switchDeck}
+            onClose={function(){ setShowCmdPalette(false); }}
           />
         )}
       </div>

@@ -532,6 +532,7 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
 
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
 export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRefreshTeams }) {
+  var desktop = useContext(DesktopCtx);
   var [sub, setSub]           = useState("users");
   var [editUser, setEditUser] = useState(null);    // null | "new" | user obj
   var [editTeam, setEditTeam] = useState(null);    // null | "new" | team obj
@@ -613,18 +614,218 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
   }
 
 
+  // Desktop two-column helpers
+  var DTAB_W = 300;
+
+  function renderSubTabBar(style) {
+    return (
+      <div style={Object.assign({display:"flex",background:"rgba(255,255,255,.05)",borderRadius:10,padding:2,gap:1},style||{})}>
+        {[["users","👥 Users"],["teams","🏷️ Teams"]].map(function(s){
+          var on = sub===s[0];
+          return <button key={s[0]} onClick={function(){setSub(s[0]);setEditUser(null);setEditTeam(null);}}
+            style={{flex:1,background:on?"rgba(255,255,255,.12)":"transparent",border:"none",borderRadius:8,padding:"7px 4px",cursor:"pointer",fontFamily:"inherit",color:on?"#fff":"rgba(255,255,255,.35)",fontSize:11,fontWeight:on?700:400}}>{s[1]}</button>;
+        })}
+      </div>
+    );
+  }
+
+  if (desktop.isDesktop) {
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {msg && <div style={{margin:"8px 16px 0",background:"rgba(102,187,106,.1)",border:"1px solid rgba(102,187,106,.25)",borderRadius:9,padding:"7px 12px",fontSize:11,color:"#66BB6A",flexShrink:0}}>{msg}</div>}
+        <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
+
+          {/* Left pane: sub-tab + list */}
+          <div style={{width:DTAB_W,minWidth:DTAB_W,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:"1px solid rgba(255,255,255,.06)"}}>
+            <div style={{padding:"12px 14px 10px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+              {renderSubTabBar()}
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+              {sub === "users" && (
+                <div>
+                  <button onClick={function(){resetUf();setEditUser("new");}}
+                    style={{display:"block",width:"100%",background:"rgba(168,255,62,.06)",border:"1px dashed rgba(168,255,62,.2)",borderRadius:10,padding:"8px",cursor:"pointer",fontSize:11,color:"rgba(168,255,62,.7)",fontFamily:"inherit",marginBottom:10,textAlign:"center",fontWeight:600}}>
+                    + New User
+                  </button>
+                  {(orgUsers||[]).map(function(u) {
+                    var sel = editUser && editUser !== "new" && editUser.id === u.id;
+                    return (
+                      <button key={u.id}
+                        onClick={function(){ setUf({email:u.email,displayName:u.displayName,role:u.role,teamId:u.teamId||"",password:""}); setEditUser(u); }}
+                        style={{display:"flex",alignItems:"center",gap:9,width:"100%",textAlign:"left",background:sel?"rgba(255,255,255,.1)":"rgba(255,255,255,.04)",border:"1.5px solid "+(sel?"rgba(255,255,255,.2)":"rgba(255,255,255,.07)"),borderRadius:10,padding:"9px 11px",marginBottom:6,cursor:"pointer",fontFamily:"inherit"}}>
+                        <div style={{width:30,height:30,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0}}>
+                          {u.displayName[0].toUpperCase()}
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</div>
+                          <div style={{fontSize:9,color:"rgba(255,255,255,.35)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>
+                        </div>
+                        <span style={{fontSize:9,padding:"1px 5px",borderRadius:99,background:u.role==="admin"?"rgba(168,255,62,.15)":"rgba(0,180,255,.1)",color:u.role==="admin"?SESS_COLOR:"#00B4FF",flexShrink:0}}>{u.role}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {sub === "teams" && (
+                <div>
+                  <button onClick={function(){resetTf();setEditTeam("new");}}
+                    style={{display:"block",width:"100%",background:"rgba(168,255,62,.06)",border:"1px dashed rgba(168,255,62,.2)",borderRadius:10,padding:"8px",cursor:"pointer",fontSize:11,color:"rgba(168,255,62,.7)",fontFamily:"inherit",marginBottom:10,textAlign:"center",fontWeight:600}}>
+                    + New Team
+                  </button>
+                  {(orgTeams||[]).map(function(team) {
+                    var sel = editTeam && editTeam !== "new" && editTeam.id === team.id;
+                    var mc = (team.memberIds||[]).length;
+                    return (
+                      <button key={team.id}
+                        onClick={function(){ setTf({name:team.name,adminIds:team.adminIds||[],memberIds:team.memberIds||[]}); setAddMemberSel(""); setEditTeam(team); }}
+                        style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",background:sel?"rgba(255,255,255,.1)":"rgba(255,255,255,.04)",border:"1.5px solid "+(sel?"rgba(255,255,255,.2)":"rgba(255,255,255,.07)"),borderRadius:10,padding:"9px 11px",marginBottom:6,cursor:"pointer",fontFamily:"inherit"}}>
+                        <span style={{fontSize:18,flexShrink:0}}>🏷️</span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{team.name}</div>
+                          <div style={{fontSize:9,color:"rgba(255,255,255,.35)",marginTop:1}}>{mc} member{mc!==1?"s":""}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right pane: form */}
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:"rgba(8,20,50,.2)"}}>
+            {/* User form */}
+            {sub === "users" && editUser && (
+              <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
+                <div style={{maxWidth:480}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"#fff",marginBottom:18}}>{editUser==="new"?"New User":"Edit: "+(editUser.displayName||"")}</div>
+                  {editUser==="new" && (
+                    <>
+                      <label style={labelSt()}>Email</label>
+                      <input value={uf.email} onChange={function(e){setUf(function(p){return Object.assign({},p,{email:e.target.value});});}} placeholder="email@company.com" style={inputSt({marginBottom:12})}/>
+                      <label style={labelSt()}>Password</label>
+                      <input type="password" value={uf.password} onChange={function(e){setUf(function(p){return Object.assign({},p,{password:e.target.value});});}} placeholder="••••••••" style={inputSt({marginBottom:12})}/>
+                    </>
+                  )}
+                  <label style={labelSt()}>Display Name</label>
+                  <input value={uf.displayName} onChange={function(e){setUf(function(p){return Object.assign({},p,{displayName:e.target.value});});}} placeholder="Full name" style={inputSt({marginBottom:12})}/>
+                  <label style={labelSt()}>Role</label>
+                  <div style={{display:"flex",gap:6,marginBottom:12}}>
+                    {["user","admin"].map(function(r){
+                      var on=uf.role===r;
+                      return <button key={r} onClick={function(){setUf(function(p){return Object.assign({},p,{role:r});});}}
+                        style={{background:on?"rgba(168,255,62,.15)":"rgba(255,255,255,.05)",border:"1px solid "+(on?"rgba(168,255,62,.4)":"rgba(255,255,255,.1)"),borderRadius:8,padding:"6px 18px",cursor:"pointer",fontFamily:"inherit",fontSize:12,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400}}>{r}</button>;
+                    })}
+                  </div>
+                  <label style={labelSt()}>Team Assignment</label>
+                  <select value={uf.teamId||""} onChange={function(e){setUf(function(p){return Object.assign({},p,{teamId:e.target.value});});}} style={inputSt({marginBottom:18})}>
+                    <option value="">— None —</option>
+                    {(orgTeams||[]).map(function(t){ return <option key={t.id} value={t.id}>{t.name}</option>; })}
+                  </select>
+                  <div style={{display:"flex",gap:8,marginBottom:editUser!=="new"?16:0}}>
+                    <button onClick={function(){setEditUser(null);resetUf();}} style={Object.assign({},ghostBtn(),{flex:1,padding:"9px",fontSize:12})}>Cancel</button>
+                    <button onClick={saveUser} disabled={busy} style={Object.assign({},solidBtn(SESS_COLOR),{flex:2,padding:"9px",fontSize:12})}>{busy?"Saving…":"Save"}</button>
+                  </div>
+                  {editUser !== "new" && (
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={function(){resetPassword(editUser);}}
+                        style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"9px",cursor:"pointer",fontSize:12,color:"rgba(255,255,255,.6)",fontFamily:"inherit"}}>
+                        🔑 Reset Password
+                      </button>
+                      {editUser.id !== authUser.id && (
+                        <button onClick={function(){deleteUserConfirm(editUser); setEditUser(null); resetUf();}}
+                          style={{flex:1,background:"rgba(239,83,80,.07)",border:"1px solid rgba(239,83,80,.2)",borderRadius:10,padding:"9px",cursor:"pointer",fontSize:12,color:"#EF5350",fontFamily:"inherit"}}>
+                          ✕ Delete User
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {sub === "users" && !editUser && (
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10,color:"rgba(255,255,255,.18)"}}>
+                <span style={{fontSize:36}}>👥</span>
+                <span style={{fontSize:13}}>Select a user to edit</span>
+              </div>
+            )}
+            {/* Team form */}
+            {sub === "teams" && editTeam && (
+              <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
+                <div style={{maxWidth:480}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"#fff",marginBottom:18}}>{editTeam==="new"?"New Team":"Edit: "+(editTeam.name||"")}</div>
+                  <label style={labelSt()}>Team Name</label>
+                  <input value={tf.name} onChange={function(e){setTf(function(p){return Object.assign({},p,{name:e.target.value});});}} placeholder="e.g. West Coast" style={inputSt({marginBottom:14})}/>
+                  <label style={labelSt()}>Assigned Admins <span style={{color:"#EF5350",fontSize:9}}>required</span></label>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+                    {admins.map(function(a){
+                      var on = tf.adminIds.includes(a.id);
+                      return <button key={a.id} onClick={function(){toggleAdminId(a.id);}}
+                        style={{background:on?"rgba(168,255,62,.15)":"rgba(255,255,255,.05)",border:"1px solid "+(on?"rgba(168,255,62,.4)":"rgba(255,255,255,.1)"),borderRadius:8,padding:"5px 14px",cursor:"pointer",fontFamily:"inherit",fontSize:11,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400}}>{a.displayName}</button>;
+                    })}
+                  </div>
+                  <label style={labelSt()}>Members</label>
+                  {tf.memberIds.length > 0 && (
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+                      {tf.memberIds.map(function(uid){
+                        var u = (orgUsers||[]).find(function(x){return x.id===uid;});
+                        if (!u) return null;
+                        return (
+                          <span key={uid} style={{display:"inline-flex",alignItems:"center",gap:4,background:"rgba(0,180,255,.1)",border:"1px solid rgba(0,180,255,.25)",borderRadius:99,padding:"3px 8px",fontSize:10,color:"#00B4FF"}}>
+                            {u.displayName}
+                            <button onClick={function(){toggleMemberId(uid);}} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(0,180,255,.6)",fontSize:11,padding:"0 0 0 2px",fontFamily:"inherit",lineHeight:1}}>×</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {(orgUsers||[]).filter(function(u){ return !tf.memberIds.includes(u.id); }).length > 0 && (
+                    <div style={{display:"flex",gap:6,marginBottom:14}}>
+                      <select value={addMemberSel} onChange={function(e){setAddMemberSel(e.target.value);}}
+                        style={inputSt({margin:0,flex:1,fontSize:12,padding:"7px 10px"})}>
+                        <option value="">— Add member —</option>
+                        {(orgUsers||[]).filter(function(u){ return !tf.memberIds.includes(u.id); }).map(function(u){
+                          return <option key={u.id} value={u.id}>{u.displayName} ({u.role})</option>;
+                        })}
+                      </select>
+                      <button onClick={function(){ if (!addMemberSel) return; toggleMemberId(addMemberSel); setAddMemberSel(""); }}
+                        style={ghostSm({color:SESS_COLOR,borderColor:"rgba(168,255,62,.3)",fontSize:12,padding:"7px 12px"})}>+ Add</button>
+                    </div>
+                  )}
+                  {tf.memberIds.length === 0 && (
+                    <div style={{fontSize:10,color:"rgba(255,255,255,.25)",marginBottom:14}}>No members assigned yet.</div>
+                  )}
+                  <div style={{display:"flex",gap:8,marginBottom:editTeam!=="new"?14:0}}>
+                    <button onClick={function(){setEditTeam(null);resetTf();}} style={Object.assign({},ghostBtn(),{flex:1,padding:"9px",fontSize:12})}>Cancel</button>
+                    <button onClick={saveTeam} disabled={busy} style={Object.assign({},solidBtn(SESS_COLOR),{flex:2,padding:"9px",fontSize:12})}>{busy?"Saving…":"Save"}</button>
+                  </div>
+                  {editTeam !== "new" && (
+                    <button onClick={function(){deleteTeamConfirm(editTeam); setEditTeam(null); resetTf();}}
+                      style={{width:"100%",background:"rgba(239,83,80,.07)",border:"1px solid rgba(239,83,80,.2)",borderRadius:10,padding:"9px",cursor:"pointer",fontSize:12,color:"#EF5350",fontFamily:"inherit"}}>
+                      ✕ Delete Team
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {sub === "teams" && !editTeam && (
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10,color:"rgba(255,255,255,.18)"}}>
+                <span style={{fontSize:36}}>🏷️</span>
+                <span style={{fontSize:13}}>Select a team to edit</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {/* Sub-tab bar */}
       <div style={{flexShrink:0,padding:"10px 14px 0",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
         <div style={{fontSize:10,fontWeight:700,color:SESS_COLOR,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Admin Panel</div>
-        <div style={{display:"flex",background:"rgba(255,255,255,.05)",borderRadius:10,padding:2,gap:1}}>
-          {[["users","👥 Users"],["teams","🏷️ Teams"]].map(function(s){
-            var on = sub===s[0];
-            return <button key={s[0]} onClick={function(){setSub(s[0]);}}
-              style={{flex:1,background:on?"rgba(255,255,255,.12)":"transparent",border:"none",borderRadius:8,padding:"7px 4px",cursor:"pointer",fontFamily:"inherit",color:on?"#fff":"rgba(255,255,255,.35)",fontSize:11,fontWeight:on?700:400}}>{s[1]}</button>;
-          })}
-        </div>
+        {renderSubTabBar()}
       </div>
 
       {msg && <div style={{margin:"8px 14px 0",background:"rgba(102,187,106,.1)",border:"1px solid rgba(102,187,106,.25)",borderRadius:9,padding:"7px 12px",fontSize:11,color:"#66BB6A",flexShrink:0}}>{msg}</div>}

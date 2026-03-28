@@ -8,8 +8,12 @@ import { saveAudioBlob } from "../../lib/audioStore";
 
 // ─── PLAY DESKTOP ─────────────────────────────────────────────────────────────
 // Desktop layout for the Play tab.
-// Pre-session (home/new): centered max-width container.
-// Active session: two-pane — left 65% Navigator, right 35% session panel.
+// Pre-session: centered max-width container (720px).
+// Active session: left flex:1 Navigator + right 340px four-zone panel.
+//   Zone 1: Session header + mini path tracker (flexShrink:0)
+//   Zone 2: Objection stacks chip row (flexShrink:0)
+//   Zone 3: Interactive notes with inline input (flex:1, scrollable)
+//   Zone 4: Outcome buttons — always visible (flexShrink:0)
 export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
     playView, setPlayView, activeSession, setActiveSession, sessionEvents, setSessionEvents }) {
 
@@ -20,6 +24,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [nameError,      setNameError]      = useState(false);
   var [navDepth,       setNavDepth]       = useState(1);
   var [navInObj,       setNavInObj]       = useState(false);
+  var [navCurrentCard, setNavCurrentCard] = useState(null);
+  var [panelNote,      setPanelNote]      = useState("");
   var [audioDevices,   setAudioDevices]   = useState([]);
   var [selectedDevice, setSelectedDevice] = useState("");
   var [recordAudio,    setRecordAudio]    = useState(false);
@@ -92,11 +98,19 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           mediaRecorderRef.current = recorder; recorderStartMs.current = Date.now(); recorder.start(1000);
         }).catch(function(err) { console.warn("overcard: audio recording unavailable:", err); mediaRecorderRef.current = null; });
     }
-    setNavDepth(1); setNavInObj(false); setActiveSession(s); setSessionEvents([]); setPlayView("active");
+    setNavDepth(1); setNavInObj(false); setNavCurrentCard(null); setPanelNote("");
+    setActiveSession(s); setSessionEvents([]); setPlayView("active");
   }
 
   function handleEvent(ev) {
     setSessionEvents(function(prev) { return prev.concat([ev]); });
+  }
+
+  function submitPanelNote() {
+    var text = panelNote.trim();
+    if (!text || !navCurrentCard) return;
+    handleEvent({ type:"note", cardId:navCurrentCard.id, cardTitle:navCurrentCard.title, text:text, ts:Date.now() });
+    setPanelNote("");
   }
 
   function finishSession(sold, soldCard, outcomeOverride) {
@@ -142,7 +156,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   // ── Active session: two-pane layout ──────────────────────────────────────────
   if (playView === "active" && activeSession) {
     var st = STYPE[activeSession.sessionType] || STYPE.live;
-    var noteEvents = sessionEvents.filter(function(ev) { return ev.type === "note"; });
+    var noteEvents  = sessionEvents.filter(function(ev) { return ev.type === "note"; });
+    var pathVisits  = sessionEvents.filter(function(ev) { return ev.type === "visit" && !ev.isObjCard; });
+    var dotsToShow  = pathVisits.slice(-10);
     var mm = Math.floor(elapsed / 60);
     var ss = elapsed % 60;
     var elapsedStr = mm + ":" + (ss < 10 ? "0" : "") + ss;
@@ -153,57 +169,114 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
         {/* ── Left pane: Navigator ── */}
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:"1px solid rgba(255,255,255,.06)"}}>
           <Navigator deck={deck} sessionMode={true} onEvent={handleEvent}
-            onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); }}
+            onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); setNavCurrentCard(info.currentCard||null); }}
             getAudioOffset={function() { return recorderStartMs.current !== null ? Date.now() - recorderStartMs.current : null; }}/>
         </div>
 
-        {/* ── Right pane: session panel ── */}
+        {/* ── Right pane: four-zone session panel ── */}
         <div style={{width:340,minWidth:340,display:"flex",flexDirection:"column",overflow:"hidden",background:"rgba(4,12,30,.6)"}}>
 
-          {/* Session header */}
-          <div style={{padding:"16px 18px 14px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          {/* ── Zone 1: Session header + path tracker ── */}
+          <div style={{padding:"14px 18px 12px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
+            {/* Mode + elapsed */}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
               <div style={{width:8,height:8,borderRadius:"50%",background:st.color,boxShadow:"0 0 6px "+st.color,flexShrink:0,animation:"pulse 1.5s ease-in-out infinite"}}/>
               <span style={{fontSize:10,color:st.color,fontWeight:700,letterSpacing:.8,textTransform:"uppercase"}}>{st.label}</span>
-              <span style={{fontSize:10,color:"rgba(255,255,255,.3)",marginLeft:"auto",fontFeatureSettings:'"tnum"'}}>{elapsedStr}</span>
+              <span style={{fontSize:11,color:"rgba(255,255,255,.3)",marginLeft:"auto",fontFeatureSettings:'"tnum"',letterSpacing:.3}}>{elapsedStr}</span>
             </div>
-            <div style={{fontSize:14,fontWeight:700,color:"#fff",lineHeight:1.3}}>{activeSession.name}</div>
-            {activeSession.description && <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:3}}>{activeSession.description}</div>}
-          </div>
-
-          {/* Objection stacks */}
-          <div style={{padding:"12px 18px 0",flexShrink:0}}>
-            <div style={{fontSize:9,fontWeight:700,color:"rgba(239,83,80,.5)",letterSpacing:1.1,textTransform:"uppercase",marginBottom:7}}>🛡️ Objection Stacks</div>
-            {deck.objStacks.length === 0 && (
-              <div style={{fontSize:11,color:"rgba(255,255,255,.2)",marginBottom:10}}>No stacks configured.</div>
+            {/* Session name */}
+            <div style={{fontSize:14,fontWeight:700,color:"#fff",lineHeight:1.3,marginBottom:activeSession.description?3:0}}>{activeSession.name}</div>
+            {activeSession.description && <div style={{fontSize:10,color:"rgba(255,255,255,.35)",lineHeight:1.4}}>{activeSession.description}</div>}
+            {/* Mini path tracker dots */}
+            {dotsToShow.length > 0 && (
+              <div style={{display:"flex",alignItems:"center",gap:5,marginTop:9}}>
+                {pathVisits.length > 10 && (
+                  <span style={{fontSize:9,color:"rgba(255,255,255,.25)",marginRight:2}}>+{pathVisits.length-10}</span>
+                )}
+                {dotsToShow.map(function(ev, i) {
+                  var isLast = i === dotsToShow.length - 1;
+                  var dotColor = (TM[ev.cardType] || TM.pitch).color;
+                  return (
+                    <div key={i} style={{
+                      width: isLast ? 10 : 7,
+                      height: isLast ? 10 : 7,
+                      borderRadius:"50%",
+                      background: dotColor,
+                      opacity: isLast ? 1 : 0.35 + (i / dotsToShow.length) * 0.45,
+                      boxShadow: isLast ? ("0 0 5px "+dotColor) : "none",
+                      border: isLast ? "1.5px solid rgba(255,255,255,.55)" : "none",
+                      flexShrink:0,
+                      transform: isLast ? "scale(1)" : "scale(1)",
+                      transition:"all .2s"
+                    }}/>
+                  );
+                })}
+              </div>
             )}
-            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:10}}>
-              {deck.objStacks.map(function(stack) {
-                return (
-                  <div key={stack.id}
-                    style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.16)",borderRadius:10}}>
-                    <span style={{fontSize:16,flexShrink:0}}>{stack.icon}</span>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,.8)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stack.label}</div>
-                      <div style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{Object.keys(stack.cards).length} paths</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
 
-          {/* Notes log */}
-          <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column",padding:"0 18px"}}>
-            <div style={{fontSize:9,fontWeight:700,color:"rgba(168,255,62,.5)",letterSpacing:1.1,textTransform:"uppercase",marginBottom:7,flexShrink:0}}>📝 Notes ({noteEvents.length})</div>
+          {/* ── Zone 2: Objection stacks — horizontal chip row ── */}
+          <div style={{padding:"9px 18px 9px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
+            <div style={{fontSize:9,fontWeight:700,color:"rgba(239,83,80,.5)",letterSpacing:1.1,textTransform:"uppercase",marginBottom:6}}>🛡️ Objection Stacks</div>
+            {deck.objStacks.length === 0 ? (
+              <div style={{fontSize:11,color:"rgba(255,255,255,.18)"}}>No stacks configured.</div>
+            ) : (
+              <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:2}}>
+                {deck.objStacks.map(function(stack) {
+                  var cardCount = Object.keys(stack.cards).length;
+                  var hasEntry  = !!stack.rootCard;
+                  var healthDot = (cardCount > 0 && hasEntry) ? "#66BB6A" : cardCount > 0 ? "#FFD54F" : "#EF5350";
+                  return (
+                    <div key={stack.id}
+                      style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px 5px 8px",
+                        background:"rgba(239,83,80,.07)",border:"1px solid rgba(239,83,80,.18)",borderRadius:99,flexShrink:0}}>
+                      <div style={{width:5,height:5,borderRadius:"50%",background:healthDot,flexShrink:0}}/>
+                      <span style={{fontSize:14,lineHeight:1}}>{stack.icon}</span>
+                      <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.75)",whiteSpace:"nowrap"}}>{stack.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Zone 3: Notes — flex:1, scrollable, inline input at top ── */}
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",padding:"0 18px"}}>
+            {/* Inline note input */}
+            <div style={{flexShrink:0,paddingTop:10,paddingBottom:8,borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+              <div style={{display:"flex",gap:6,alignItems:"flex-end"}}>
+                <textarea
+                  value={panelNote}
+                  onChange={function(e){ setPanelNote(e.target.value); }}
+                  onKeyDown={function(e){ if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitPanelNote(); } }}
+                  placeholder={navCurrentCard ? "Note on: " + (navCurrentCard.title || "this card") + "…" : "Navigate to a card first…"}
+                  disabled={!navCurrentCard}
+                  rows={2}
+                  style={Object.assign({},inputSt({resize:"none",fontSize:12,lineHeight:1.4}),{flex:1,minHeight:44,opacity:navCurrentCard?1:.45})}
+                />
+                <button
+                  onClick={submitPanelNote}
+                  disabled={!panelNote.trim() || !navCurrentCard}
+                  style={{background:"rgba(168,255,62,.13)",border:"1px solid rgba(168,255,62,.28)",borderRadius:8,padding:"7px 11px",cursor:(!panelNote.trim()||!navCurrentCard)?"not-allowed":"pointer",color:"#A8FF3E",fontSize:11,fontWeight:700,flexShrink:0,fontFamily:"inherit",opacity:(!panelNote.trim()||!navCurrentCard)?0.35:1,transition:"opacity .12s",marginBottom:2}}>
+                  + Add
+                </button>
+              </div>
+            </div>
+            {/* Notes section header */}
+            <div style={{fontSize:9,fontWeight:700,color:"rgba(168,255,62,.5)",letterSpacing:1.1,textTransform:"uppercase",paddingTop:8,paddingBottom:6,flexShrink:0}}>
+              📝 Notes{noteEvents.length > 0 ? " ("+noteEvents.length+")" : ""}
+            </div>
+            {/* Scrollable notes list */}
             <div style={{flex:1,overflowY:"auto"}}>
               {noteEvents.length === 0 && (
-                <div style={{fontSize:11,color:"rgba(255,255,255,.2)"}}>No notes yet. Use + Note on a card.</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.2)",paddingBottom:8,lineHeight:1.5}}>
+                  Notes you add will appear here, grouped by card.
+                </div>
               )}
-              {noteEvents.map(function(ev, i) {
+              {noteEvents.slice().reverse().map(function(ev, i) {
                 return (
-                  <div key={i} style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.14)",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
-                    <div style={{fontSize:9,color:"rgba(168,255,62,.5)",marginBottom:3}}>{ev.cardTitle}</div>
+                  <div key={i} style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.12)",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
+                    <div style={{fontSize:9,color:"rgba(168,255,62,.45)",marginBottom:3,fontWeight:700}}>{ev.cardTitle || "General"}</div>
                     <div style={{fontSize:11,color:"rgba(255,255,255,.75)",lineHeight:1.5}}>{ev.text}</div>
                   </div>
                 );
@@ -211,7 +284,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
             </div>
           </div>
 
-          {/* Outcome buttons */}
+          {/* ── Zone 4: Outcome buttons — always visible ── */}
           <div style={{padding:"12px 18px 18px",borderTop:"1px solid rgba(255,255,255,.06)",flexShrink:0,display:"flex",flexDirection:"column",gap:7}}>
             {activeSession.mode === "live" && navDepth === 1 && !navInObj && (
               <button onClick={function(){finishSession(false,null,"not_contacted");}} disabled={saving}
@@ -244,40 +317,46 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
 
   return (
     <div style={{flex:1,overflowY:"auto"}}>
-      <div style={{maxWidth:600,margin:"0 auto",padding:"20px 20px 0"}}>
-        {/* Deck stats */}
-        <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+deck.color,borderRadius:"0 14px 14px 0",padding:"16px 18px",marginBottom:20}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
-            <div style={{width:40,height:40,borderRadius:12,background:deck.color+"22",border:"1.5px solid "+deck.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{deck.icon}</div>
-            <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>{deck.name}</div>
+      <div style={{maxWidth:720,margin:"0 auto",padding:"24px 24px 0"}}>
+
+        {/* Deck info + quick stats card */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:0,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+deck.color,borderRadius:"0 16px 16px 0",padding:"18px 22px",marginBottom:22,alignItems:"start"}}>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+              <div style={{width:42,height:42,borderRadius:12,background:deck.color+"22",border:"1.5px solid "+deck.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{deck.icon}</div>
+              <div>
+                <div style={{fontSize:17,fontWeight:700,color:"#fff"}}>{deck.name}</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.3)",marginTop:2}}>Ready to run</div>
+              </div>
+            </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-            <div style={{background:"rgba(0,0,0,.3)",borderRadius:10,padding:"10px 12px"}}>
-              <div style={{fontSize:18,fontWeight:700,color:deck.color}}>{Object.keys(deck.cards).length}</div>
-              <div style={{fontSize:9,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:.5}}>cards</div>
-            </div>
-            <div style={{background:"rgba(0,0,0,.3)",borderRadius:10,padding:"10px 12px"}}>
-              <div style={{fontSize:18,fontWeight:700,color:"#EF5350"}}>{deck.objStacks.length}</div>
-              <div style={{fontSize:9,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:.5}}>obj stacks</div>
-            </div>
-            <div style={{background:"rgba(0,0,0,.3)",borderRadius:10,padding:"10px 12px"}}>
-              <div style={{fontSize:18,fontWeight:700,color:"#66BB6A"}}>{deck.objStacks.reduce(function(sum,os){return sum+Object.keys(os.cards).length;},0)}</div>
-              <div style={{fontSize:9,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:.5}}>obj cards</div>
-            </div>
+          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            {[
+              {v:Object.keys(deck.cards).length, l:"cards", c:deck.color},
+              {v:deck.objStacks.length, l:"stacks", c:"#EF5350"},
+              {v:deck.objStacks.reduce(function(sum,os){return sum+Object.keys(os.cards).length;},0), l:"obj cards", c:"#66BB6A"},
+            ].map(function(item, i) {
+              return (
+                <div key={i} style={{background:"rgba(0,0,0,.25)",borderRadius:12,padding:"10px 16px",textAlign:"center",minWidth:64}}>
+                  <div style={{fontSize:20,fontWeight:700,color:item.c,lineHeight:1}}>{item.v}</div>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.5,marginTop:3}}>{item.l}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* Session type picker */}
         <SectionHdr>Start a session</SectionHdr>
-        <div style={{display:"flex",gap:10,marginBottom:16}}>
+        <div style={{display:"flex",gap:12,marginBottom:18}}>
           {["practice","live"].map(function(key) {
             var stk = STYPE[key]; var on = pendingType === key;
             return (
               <button key={key} onClick={function(){ setPendingType(key); setPlayView("new"); }}
-                style={{flex:1,background:on?stk.bg:"rgba(255,255,255,.07)",border:"1.5px solid "+(on?stk.border:"rgba(255,255,255,.09)"),borderRadius:14,padding:"18px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",transition:"all .15s"}}>
-                <div style={{fontSize:26,marginBottom:6}}>{key==="live"?"📞":"🎯"}</div>
-                <div style={{fontSize:13,fontWeight:700,color:on?stk.color:"rgba(255,255,255,.5)"}}>{stk.label}</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.28)",marginTop:3}}>{key==="live"?"Real call":"Dry run"}</div>
+                style={{flex:1,background:on?stk.bg:"rgba(255,255,255,.06)",border:"1.5px solid "+(on?stk.border:"rgba(255,255,255,.08)"),borderRadius:16,padding:"22px 16px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",transition:"all .15s",boxShadow:on?"0 0 0 1px "+stk.border:"none"}}>
+                <div style={{fontSize:28,marginBottom:8}}>{key==="live"?"📞":"🎯"}</div>
+                <div style={{fontSize:14,fontWeight:700,color:on?stk.color:"rgba(255,255,255,.5)",marginBottom:3}}>{stk.label}</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.26)"}}>{key==="live"?"Real call":"Dry run"}</div>
               </button>
             );
           })}
@@ -285,21 +364,21 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
 
         {/* New session form */}
         {playView === "new" && (
-          <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"18px",marginBottom:16,animation:"fadeIn .15s ease both"}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:14}}>{pendingType==="live"?"📞":"🎯"} New {st2.label} Session</div>
+          <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,padding:"24px 28px",marginBottom:18,animation:"fadeIn .15s ease both"}}>
+            <div style={{fontSize:15,fontWeight:700,color:"#fff",marginBottom:16}}>{pendingType==="live"?"📞":"🎯"} New {st2.label} Session</div>
             <label style={labelSt()}>Title <span style={{color:"#EF5350",fontSize:9}}>*</span></label>
             <input value={newName} onChange={function(e){setNewName(e.target.value);setNameError(false);}}
               onKeyDown={function(e){if(e.key==="Enter")startSession();}}
               placeholder={pendingType==="live"?"e.g. Cold call — Acme Corp":"e.g. Morning practice run"}
-              style={inputSt({marginBottom:nameError?4:12,borderColor:nameError?"rgba(239,83,80,.7)":undefined})} autoFocus/>
-            {nameError && <div style={{fontSize:10,color:"#EF5350",marginBottom:10}}>Session title is required</div>}
+              style={inputSt({marginBottom:nameError?4:14,borderColor:nameError?"rgba(239,83,80,.7)":undefined})} autoFocus/>
+            {nameError && <div style={{fontSize:10,color:"#EF5350",marginBottom:12}}>Session title is required</div>}
             <label style={labelSt()}>Description <span style={{color:"rgba(255,255,255,.25)",fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>(optional)</span></label>
             <textarea value={newDesc} onChange={function(e){setNewDesc(e.target.value);}}
               placeholder={pendingType==="live"?"Prospect info, context, goals…":"What you're working on, focus areas…"}
-              rows={2} style={Object.assign({},inputSt({resize:"none",fontSize:13,lineHeight:1.5}),{marginBottom:14,minHeight:58})}/>
+              rows={2} style={Object.assign({},inputSt({resize:"none",fontSize:13,lineHeight:1.5}),{marginBottom:16,minHeight:58})}/>
             {/* Audio recording toggle */}
             {typeof MediaRecorder !== "undefined" && navigator.mediaDevices && (
-              <div style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.18)",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+              <div style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.18)",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:recordAudio?10:0}}>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <span style={{fontSize:14}}>🎙️</span>
@@ -347,8 +426,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
               </div>
             )}
             <div style={{display:"flex",gap:10}}>
-              <button onClick={function(){setPlayView("home");}} style={Object.assign({},ghostBtn(),{flex:1,padding:"10px",fontSize:13})}>Cancel</button>
-              <button onClick={startSession} style={Object.assign({},solidBtn(st2.color),{flex:2,padding:"10px",fontSize:13})}>▶ Start</button>
+              <button onClick={function(){setPlayView("home");}} style={Object.assign({},ghostBtn(),{flex:1,padding:"11px",fontSize:13})}>Cancel</button>
+              <button onClick={startSession} style={Object.assign({},solidBtn(st2.color),{flex:2,padding:"11px",fontSize:13})}>▶ Start Session</button>
             </div>
           </div>
         )}

@@ -104,7 +104,11 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
   // Report current depth/obj state to parent so PlayTab can show "No Contact" button
   useEffect(function() {
     if (onNavigationChange && sessionMode) {
-      onNavigationChange({ depth: pitchHist.length, inObj: !!objMode });
+      var _inObj2 = !!objMode;
+      var _cc = _inObj2 ? objMode.stack.cards : deck.cards;
+      var _ci = _inObj2 ? objMode.history[objMode.history.length-1] : pitchHist[pitchHist.length-1];
+      var _cur = _ci ? _cc[_ci] : null;
+      onNavigationChange({ depth: pitchHist.length, inObj: _inObj2, currentCard: _cur });
     }
   }, [pitchHist.length, objMode]);
 

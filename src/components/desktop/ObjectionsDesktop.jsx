@@ -1,15 +1,59 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { OBJ_COLOR, OBJ_ICONS, osid } from "../../lib/constants";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, labelSt } from "../../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, labelSt, resizeHandle } from "../../lib/styles";
 import { ObjStackEditor } from "../Cards";
 
 // ─── OBJECTIONS DESKTOP ───────────────────────────────────────────────────────
-// Two-pane: left ~340px stack list + right flex:1 ObjStackEditor inline.
+// Two-pane: left (resizable, default 340px) stack list + right flex:1 ObjStackEditor inline.
+// Drag handle between panes; pane width persisted to localStorage.
 export function ObjectionsDesktop({ deck, onUpdateDeck, readOnly }) {
   var [selectedId, setSelectedId] = useState(null);
   var [showNew,    setShowNew]    = useState(false);
   var [nf,         setNf]         = useState({ label:"", icon:"😐" });
 
+  // ── Resizable left pane ──────────────────────────────────────────────────────
+  var [leftW, setLeftW] = useState(function() {
+    var stored = parseInt(localStorage.getItem("overcard_objections_leftW"), 10);
+    return (stored >= 200 && stored <= 500) ? stored : 340;
+  });
+  var dragging    = useRef(false);
+  var dragStartX  = useRef(0);
+  var dragStartW  = useRef(340);
+  var leftWRef    = useRef(leftW);
+  var [isDragging, setIsDragging] = useState(false);
+
+  function updateLeftW(w) { leftWRef.current = w; setLeftW(w); }
+
+  useEffect(function() {
+    function onMove(e) {
+      if (!dragging.current) return;
+      var delta = e.clientX - dragStartX.current;
+      var newW = Math.max(200, Math.min(500, dragStartW.current + delta));
+      updateLeftW(newW);
+    }
+    function onUp() {
+      if (!dragging.current) return;
+      dragging.current = false;
+      setIsDragging(false);
+      localStorage.setItem("overcard_objections_leftW", String(leftWRef.current));
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return function() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  function startDrag(e) {
+    dragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartW.current = leftWRef.current;
+    setIsDragging(true);
+    e.preventDefault();
+  }
+
+  // ── Stack operations ─────────────────────────────────────────────────────────
   var selectedStack = selectedId ? deck.objStacks.find(function(s){ return s.id === selectedId; }) : null;
 
   function saveStack(s) {
@@ -28,17 +72,17 @@ export function ObjectionsDesktop({ deck, onUpdateDeck, readOnly }) {
   }
 
   return (
-    <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
+    <div style={{display:"flex",height:"100%",overflow:"hidden",userSelect:isDragging?"none":"auto"}}>
 
       {/* ── Left pane: stack list ── */}
-      <div style={{width:340,minWidth:340,display:"flex",flexDirection:"column",borderRight:"1px solid rgba(255,255,255,.06)",overflow:"hidden"}}>
+      <div style={{width:leftW,minWidth:leftW,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0}}>
         {/* Toolbar */}
         <div style={{padding:"10px 14px 10px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <span style={{fontSize:11,fontWeight:700,color:"rgba(239,83,80,.7)",letterSpacing:.5,textTransform:"uppercase"}}>{deck.objStacks.length} Stack{deck.objStacks.length!==1?"s":""}</span>
             <div style={{flex:1}}/>
             {!readOnly && (
-              <button onClick={function(){setShowNew(function(p){return !p;});}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)"})}>{showNew?"Cancel":"+ New"}</button>
+              <button onClick={function(){setShowNew(function(p){return !p;}); if (showNew) setNf({label:"",icon:"😐"});}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)"})}>{showNew?"Cancel":"+ New"}</button>
             )}
           </div>
           {showNew && !readOnly && (
@@ -65,17 +109,30 @@ export function ObjectionsDesktop({ deck, onUpdateDeck, readOnly }) {
           )}
           {deck.objStacks.map(function(stack) {
             var sel = stack.id === selectedId;
+            var cardCount = Object.keys(stack.cards).length;
+            var hasEntry  = !!stack.rootCard;
+            var healthDot = (cardCount > 0 && hasEntry) ? "#66BB6A"
+                          : cardCount > 0              ? "#FFD54F"
+                          : "#EF5350";
             return (
               <button key={stack.id} onClick={function(){setSelectedId(stack.id);}}
-                style={{display:"flex",alignItems:"center",gap:12,width:"100%",textAlign:"left",
+                style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",
                   background:sel?"rgba(239,83,80,.12)":"rgba(239,83,80,.04)",
                   border:"1.5px solid "+(sel?"rgba(239,83,80,.45)":"rgba(239,83,80,.14)"),
                   borderLeft:"3px solid "+(sel?OBJ_COLOR:"rgba(239,83,80,.3)"),
-                  borderRadius:10,padding:"11px 12px",marginBottom:6,cursor:"pointer",fontFamily:"inherit"}}>
-                <div style={{width:38,height:38,borderRadius:11,background:"rgba(239,83,80,.15)",border:"1px solid rgba(239,83,80,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{stack.icon}</div>
+                  borderRadius:10,padding:"10px 12px",marginBottom:6,cursor:"pointer",fontFamily:"inherit"}}>
+                {/* Health dot */}
+                <div style={{width:7,height:7,borderRadius:"50%",background:healthDot,flexShrink:0,boxShadow:"0 0 4px "+healthDot+"88"}}/>
+                <div style={{width:36,height:36,borderRadius:10,background:"rgba(239,83,80,.15)",border:"1px solid rgba(239,83,80,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:19,flexShrink:0}}>{stack.icon}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stack.label}</div>
-                  <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:2}}>{Object.keys(stack.cards).length} cards · {stack.rootCard?"entry set":"no entry"}</div>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginTop:2}}>
+                    {cardCount} card{cardCount!==1?"s":""}
+                    {" · "}
+                    <span style={{color:hasEntry?"rgba(102,187,106,.7)":cardCount>0?"rgba(255,213,79,.6)":"rgba(239,83,80,.5)"}}>
+                      {hasEntry ? "✓ entry set" : "⚠ no entry"}
+                    </span>
+                  </div>
                 </div>
                 <span style={{color:"rgba(239,83,80,.4)",fontSize:16,flexShrink:0}}>›</span>
               </button>
@@ -83,6 +140,14 @@ export function ObjectionsDesktop({ deck, onUpdateDeck, readOnly }) {
           })}
         </div>
       </div>
+
+      {/* ── Drag handle ── */}
+      <div
+        onMouseDown={startDrag}
+        style={Object.assign({},resizeHandle(),{
+          background:isDragging?"rgba(255,255,255,.1)":"transparent"
+        })}
+      />
 
       {/* ── Right pane: inline ObjStackEditor ── */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>

@@ -37,6 +37,10 @@ export function modalOverlay() {
 export function modalDialog(w) {
   return { background:"#081428", borderRadius:20, border:"1px solid rgba(255,255,255,.1)", width:w||480, maxWidth:"calc(100vw - 32px)", maxHeight:"85vh", overflowY:"auto", position:"relative", boxShadow:"0 24px 80px rgba(0,0,0,.8)" };
 }
+export function resizeHandle() {
+  return { width:6, cursor:"col-resize", flexShrink:0, background:"transparent",
+    borderRight:"1px solid rgba(255,255,255,.06)", transition:"background .15s" };
+}
 export var SHEET_MAX_H = (function() {
   try {
     var el = document.createElement("div");
