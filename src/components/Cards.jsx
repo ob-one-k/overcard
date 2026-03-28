@@ -18,6 +18,7 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
 
   var [viewMode,        setViewMode]        = useState("list");
   var [editing,         setEditing]         = useState(null);
+  var [navDir,          setNavDir]          = useState(null);
   var [search,          setSearch]          = useState("");
   var [collapsedGroups, setCollapsedGroups] = useState({});
   var [dragViz,         setDragViz]         = useState(null);
@@ -293,11 +294,12 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
       )}
       {editing && !readOnly && (
         <CardEditorSheet key={editing.id} card={editing} allCards={deck.cards} rootCard={deck.rootCard} accentColor={deck.color} lockedType={null}
-          onSave={function(c){safeUpsert(deck.id,c);setEditing(null);}}
-          onDelete={function(id){onDelete(deck.id,id);setEditing(null);}}
-          onClose={function(){setEditing(null);}}
-          onNavigateTo={function(c){setEditing(c);}}
-          onSaveAndNavigateTo={function(saved,next){safeUpsert(deck.id,saved);setEditing(next);}}/>
+          navDir={navDir}
+          onSave={function(c){safeUpsert(deck.id,c);setEditing(null);setNavDir(null);}}
+          onDelete={function(id){onDelete(deck.id,id);setEditing(null);setNavDir(null);}}
+          onClose={function(){setEditing(null);setNavDir(null);}}
+          onNavigateTo={function(c,dir){setNavDir(dir||null);setEditing(c);}}
+          onSaveAndNavigateTo={function(saved,next,dir){safeUpsert(deck.id,saved);setNavDir(dir||null);setEditing(next);}}/>
       )}
     </div>
   );
@@ -307,6 +309,7 @@ export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
 export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, deckCards, inline }) {
   var [form, setForm]         = useState(Object.assign({}, stack, { cards:Object.assign({}, stack.cards || {}) }));
   var [editCard, setEditCard] = useState(initialEditCard || null);
+  var [editNavDir, setEditNavDir] = useState(null);
   var [editMeta, setEditMeta] = useState(false);
   var [viewMode, setViewMode] = useState("list");
   var [search, setSearch]     = useState("");
@@ -317,15 +320,15 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
       var nc = Object.assign({}, p.cards, { [nextCard.id]: nextCard });
       return Object.assign({}, p, { cards:nc, rootCard:p.rootCard || nextCard.id });
     });
-    setEditCard(null);
+    setEditCard(null); setEditNavDir(null);
   }
-  function upsertCardAndNavigate(saved, next) {
+  function upsertCardAndNavigate(saved, next, dir) {
     setForm(function(p) {
       var nextCard = Object.assign({ overview:[], intendedPath:false, prompt:"", answers:[{id:aid(),label:"",next:null}] }, saved || {});
       var nc = Object.assign({}, p.cards, { [nextCard.id]: nextCard });
       return Object.assign({}, p, { cards:nc, rootCard:p.rootCard || nextCard.id });
     });
-    setEditCard(next);
+    setEditNavDir(dir||null); setEditCard(next);
   }
 
   function deleteCard(id) {
@@ -490,8 +493,9 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
       </div>
 
       {editCard && <CardEditorSheet key={editCard.id} card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
-        onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);}}
-        onNavigateTo={function(c){setEditCard(c);}}
+        navDir={editNavDir}
+        onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);setEditNavDir(null);}}
+        onNavigateTo={function(c,dir){setEditNavDir(dir||null);setEditCard(c);}}
         onSaveAndNavigateTo={upsertCardAndNavigate}/>}
     </div>
   );

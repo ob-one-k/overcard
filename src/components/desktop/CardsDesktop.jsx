@@ -18,6 +18,7 @@ import { stripMarkup } from "../../lib/richtext";
 export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
   var [viewMode,  setViewMode]  = useState("list");
   var [editing,   setEditing]   = useState(null);
+  var [navDir,    setNavDir]    = useState(null);
   var [search,    setSearch]    = useState("");
   var [collapsed, setCollapsed] = useState({});
 
@@ -256,11 +257,12 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
                   allCards={deck.cards}
                   rootCard={deck.rootCard}
                   accentColor={TM[editing.type] ? TM[editing.type].color : "#00B4FF"}
-                  onSave={function(card){ safeUpsert(deck.id, card); setEditing(null); }}
-                  onDelete={readOnly ? null : function(id){ onDelete(deck.id, id); setEditing(null); }}
-                  onClose={function(){ setEditing(null); }}
-                  onNavigateTo={function(targetCard){ setEditing(targetCard); }}
-                  onSaveAndNavigateTo={function(form, targetCard){ safeUpsert(deck.id, form); setEditing(targetCard); }}
+                  navDir={navDir}
+                  onSave={function(card){ safeUpsert(deck.id, card); setEditing(null); setNavDir(null); }}
+                  onDelete={readOnly ? null : function(id){ onDelete(deck.id, id); setEditing(null); setNavDir(null); }}
+                  onClose={function(){ setEditing(null); setNavDir(null); }}
+                  onNavigateTo={function(targetCard, dir){ setNavDir(dir||null); setEditing(targetCard); }}
+                  onSaveAndNavigateTo={function(form, targetCard, dir){ safeUpsert(deck.id, form); setNavDir(dir||null); setEditing(targetCard); }}
                   inline={true}
                 />
               ) : (
@@ -333,11 +335,12 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
                   allCards={deck.cards}
                   rootCard={deck.rootCard}
                   accentColor={TM[editing.type] ? TM[editing.type].color : "#00B4FF"}
-                  onSave={function(card){ safeUpsert(deck.id, card); setEditing(null); }}
-                  onDelete={readOnly ? null : function(id){ onDelete(deck.id, id); setEditing(null); }}
-                  onClose={function(){ setEditing(null); }}
-                  onNavigateTo={function(targetCard){ setEditing(targetCard); }}
-                  onSaveAndNavigateTo={function(form, targetCard){ safeUpsert(deck.id, form); setEditing(targetCard); }}
+                  navDir={navDir}
+                  onSave={function(card){ safeUpsert(deck.id, card); setEditing(null); setNavDir(null); }}
+                  onDelete={readOnly ? null : function(id){ onDelete(deck.id, id); setEditing(null); setNavDir(null); }}
+                  onClose={function(){ setEditing(null); setNavDir(null); }}
+                  onNavigateTo={function(targetCard, dir){ setNavDir(dir||null); setEditing(targetCard); }}
+                  onSaveAndNavigateTo={function(form, targetCard, dir){ safeUpsert(deck.id, form); setNavDir(dir||null); setEditing(targetCard); }}
                   inline={true}
                 />
               </div>

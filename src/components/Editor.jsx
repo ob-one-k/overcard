@@ -465,7 +465,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 }
 
 // ─── CARD EDITOR SHEET ────────────────────────────────────────────────────────
-export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo, inline }) {
+export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo, inline, navDir }) {
   var isBlank = !card.prompt && !card.title;
   var [form, setForm] = useState({
     id: card.id || uid(),
@@ -508,12 +508,19 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
   });
 
   // ── When inline=true: skip fixed overlay + backdrop + Handle; fill height directly ──
+  // navDir drives the card-swap animation: "forward" | "back" | null (regular open)
   var outerStyle = inline
     ? {display:"flex",flexDirection:"column",height:"100%"}
     : {position:"fixed",inset:0,zIndex:300,display:"flex",flexDirection:"column"};
+  var mobileAnim = navDir === "forward" ? "cardSwipeIn .26s cubic-bezier(.22,1,.36,1) both"
+    : navDir === "back"    ? "cardSwipeBack .26s cubic-bezier(.22,1,.36,1) both"
+    : "sheetUp .3s cubic-bezier(.22,1,.36,1) both";
+  var desktopAnim = navDir === "forward" ? "cardIn .2s cubic-bezier(.22,1,.36,1) both"
+    : navDir === "back"    ? "cardBack .2s cubic-bezier(.22,1,.36,1) both"
+    : undefined;
   var sheetStyle = inline
-    ? {display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#081428"}
-    : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
+    ? {display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#081428",animation:desktopAnim}
+    : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:mobileAnim};
   var headerPad = inline ? "8px 18px 12px" : "8px 20px 14px";
   var contentPad = inline ? "16px 18px" : "18px 20px";
   var buttonPad  = inline ? "12px 18px" : "14px 20px";
@@ -543,7 +550,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                   var m2 = TM[c.type]||TM.pitch;
                   return (
                     <button key={c.id}
-                      onClick={function(){ if(onSaveAndNavigateTo) onSaveAndNavigateTo(form, c); else if(onNavigateTo) onNavigateTo(c); }}
+                      onClick={function(){ if(onSaveAndNavigateTo) onSaveAndNavigateTo(form, c, "back"); else if(onNavigateTo) onNavigateTo(c, "back"); }}
                       style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"5px 10px",fontSize:11,cursor:(onNavigateTo||onSaveAndNavigateTo)?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,color:"rgba(255,255,255,.6)"}}>
                       <span style={{color:m2.color}}>{m2.icon}</span>
                       <span>{c.title}</span>
@@ -660,8 +667,8 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                     {ans.next && allCards[ans.next] && (onSaveAndNavigateTo || onNavigateTo) && (
                       <button onClick={function(){
                         var dest = allCards[ans.next];
-                        if (onSaveAndNavigateTo) onSaveAndNavigateTo(form, dest);
-                        else if (onNavigateTo) onNavigateTo(dest);
+                        if (onSaveAndNavigateTo) onSaveAndNavigateTo(form, dest, "forward");
+                        else if (onNavigateTo) onNavigateTo(dest, "forward");
                       }} title={"Go to: " + allCards[ans.next].title}
                       style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:7,padding:"4px 7px",cursor:"pointer",fontSize:11,color:"rgba(255,255,255,.5)",fontFamily:"inherit",flexShrink:0}}>↗</button>
                     )}
@@ -678,7 +685,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                             var savedForm = Object.assign({},form,{answers:updatedAnswers});
                             setLinkIdx(null);
                             setPreviewCardId(null);
-                            onSaveAndNavigateTo(savedForm, newCard);
+                            onSaveAndNavigateTo(savedForm, newCard, "forward");
                           }}
                           style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",color:ac,fontSize:13,padding:"11px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                             <span style={{fontSize:14}}>✦</span>

@@ -370,8 +370,10 @@ function MainApp({ authUser, onLogout }) {
           *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
           html,body,#root{height:100%;width:100%;}
           body{background:#060d1a;font-family:'Inter',sans-serif;color:#fff;overscroll-behavior:none;}
-          @keyframes cardIn    {from{opacity:0;transform:translateX(28px) scale(.97)}to{opacity:1;transform:none}}
-          @keyframes cardBack  {from{opacity:0;transform:translateX(-28px) scale(.97)}to{opacity:1;transform:none}}
+          @keyframes cardIn      {from{opacity:0;transform:translateX(28px) scale(.97)}to{opacity:1;transform:none}}
+          @keyframes cardBack    {from{opacity:0;transform:translateX(-28px) scale(.97)}to{opacity:1;transform:none}}
+          @keyframes cardSwipeIn {from{opacity:0;transform:translateX(62px)}to{opacity:1;transform:none}}
+          @keyframes cardSwipeBack{from{opacity:0;transform:translateX(-62px)}to{opacity:1;transform:none}}
           @keyframes answersIn {from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
           @keyframes answerItem{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
           @keyframes sheetUp   {from{transform:translateY(100%)}to{transform:none}}
