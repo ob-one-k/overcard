@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { OBJ_COLOR, OBJ_ICONS, osid } from "../../lib/constants";
+import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, labelSt, resizeHandle } from "../../lib/styles";
 import { ObjStackEditor } from "../Cards";
 
@@ -13,7 +14,7 @@ export function ObjectionsDesktop({ deck, onUpdateDeck, readOnly }) {
 
   // ── Resizable left pane ──────────────────────────────────────────────────────
   var [leftW, setLeftW] = useState(function() {
-    var stored = parseInt(localStorage.getItem("overcard_objections_leftW"), 10);
+    var stored = parseInt(lsGet("overcard_objections_leftW"), 10);
     return (stored >= 200 && stored <= 500) ? stored : 340;
   });
   var dragging    = useRef(false);
@@ -35,7 +36,7 @@ export function ObjectionsDesktop({ deck, onUpdateDeck, readOnly }) {
       if (!dragging.current) return;
       dragging.current = false;
       setIsDragging(false);
-      localStorage.setItem("overcard_objections_leftW", String(leftWRef.current));
+      lsSet("overcard_objections_leftW", String(leftWRef.current));
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);

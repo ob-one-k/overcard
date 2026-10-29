@@ -33,6 +33,21 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [elapsed,        setElapsed]        = useState(0);
 
   var mediaRecorderRef = useRef(null);
+
+  // Session id the pending/active recording belongs to — lets a late getUserMedia
+  // resolution detect that its session already ended and release the mic
+  var recordingForRef = useRef(null);
+  // Release the microphone if this component unmounts mid-recording (logout, 401, etc.)
+  useEffect(function() {
+    return function() {
+      recordingForRef.current = null;
+      var rec = mediaRecorderRef.current;
+      if (rec && rec.state !== "inactive") {
+        rec.onstop = function() { rec.stream.getTracks().forEach(function(t){ t.stop(); }); };
+        rec.stop();
+      }
+    };
+  }, []);
   var audioChunksRef   = useRef([]);
   var recorderStartMs  = useRef(null);
 
@@ -88,9 +103,12 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
       sold:false, soldCardId:null, soldCardTitle:null, events:[],
     };
     audioChunksRef.current = []; recorderStartMs.current = null; mediaRecorderRef.current = null;
+    recordingForRef.current = s.id;
     if (recordAudio && selectedDevice && typeof MediaRecorder !== "undefined") {
       navigator.mediaDevices.getUserMedia({ audio:{ deviceId:{ exact:selectedDevice } } })
         .then(function(stream) {
+          // Session ended (or component unmounted) while the permission prompt was open
+          if (recordingForRef.current !== s.id) { stream.getTracks().forEach(function(t){ t.stop(); }); return; }
           var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
             : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/ogg";
           var recorder = new MediaRecorder(stream, { mimeType:mimeType });
@@ -114,6 +132,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   }
 
   function finishSession(sold, soldCard, outcomeOverride) {
+    recordingForRef.current = null;
     setSaving(true);
     var outcome = outcomeOverride || (sold ? "sold" : "completed");
     var audioSegs = sessionEvents

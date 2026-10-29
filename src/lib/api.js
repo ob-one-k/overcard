@@ -9,12 +9,29 @@ var _onSessionReplaced = null; // set by App shell to show "replaced" message on
 export function setUnauthHandler(fn)          { _onUnauth = fn; }
 export function setSessionReplacedHandler(fn) { _onSessionReplaced = fn; }
 
+// localStorage can throw (Safari private mode, blocked site data) — never let that break the app
+export function lsGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+export function lsSet(key, val) {
+  try { if (val === null || val === undefined) localStorage.removeItem(key); else localStorage.setItem(key, val); } catch (e) {}
+}
+
 // Token stored in localStorage for mobile/Safari ITP fallback (Authorization: Bearer header)
-var _token = localStorage.getItem("overcard_token") || null;
+var _token = lsGet("overcard_token") || null;
 export function setStoredToken(t) {
-  _token = t;
-  if (t) localStorage.setItem("overcard_token", t);
-  else   localStorage.removeItem("overcard_token");
+  _token = t || null;
+  lsSet("overcard_token", _token);
+}
+export function getStoredToken() { return _token; }
+
+// Abort requests that hang (e.g. backend down or cold-starting) instead of waiting forever
+export var REQUEST_TIMEOUT = 30000;
+export function fetchWithTimeout(url, opts, ms) {
+  var ctrl  = new AbortController();
+  var timer = setTimeout(function() { ctrl.abort(); }, ms || REQUEST_TIMEOUT);
+  return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+    .finally(function() { clearTimeout(timer); });
 }
 
 function authHeaders(extra) {
@@ -39,13 +56,13 @@ async function handle401(r) {
 }
 
 export async function apiGet(path) {
-  const r = await fetch(API_BASE + path, { credentials:"include", headers: authHeaders() });
+  const r = await fetchWithTimeout(API_BASE + path, { credentials:"include", headers: authHeaders() });
   if (r.status === 401) return handle401(r);
   if (!r.ok) { var e = new Error("API " + r.status); e.status = r.status; throw e; }
   return r.json();
 }
 export async function apiPut(path, body) {
-  const r = await fetch(API_BASE + path, {
+  const r = await fetchWithTimeout(API_BASE + path, {
     method:"PUT", headers: authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify(body), credentials:"include"
   });
@@ -54,7 +71,7 @@ export async function apiPut(path, body) {
   return r.json();
 }
 export async function apiPost(path, body) {
-  const r = await fetch(API_BASE + path, {
+  const r = await fetchWithTimeout(API_BASE + path, {
     method:"POST", headers: authHeaders({"Content-Type":"application/json"}),
     body: JSON.stringify(body), credentials:"include"
   });
@@ -63,7 +80,7 @@ export async function apiPost(path, body) {
   return r.json();
 }
 export async function apiDel(path) {
-  const r = await fetch(API_BASE + path, {
+  const r = await fetchWithTimeout(API_BASE + path, {
     method:"DELETE", headers: authHeaders(), credentials:"include"
   });
   if (r.status === 401) return handle401(r);

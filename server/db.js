@@ -11,6 +11,15 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  // Fail fast instead of hanging requests forever when the database is unreachable
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis:       30000,
+  query_timeout:           30000,
+});
+
+// An idle client erroring (e.g. DB restart) must not crash the process
+pool.on("error", function(err) {
+  console.error("PostgreSQL pool error:", err.message);
 });
 
 // ─── SCHEMA ───────────────────────────────────────────────────────────────────
@@ -500,13 +509,14 @@ function buildSessionWhere(scope, orgId, userId, filters) {
   if (filters.deckId)  { conds.push('"deckId" = ' + push(filters.deckId)); }
   if (filters.mode)    { conds.push('mode = '      + push(filters.mode));   }
   if (filters.outcome) { conds.push('outcome = '   + push(filters.outcome)); }
+  // Invalid dates are ignored rather than sending NaN to a BIGINT column
   if (filters.from) {
     const d = new Date(filters.from); d.setHours(0, 0, 0, 0);
-    conds.push('"startTs" >= ' + push(d.getTime()));
+    if (!isNaN(d.getTime())) conds.push('"startTs" >= ' + push(d.getTime()));
   }
   if (filters.to) {
     const d = new Date(filters.to); d.setHours(23, 59, 59, 999);
-    conds.push('"startTs" <= ' + push(d.getTime()));
+    if (!isNaN(d.getTime())) conds.push('"startTs" <= ' + push(d.getTime()));
   }
 
   return { where: conds.length ? " WHERE " + conds.join(" AND ") : "", vals };
@@ -619,7 +629,7 @@ async function upsertSession(session, userId, orgId) {
     JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
     JSON.stringify(session.audioSegments || null),
   ]);
-  return rows[0] ? parseSession(rows[0]) : getSessionById(session.id);
+  return rows[0] ? parseSession(rows[0]) : null;
 }
 
 async function deleteSession(id, userId) {
@@ -708,10 +718,11 @@ async function getSharesForSession(sessionId) {
   return rows;
 }
 
-async function deleteShare(shareId, orgId) {
+// Scoped to the session the caller was authorized against, not just the org
+async function deleteShare(shareId, sessionId) {
   await pool.query(
-    'DELETE FROM session_shares WHERE id = $1 AND "sessionId" IN (SELECT id FROM sessions WHERE "orgId" = $2)',
-    [shareId, orgId]
+    'DELETE FROM session_shares WHERE id = $1 AND "sessionId" = $2',
+    [shareId, sessionId]
   );
 }
 

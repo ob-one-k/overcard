@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid } from "./lib/constants";
-import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
+import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
@@ -47,15 +47,30 @@ export default function App() {
   var [authUser,    setAuthUser]    = useState(null);
   var [authChecked, setAuthChecked] = useState(false);
   var [kickReason,  setKickReason]  = useState(null); // "replaced" when session kicked by another login
+  var [serverDown,  setServerDown]  = useState(false); // backend unreachable / erroring during auth check
+  var [slowServer,  setSlowServer]  = useState(false); // auth check taking long (e.g. free-tier cold start)
+  var [authAttempt, setAuthAttempt] = useState(0);
 
+  // Only 401/403 mean "logged out". Network errors, timeouts and 5xx mean the server
+  // is unavailable — show a retry screen instead of hanging or bouncing to login.
   useEffect(function() {
-    var storedToken = localStorage.getItem("overcard_token");
+    var cancelled = false;
+    var storedToken = getStoredToken();
     var headers = storedToken ? { "Authorization": "Bearer " + storedToken } : {};
-    fetch(API_BASE + "/auth/me", { credentials:"include", headers: headers })
-      .then(function(r){ return r.ok ? r.json() : Promise.reject(); })
-      .then(function(u){ setAuthUser(u); setAuthChecked(true); })
-      .catch(function(){ setAuthUser(false); setAuthChecked(true); });
-  }, []);
+    var slowTimer = setTimeout(function() { if (!cancelled) setSlowServer(true); }, 5000);
+    fetchWithTimeout(API_BASE + "/auth/me", { credentials:"include", headers: headers }, 75000)
+      .then(function(r) {
+        if (r.ok) return r.json().then(function(u) { if (!cancelled) setAuthUser(u); });
+        if (r.status === 401 || r.status === 403) { if (!cancelled) setAuthUser(false); return; }
+        throw new Error("API " + r.status);
+      })
+      .then(function() { if (!cancelled) { setServerDown(false); setAuthChecked(true); } })
+      .catch(function() { if (!cancelled) { setServerDown(true); setAuthChecked(true); } })
+      .finally(function() { clearTimeout(slowTimer); if (!cancelled) setSlowServer(false); });
+    return function() { cancelled = true; clearTimeout(slowTimer); };
+  }, [authAttempt]);
+
+  function retryAuth() { setServerDown(false); setAuthChecked(false); setAuthAttempt(function(n) { return n + 1; }); }
 
   // Register 401 handler so api helpers can clear auth state
   useEffect(function() {
@@ -67,10 +82,10 @@ export default function App() {
   // Refresh JWT on visibility change and every hour to prevent mid-session logout
   useEffect(function() {
     function doRefresh() {
-      var storedToken = localStorage.getItem("overcard_token");
+      var storedToken = getStoredToken();
       var headers = { "Content-Type": "application/json" };
       if (storedToken) headers["Authorization"] = "Bearer " + storedToken;
-      fetch(API_BASE + "/auth/refresh", { method:"POST", credentials:"include", headers: headers })
+      fetchWithTimeout(API_BASE + "/auth/refresh", { method:"POST", credentials:"include", headers: headers })
         .then(function(r) {
           if (r.status === 401) { setStoredToken(null); setAuthUser(false); return null; }
           return r.ok ? r.json() : null;
@@ -88,6 +103,15 @@ export default function App() {
     <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
       <div style={{width:48,height:48,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#fff"}}>O</div>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading OverCard…</div>
+      {slowServer && <div style={{color:"rgba(255,255,255,.35)",fontSize:12,maxWidth:280,textAlign:"center",lineHeight:1.5}}>Waking up the server — this can take up to a minute.</div>}
+    </div>
+  );
+  if (serverDown) return (
+    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
+      <div style={{width:48,height:48,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#fff"}}>O</div>
+      <div style={{color:"#fff",fontSize:15,fontWeight:700}}>Can't reach the OverCard server</div>
+      <div style={{color:"rgba(255,255,255,.5)",fontSize:13,maxWidth:300,textAlign:"center",lineHeight:1.5}}>The server didn't respond. Check your connection and try again.</div>
+      <button onClick={retryAuth} style={solidBtn("#1565C0")}>Retry</button>
     </div>
   );
   if (!authUser) return (
@@ -105,18 +129,22 @@ function MainApp({ authUser, onLogout }) {
   var TABS        = authUser.role === "admin" ? ADMIN_TABS : USER_TABS;
   var [decks,     setDecks]    = useState([]);
   var [activeId,  setActiveId] = useState("d1");
-  var [tab,       setTab]      = useState(localStorage.getItem("overcard_tab") || "home");
+  var [tab,       setTab]      = useState(function() {
+    var stored = lsGet("overcard_tab");
+    return TABS.some(function(t) { return t.id === stored; }) ? stored : "home";
+  });
+  var [decksError, setDecksError] = useState(false);
   var [showDS,    setShowDS]   = useState(false);
   var [saveStatus, setSaveStatus] = useState("idle"); // "idle"|"saving"|"saved"|"error"
   var [serverOk,  setServerOk] = useState(true);
   // Portal: when a session finishes, this holds the session ID to open in Sessions tab
   var [pendingReview, setPendingReview] = useState(null);
-  // Track whether we're in an active session — derived from activeSession state
-  var sessionActive = !!activeSession;
   // Play tab state lifted here so it persists across tab switches
   var [playView,       setPlayView]       = useState("new");
   var [activeSession,  setActiveSession]  = useState(null);
   var [sessionEvents,  setSessionEvents]  = useState([]);
+  // Track whether we're in an active session — must come after activeSession is declared
+  var sessionActive = !!activeSession;
   // Admin scope for SessionsTab
   var [viewScope,   setViewScope]   = useState("self");
   // Admin org data
@@ -131,17 +159,18 @@ function MainApp({ authUser, onLogout }) {
 
   // ── Tab switching helper (persists to localStorage) ─────────────────────────
   function switchTab(newTab) {
-    localStorage.setItem("overcard_tab", newTab);
+    lsSet("overcard_tab", newTab);
     setTab(newTab);
   }
 
   // ── Load on mount ────────────────────────────────────────────────────────────
-  useEffect(function() {
+  function loadDecks() {
+    setDecksError(false);
     apiGet("/decks")
       .then(function(data) {
         if (Array.isArray(data) && data.length > 0) {
           setDecks(data);
-          var lastId = localStorage.getItem("overcard_activeId");
+          var lastId = lsGet("overcard_activeId");
           if (lastId && data.find(function(d) { return d.id===lastId; })) {
             setActiveId(lastId);
           } else {
@@ -150,7 +179,13 @@ function MainApp({ authUser, onLogout }) {
         }
         setSaveStatus("saved"); setServerOk(true);
       })
-      .catch(function() { setServerOk(false); setSaveStatus("error"); });
+      .catch(function(err) {
+        if (err && err.status === 401) return; // unauth handler already routes to login
+        setServerOk(false); setDecksError(true); setSaveStatus("error");
+      });
+  }
+  useEffect(function() {
+    loadDecks();
     refreshOrgUsers();
     if (authUser.role === "admin") {
       refreshOrgTeams();
@@ -178,8 +213,12 @@ function MainApp({ authUser, onLogout }) {
       setSaveStatus("saving");
       var toSave = decks.filter(function(d){ return dirty.indexOf(d.id) !== -1; });
       Promise.all(toSave.map(function(d){ return apiPut("/decks/" + d.id, d); }))
-        .then(function() { setSaveStatus("saved"); setServerOk(true); localStorage.setItem("overcard_activeId", activeId); })
-        .catch(function() { setSaveStatus("error"); setServerOk(false); });
+        .then(function() { setSaveStatus("saved"); setServerOk(true); lsSet("overcard_activeId", activeId); })
+        .catch(function() {
+          // Re-mark as dirty so the failed edits are retried on the next change instead of lost
+          dirty.forEach(function(id) { dirtyIds.current.add(id); });
+          setSaveStatus("error"); setServerOk(false);
+        });
     }, SAVE_DELAY);
     return function() { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [decks, activeId]);
@@ -204,8 +243,9 @@ function MainApp({ authUser, onLogout }) {
         if (d.id !== deckId) return d;
         var nc = Object.assign({}, d.cards);
         delete nc[cardId];
-        Object.values(nc).forEach(function(c) {
-          c.answers = c.answers.map(function(a) { return a.next===cardId ? Object.assign({},a,{next:null}) : a; });
+        Object.keys(nc).forEach(function(k) {
+          var c = nc[k];
+          nc[k] = Object.assign({}, c, { answers: (c.answers || []).map(function(a) { return a.next===cardId ? Object.assign({},a,{next:null}) : a; }) });
         });
         var nr = d.rootCard===cardId ? (Object.keys(nc)[0]||null) : d.rootCard;
         return Object.assign({}, d, { cards:nc, rootCard:nr });
@@ -226,7 +266,8 @@ function MainApp({ authUser, onLogout }) {
       .catch(function(err){ console.error("Failed to create deck:", err); });
   }
   function switchDeck(id) {
-    localStorage.setItem("overcard_activeId", id);
+    if (activeSession && id !== activeId) return; // navigation is locked until the session ends
+    lsSet("overcard_activeId", id);
     setActiveId(id);
     setPendingReview(null);
     // Reset play state when deck changes (mirrors existing PlayTab useEffect logic)
@@ -277,6 +318,17 @@ function MainApp({ authUser, onLogout }) {
       <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
         <div style={{width:48,height:48,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#fff"}}>O</div>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading…</div>
+      </div>
+    );
+  }
+  if (!deck && decksError) {
+    return (
+      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
+        <div style={{fontSize:48}}>⚠️</div>
+        <div style={{color:"rgba(255,255,255,.5)",fontSize:13,textAlign:"center",lineHeight:1.7}}>
+          Couldn't load your decks.<br/>The server may be unavailable.
+        </div>
+        <button onClick={loadDecks} style={solidBtn("#1565C0")}>Retry</button>
       </div>
     );
   }

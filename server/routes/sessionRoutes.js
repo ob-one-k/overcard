@@ -66,6 +66,8 @@ router.post("/", async function(req, res, next) {
       return res.status(400).json({ error: "Session id is required" });
     }
     const session = await upsertSession(req.body, req.user.id, req.user.orgId);
+    // null means the id belongs to another user's session — never return it
+    if (!session) return res.status(403).json({ error: "Access denied" });
     res.json({ ok: true, session });
   } catch (err) { next(err); }
 });
@@ -116,7 +118,7 @@ router.post("/:id/feedback", async function(req, res, next) {
     const isShareRecipient = !!(await getShareRecord(session.id, req.user.id));
     if (!isAdmin && !isShareRecipient) return res.status(403).json({ error: "Access denied" });
 
-    const { text, cardId, cardTitle } = req.body;
+    const { text, cardId, cardTitle } = req.body || {};
     if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
     if (text.trim().length > 5000) return res.status(400).json({ error: "Feedback text must be 5000 characters or less" });
 
@@ -139,7 +141,7 @@ router.put("/:id/feedback/:fid", async function(req, res, next) {
     const fb = await getFeedbackById(req.params.fid);
     if (!fb || fb.sessionId !== req.params.id) return res.status(404).json({ error: "Not found" });
     if (fb.authorId !== req.user.id) return res.status(403).json({ error: "Access denied" });
-    const { text, cardId, cardTitle } = req.body;
+    const { text, cardId, cardTitle } = req.body || {};
     if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
     if (text.trim().length > 5000) return res.status(400).json({ error: "Feedback text must be 5000 characters or less" });
     const updated = await updateFeedback(fb.id, text.trim(), cardId || null, cardTitle || null, req.user.id);
@@ -175,7 +177,7 @@ router.post("/:id/share", async function(req, res, next) {
       (req.user.role === "admin" && session.orgId === req.user.orgId);
     if (!canShare) return res.status(403).json({ error: "Access denied" });
 
-    const { toUserId, context } = req.body;
+    const { toUserId, context } = req.body || {};
     if (!toUserId) return res.status(400).json({ error: "toUserId is required" });
 
     const orgUsers = await getOrgUsers(req.user.orgId);
@@ -210,7 +212,7 @@ router.delete("/:id/shares/:shareId", async function(req, res, next) {
       ? session.orgId === req.user.orgId
       : session.userId === req.user.id;
     if (!canRevoke) return res.status(403).json({ error: "Access denied" });
-    await deleteShare(req.params.shareId, session.orgId);
+    await deleteShare(req.params.shareId, session.id);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

@@ -23,7 +23,7 @@ A sales pitch deck training platform. Build structured call flows with branching
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js 24.x (LTS — see `.nvmrc`)
 
 ### Install
 
@@ -78,7 +78,7 @@ React 19 (Vite)  ──▶  Express REST API  ──▶  PostgreSQL (pg Pool)
 overcard/
 ├── index.html              # Vite entry HTML
 ├── package.json            # Dependencies and scripts
-├── vite.config.js          # Vite config with API proxy
+├── vite.config.mjs         # Vite config with API proxy
 ├── CLAUDE.md               # Detailed codebase documentation
 ├── src/
 │   ├── main.jsx            # React entry point
@@ -195,6 +195,6 @@ OverCard ships a `render.yaml` Blueprint that provisions a Node.js web service a
 DATABASE_URL=postgres://localhost/overcard npm run build && NODE_ENV=production JWT_SECRET=your-secret-here node server/index.js
 ```
 
-**Warning:** Do NOT run `node server/seed.js` in production — the script exits immediately if `NODE_ENV=production`.
+**Note:** The server runs the seeder automatically on every boot (including production) to keep demo data in place. Seeded accounts share a known password — do not use this deployment for real customer data.
 
 > **Note:** Render's free PostgreSQL plan has a 90-day data retention limit. Upgrade to a paid plan for persistent production data.

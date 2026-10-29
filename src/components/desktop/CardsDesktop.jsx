@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { TM, uid, aid } from "../../lib/constants";
+import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostBtn, inputSt, resizeHandle } from "../../lib/styles";
 import { IntendedBadge } from "../ui";
 import { CardEditorSheet } from "../Editor";
@@ -24,7 +25,7 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
 
   // ── Resizable left pane (list mode only) ─────────────────────────────────────
   var [leftW, setLeftW] = useState(function() {
-    var stored = parseInt(localStorage.getItem("overcard_cards_leftW"), 10);
+    var stored = parseInt(lsGet("overcard_cards_leftW"), 10);
     return (stored >= 200 && stored <= 560) ? stored : 320;
   });
   var dragging   = useRef(false);
@@ -46,7 +47,7 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
       if (!dragging.current) return;
       dragging.current = false;
       setIsDragging(false);
-      localStorage.setItem("overcard_cards_leftW", String(leftWRef.current));
+      lsSet("overcard_cards_leftW", String(leftWRef.current));
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);

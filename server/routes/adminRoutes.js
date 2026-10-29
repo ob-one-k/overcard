@@ -3,7 +3,7 @@ const router  = express.Router();
 const {
   getOrgUsers, createUser, updateUser, deleteUser, findUserById,
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, uid,
-  setUserTeams, getUserTeams,
+  setUserTeams, getUserTeams, setActiveToken,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
 
@@ -47,7 +47,7 @@ router.post("/users", async function(req, res, next) {
       orgId:        req.user.orgId,
       teamId:       teamId || null,
       email:        email.toLowerCase().trim(),
-      passwordHash: hashPassword(password),
+      passwordHash: await hashPassword(password),
       displayName:  displayName.trim(),
       role:         role,
     });
@@ -99,7 +99,9 @@ router.post("/users/:id/reset-password", async function(req, res, next) {
     const { password } = req.body || {};
     var pwErr = validatePassword(password);
     if (pwErr) return res.status(400).json({ error: pwErr });
-    await updateUser(req.params.id, req.user.orgId, { passwordHash: hashPassword(password) });
+    await updateUser(req.params.id, req.user.orgId, { passwordHash: await hashPassword(password) });
+    // Revoke the user's current session so the old password's tokens stop working
+    await setActiveToken(req.params.id, null);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

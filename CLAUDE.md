@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm install          # Install dependencies (Node >=18 required)
+npm install          # Install dependencies (Node 24.x LTS — see .nvmrc / engines)
 npm run dev          # Dev mode: runs Express (port 3001) + Vite (port 5173) concurrently
 npm run build        # Build frontend into dist/
 npm start            # Build + serve production on port 3000
@@ -20,7 +20,7 @@ No test framework is configured.
 
 ## Architecture
 
-**Stack:** React 19 (Vite) frontend + Express backend + PostgreSQL (`pg` Pool, async).
+**Stack:** React 19 (Vite 8) frontend + Express 5 backend + PostgreSQL (`pg` Pool, async). Node 24 LTS.
 
 **Modular frontend:** `src/App.jsx` is the app shell (auth, tabs, autosave). Components are split into `src/components/` (9 files) and shared code into `src/lib/` (4 files):
 
@@ -30,13 +30,13 @@ No test framework is configured.
 **Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined in `src/lib/styles.js` (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
 
 **Backend:** Express REST API with PostgreSQL database via async `pg` Pool (connection string from `DATABASE_URL`).
-- `server/index.js` — Express entry, middleware, route mounting, static file serving; calls `initSchema()` before `app.listen()`
-- `server/db.js` — PostgreSQL schema init (`initSchema`), async pool, `withTransaction` helper, all database query functions (50+ exports). BIGINT timestamp columns use a type parser to return JS numbers. JSONB columns (cards, objStacks, events, notes, metrics) are auto-serialized/deserialized by pg. All camelCase column names are double-quoted in SQL strings.
+- `server/index.js` — Express entry, middleware, route mounting, static file serving; calls `initSchema()` (retried with backoff) before `app.listen()`, then runs `runSeed()` in the background on every boot (including production — demo data). SPA catch-all uses Express 5 syntax `app.get("/{*splat}")`. `trust proxy` is set in production (Render).
+- `server/db.js` — PostgreSQL schema init (`initSchema`), async pool (10s connection timeout, 30s query timeout, `pool.on("error")` handler), `withTransaction` helper, all database query functions (50+ exports). BIGINT timestamp columns use a type parser to return JS numbers. JSONB columns (cards, objStacks, events, notes, metrics) are auto-serialized/deserialized by pg. All camelCase column names are double-quoted in SQL strings.
 - `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, async auth middleware
 - `server/routes/` — Route handlers (authRoutes, deckRoutes, sessionRoutes, adminRoutes)
 - `server/seed.js` — Database seeder (2 orgs, 6 teams, 20+ users, 3 decks, 300+ sessions)
 
-In dev mode, Vite proxies `/api/*` to `http://localhost:3001` (see `vite.config.js`). In production, Express serves the built `dist/` and handles all routes.
+In dev mode, Vite proxies `/api/*` to `http://localhost:3001` (see `vite.config.mjs`). In production, Express serves the built `dist/` and handles all routes.
 
 ## Authentication
 
@@ -106,8 +106,9 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/App.jsx` | `App` (root with auth), `MainApp` (authenticated shell with tabs, autosave) |
 | `src/lib/constants.js` | `uid`, `aid`, `osid`, `sid`, `TM`, `OBJ_COLOR`, `SESS_COLOR`, `STYPE`, `DECK_COLORS`, `DECK_ICONS`, `OBJ_ICONS`, `INFLECTIONS`, `INFL_MAP`, `INFL_CATS` |
 | `src/lib/richtext.js` | `parseRichText`, `stripMarkup` |
-| `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler` |
+| `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler`, `setSessionReplacedHandler`, `setStoredToken`, `getStoredToken`, `fetchWithTimeout` (30s default), `lsGet`/`lsSet` (try/catch-safe localStorage) |
 | `src/lib/styles.js` | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
+| `src/components/ErrorBoundary.jsx` | `ErrorBoundary` (wraps `<App/>` in `main.jsx`; shows reload screen on render crash) |
 | `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow` |
 | `src/components/Tooltip.jsx` | `TipCtx`, `GlobalInflTooltip`, `InflWord`, `RichPromptDisplay`, `OverviewDisplay`, `OverviewEditor` |
 | `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
@@ -201,6 +202,9 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 
 ## Key Patterns
 
+- **Startup resilience:** `App` checks `/auth/me` with a 75s timeout (shows "Waking up the server" after 5s). Only 401/403 route to login; network errors/timeouts/5xx show a "Can't reach the server" retry screen. Deck load failures show a retry screen too.
+- **Desktop/mobile split:** `PlayTab`, `CardsTab`, `ObjectionsTab`, `SessionsTab` are thin wrappers that render `XDesktop` or `XMobile`. Never put hooks after a conditional `return` — crossing the 1024px breakpoint would change hook order and crash.
+- **Auth sessions:** `requireAuth` requires the JWT `sid` to equal `users.activeToken`. Logout and admin password reset null `activeToken`, revoking all outstanding tokens. JWTs pinned to HS256. bcrypt is async (`hashPassword`/`checkPassword` return promises).
 - **Autosave:** 800ms debounce per deck. `dirtyIds` ref tracks which decks have unsaved changes. Saves via `PUT /api/decks/:id`.
 - **Polling:** SessionReview polls feedback every 5s. ShareModal polls shares every 5s. Both clean up intervals on unmount.
 - **Immutable updates:** All state updates use `Object.assign({}, prev, changes)` pattern. No spread operator (ES5-style codebase).
@@ -282,5 +286,5 @@ Deploy steps:
 - **Org scoping:** All endpoints validate `orgId` to prevent cross-org data access (IDOR protection).
 - **XSS prevention:** `escH()` in `Editor.jsx` escapes all user content before innerHTML rendering in the contentEditable editor.
 - **Dev-only features:** `DEV_ORGS` and `DEV_PASSWORD` are defined unconditionally in `Panels.jsx` (not tree-shaken by Vite). Only the LoginScreen UI rendering them checks a condition. Do not rely on Vite bundle stripping for these values.
-- **Seed guard:** `server/seed.js` exits immediately if `NODE_ENV=production`.
+- **Seed on boot:** `server/index.js` runs `runSeed()` on every start, including production. There is no production guard — seeded accounts share a known password (demo deployment only).
 - **Feedback limits:** Feedback text capped at 5000 characters.

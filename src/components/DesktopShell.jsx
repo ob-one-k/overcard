@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
 import { SESS_COLOR } from "../lib/constants";
+import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 
 // ─── DESKTOP SHELL ────────────────────────────────────────────────────────────
@@ -19,13 +20,13 @@ export function DesktopShell({
   children
 }) {
   var [collapsed, setCollapsed] = useState(function() {
-    return localStorage.getItem("overcard_sidebar_collapsed") === "true";
+    return lsGet("overcard_sidebar_collapsed") === "true";
   });
 
   function toggleCollapse() {
     var next = !collapsed;
     setCollapsed(next);
-    localStorage.setItem("overcard_sidebar_collapsed", next ? "true" : "false");
+    lsSet("overcard_sidebar_collapsed", next ? "true" : "false");
   }
 
   // Keyboard shortcuts

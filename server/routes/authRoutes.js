@@ -46,10 +46,10 @@ router.post("/login", loginLimiter, async function(req, res, next) {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    const user = await findUserByEmail(email.toLowerCase().trim());
-    if (!user) return res.status(401).json({ error: "Invalid email or password" });
-
-    if (!checkPassword(password, user.passwordHash)) {
+    const user = await findUserByEmail(String(email).toLowerCase().trim());
+    // Always run bcrypt (against a dummy hash for unknown emails) to keep timing uniform
+    const passwordOk = await checkPassword(String(password), user ? user.passwordHash : null);
+    if (!user || !passwordOk) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
@@ -94,10 +94,10 @@ router.post("/logout", async function(req, res, next) {
 router.post("/refresh", requireAuth, async function(req, res, next) {
   try {
     // Re-use existing session token so sid stays the same — refreshing the JWT doesn't replace the session
+    // requireAuth already verified the JWT's sid matches the user's activeToken
     const user = await findUserById(req.user.id);
-    const sid  = user && user.activeToken ? user.activeToken : randomUUID();
-    if (!user.activeToken) await setActiveToken(req.user.id, sid);
-    const token = jwtSign({ sub: req.user.id, role: req.user.role, orgId: req.user.orgId, sid: sid });
+    if (!user || !user.activeToken) return res.status(401).json({ error: "Session ended" });
+    const token = jwtSign({ sub: req.user.id, role: req.user.role, orgId: req.user.orgId, sid: user.activeToken });
     setCookie(res, token);
     res.json({ ok: true, _token: token });
   } catch (err) { next(err); }

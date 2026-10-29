@@ -325,10 +325,16 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
 // From home, user picks Live or Practice and fills in title + description.
 // While active, navigation is locked — no tab switching until End or Sold.
 // On finish, auto-portals the user to the Session review in Sessions tab.
-export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
+// Desktop and mobile layouts are separate components so switching across the
+// breakpoint never changes the number of hooks called in one component.
+export function PlayTab(props) {
+  var desktop = useContext(DesktopCtx);
+  return desktop.isDesktop ? <PlayDesktop {...props}/> : <PlayMobile {...props}/>;
+}
+
+function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
     playView, setPlayView, activeSession, setActiveSession, sessionEvents, setSessionEvents }) {
   var desktop = useContext(DesktopCtx);
-  if (desktop.isDesktop) return <PlayDesktop deck={deck} activeId={activeId} onPortalToReview={onPortalToReview} onSwitchDeck={onSwitchDeck} playView={playView} setPlayView={setPlayView} activeSession={activeSession} setActiveSession={setActiveSession} sessionEvents={sessionEvents} setSessionEvents={setSessionEvents}/>;
 
   var [pendingType, setPendingType]   = useState("practice");
   var [newName, setNewName]           = useState("");
@@ -344,6 +350,21 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [deviceError,    setDeviceError]    = useState(null);
   // Audio recording refs
   var mediaRecorderRef = useRef(null);
+
+  // Session id the pending/active recording belongs to — lets a late getUserMedia
+  // resolution detect that its session already ended and release the mic
+  var recordingForRef = useRef(null);
+  // Release the microphone if this component unmounts mid-recording (logout, 401, etc.)
+  useEffect(function() {
+    return function() {
+      recordingForRef.current = null;
+      var rec = mediaRecorderRef.current;
+      if (rec && rec.state !== "inactive") {
+        rec.onstop = function() { rec.stream.getTracks().forEach(function(t){ t.stop(); }); };
+        rec.stop();
+      }
+    };
+  }, []);
   var audioChunksRef   = useRef([]);
   var recorderStartMs  = useRef(null);
 
@@ -404,9 +425,12 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
     recorderStartMs.current = null;
     mediaRecorderRef.current = null;
     // Start microphone recording if opted in
+    recordingForRef.current = s.id;
     if (recordAudio && selectedDevice && typeof MediaRecorder !== "undefined") {
       navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: selectedDevice } } })
         .then(function(stream) {
+          // Session ended (or component unmounted) while the permission prompt was open
+          if (recordingForRef.current !== s.id) { stream.getTracks().forEach(function(t){ t.stop(); }); return; }
           var mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
             ? "audio/webm;codecs=opus"
             : MediaRecorder.isTypeSupported("audio/webm")
@@ -437,6 +461,7 @@ export function PlayTab({ deck, activeId, onPortalToReview, onSwitchDeck,
   }
 
   function finishSession(sold, soldCard, outcomeOverride) {
+    recordingForRef.current = null;
     setSaving(true);
     var outcome = outcomeOverride || (sold ? "sold" : "completed");
 

@@ -94,7 +94,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
     if (!sessions) return [];
     var list = sessions.filter(function(s) {
       if (fType !== "all" && (s.mode||"live") !== fType) return false;
-      if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search && !(s.name || "").toLowerCase().includes(search.toLowerCase())) return false;
       if (fFrom) { var d = new Date(fFrom); d.setHours(0,0,0,0); if (s.startTs < d.getTime()) return false; }
       if (fTo)   { var d2 = new Date(fTo); d2.setHours(23,59,59,999); if (s.startTs > d2.getTime()) return false; }
       return true;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR } from "../lib/constants";
-import { apiGet, apiPost, apiPut, apiDel, setStoredToken, API_BASE } from "../lib/api";
+import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
@@ -303,7 +303,10 @@ export function LoginScreen({ onLogin, kickReason }) {
       .catch(function(e) {
         setBusy(false);
         if (e.status === 409) { setAlreadyLoggedIn(true); return; }
-        setErr(e.message || "Login failed");
+        if (e.status === 401) { setErr("Invalid email or password."); return; }
+        if (e.status === 429) { setErr("Too many login attempts. Please wait a few minutes and try again."); return; }
+        if (!e.status)        { setErr("Can't reach the server. Check your connection and try again."); return; }
+        setErr("Login failed (" + e.status + "). Please try again.");
       });
   }
 
@@ -474,9 +477,9 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
   var [busy, setBusy] = useState(false);
   function logout() {
     setBusy(true);
-    var storedToken = localStorage.getItem("overcard_token");
+    var storedToken = lsGet("overcard_token");
     var headers = storedToken ? { "Authorization": "Bearer " + storedToken } : {};
-    fetch(API_BASE + "/auth/logout", { method:"POST", credentials:"include", headers: headers })
+    fetchWithTimeout(API_BASE + "/auth/logout", { method:"POST", credentials:"include", headers: headers }, 10000)
       .then(function(){ onLogout(); })
       .catch(function(){ onLogout(); });
   }
@@ -486,7 +489,7 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
       {/* Avatar + name */}
       <div style={{display:"flex",alignItems:"center",gap:14}}>
         <div style={{width:52,height:52,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:700,color:"#fff",flexShrink:0}}>
-          {authUser.displayName[0].toUpperCase()}
+          {(authUser.displayName || "?")[0].toUpperCase()}
         </div>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>{authUser.displayName}</div>
@@ -564,8 +567,13 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
   }
 
   function resetPassword(user) {
-    var pw = prompt("New password for " + user.displayName + " (min 6 chars):");
-    if (!pw || pw.length < 6) return;
+    var pw = prompt("New password for " + user.displayName + " (8+ chars, 1 uppercase, 1 digit):");
+    if (!pw) return;
+    // Mirror the server's password policy so admins get a specific message
+    if (pw.length < 8 || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw)) {
+      flash("Password must be 8+ characters with an uppercase letter and a digit");
+      return;
+    }
     apiPost("/admin/users/" + user.id + "/reset-password", { password: pw })
       .then(function(){ flash("Password reset for " + user.displayName); })
       .catch(function(){ flash("Error resetting password"); });
@@ -654,7 +662,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
                         onClick={function(){ setUf({email:u.email,displayName:u.displayName,role:u.role,teamId:u.teamId||"",password:""}); setEditUser(u); }}
                         style={{display:"flex",alignItems:"center",gap:9,width:"100%",textAlign:"left",background:sel?"rgba(255,255,255,.1)":"rgba(255,255,255,.04)",border:"1.5px solid "+(sel?"rgba(255,255,255,.2)":"rgba(255,255,255,.07)"),borderRadius:10,padding:"9px 11px",marginBottom:6,cursor:"pointer",fontFamily:"inherit"}}>
                         <div style={{width:30,height:30,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0}}>
-                          {u.displayName[0].toUpperCase()}
+                          {(u.displayName || "?")[0].toUpperCase()}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</div>
@@ -877,7 +885,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
                 return (
                   <div key={u.id} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.07)",borderRadius:10,padding:"11px 12px",display:"flex",alignItems:"center",gap:10}}>
                     <div style={{width:34,height:34,borderRadius:"50%",background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff",flexShrink:0}}>
-                      {u.displayName[0].toUpperCase()}
+                      {(u.displayName || "?")[0].toUpperCase()}
                     </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>

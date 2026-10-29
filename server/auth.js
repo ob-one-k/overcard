@@ -11,19 +11,24 @@ const COOKIE_NAME = "rc_token";
 const BCRYPT_ROUNDS = 12;
 
 function jwtSign(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+  return jwt.sign(payload, JWT_SECRET, { algorithm: "HS256", expiresIn: JWT_EXPIRES });
 }
 
 function jwtVerify(token) {
-  return jwt.verify(token, JWT_SECRET);
+  return jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
 }
 
+// Async bcrypt runs on libuv's thread pool so logins don't block the event loop
 function hashPassword(plain) {
-  return bcrypt.hashSync(plain, BCRYPT_ROUNDS);
+  return bcrypt.hash(plain, BCRYPT_ROUNDS);
 }
+
+// Hash of a random string — compared against when the email is unknown so
+// response timing doesn't reveal which accounts exist
+const DUMMY_HASH = bcrypt.hashSync(require("crypto").randomUUID(), BCRYPT_ROUNDS);
 
 function checkPassword(plain, hash) {
-  return bcrypt.compareSync(plain, hash);
+  return bcrypt.compare(plain, hash || DUMMY_HASH);
 }
 
 function setCookie(res, token) {
@@ -58,8 +63,12 @@ async function requireAuth(req, res, next) {
     const payload = jwtVerify(token);           // still synchronous
     const user    = await findUserById(payload.sub);
     if (!user) return res.status(401).json({ error: "User not found" });
-    // Single-session check: if activeToken is set, verify JWT's sid matches
-    if (user.activeToken && payload.sid && user.activeToken !== payload.sid) {
+    // Single-session check: the JWT's sid must match the user's active session.
+    // A null activeToken (after logout or password reset) revokes every outstanding token.
+    if (!payload.sid || !user.activeToken) {
+      return res.status(401).json({ error: "Session ended" });
+    }
+    if (user.activeToken !== payload.sid) {
       return res.status(401).json({ error: "session_replaced", message: "Signed in on another device." });
     }
     req.user = {

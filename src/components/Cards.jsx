@@ -12,9 +12,15 @@ import { CardsDesktop } from "./desktop/CardsDesktop";
 import { ObjectionsDesktop } from "./desktop/ObjectionsDesktop";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
-export function CardsTab({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+// Desktop and mobile layouts are separate components so switching across the
+// breakpoint never changes the number of hooks called in one component.
+export function CardsTab(props) {
   var desktop = useContext(DesktopCtx);
-  if (desktop.isDesktop) return <CardsDesktop deck={deck} onUpsert={onUpsert} onDelete={onDelete} onUpdateDeck={onUpdateDeck} readOnly={readOnly}/>;
+  return desktop.isDesktop ? <CardsDesktop {...props}/> : <CardsMobile {...props}/>;
+}
+
+function CardsMobile({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+  var desktop = useContext(DesktopCtx);
 
   var [viewMode,        setViewMode]        = useState("list");
   var [editing,         setEditing]         = useState(null);
@@ -501,9 +507,15 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
   );
 }
 
-export function ObjectionsTab({ deck, onUpdateDeck, readOnly }) {
+// Desktop and mobile layouts are separate components so switching across the
+// breakpoint never changes the number of hooks called in one component.
+export function ObjectionsTab(props) {
   var desktop = useContext(DesktopCtx);
-  if (desktop.isDesktop) return <ObjectionsDesktop deck={deck} onUpdateDeck={onUpdateDeck} readOnly={readOnly}/>;
+  return desktop.isDesktop ? <ObjectionsDesktop {...props}/> : <ObjectionsMobile {...props}/>;
+}
+
+function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
+  var desktop = useContext(DesktopCtx);
 
   var [editing, setEditing]       = useState(null);
   var [pendingCard, setPendingCard] = useState(null);

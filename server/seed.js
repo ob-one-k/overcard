@@ -29,7 +29,7 @@ if (parseInt(manifestCount.rows[0].n, 10) === 0) {
 
 console.log("Smart seeding — preserving user data...");
 
-const PW_HASH = hashPassword("Overcard2025!");
+const PW_HASH = await hashPassword("Overcard2025!");
 
 // ─── UTILITIES ───────────────────────────────────────────────────────────────
 var DAY = 24 * 60 * 60 * 1000;

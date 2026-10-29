@@ -19,6 +19,9 @@ const DIST_DIR = path.join(__dirname, "..", "dist");
 // ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
 const isDev = process.env.NODE_ENV !== "production";
 
+// Render terminates TLS at its proxy — trust one hop so req.ip / rate limiting see the real client
+if (!isDev) app.set("trust proxy", 1);
+
 app.use(helmet({ contentSecurityPolicy: isDev ? false : undefined }));
 
 var corsOrigin = isDev
@@ -59,7 +62,8 @@ app.get("/api/health", async function(req, res, next) {
 // ─── FRONTEND ─────────────────────────────────────────────────────────────────
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
-  app.get("*", function(req, res, next) {
+  // Express 5 (path-to-regexp v8) requires a named wildcard; "{*splat}" also matches "/"
+  app.get("/{*splat}", function(req, res, next) {
     if (req.path.startsWith("/api/")) return next();
     res.sendFile(path.join(DIST_DIR, "index.html"));
   });
@@ -74,8 +78,21 @@ app.use(function(err, req, res, next) {
 });
 
 // ─── START ────────────────────────────────────────────────────────────────────
+// Retry schema init so a database that is still waking up doesn't crash-loop the service
+async function initSchemaWithRetry(attempts) {
+  for (var i = 1; i <= attempts; i++) {
+    try {
+      return await initSchema();
+    } catch (err) {
+      console.error("Database init failed (attempt " + i + "/" + attempts + "):", err.message);
+      if (i === attempts) throw err;
+      await new Promise(function(r) { setTimeout(r, i * 3000); });
+    }
+  }
+}
+
 async function start() {
-  await initSchema();
+  await initSchemaWithRetry(5);
 
   // Start listening first so Render's health check passes immediately
   app.listen(PORT, function() {

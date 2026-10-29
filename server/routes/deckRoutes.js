@@ -53,9 +53,14 @@ router.put("/:id", async function(req, res, next) {
     if (!existing) return res.status(404).json({ error: "Deck not found" });
     if (existing.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
 
-    const deck = await updateDeck(req.params.id, req.user.orgId, req.body);
-    if (req.body.accessList !== undefined) {
-      await setDeckAccess(req.params.id, req.body.accessList);
+    const body = req.body || {};
+    // updateDeck replaces the whole row — reject partial payloads that would wipe cards
+    if (!body.name || typeof body.cards !== "object" || body.cards === null) {
+      return res.status(400).json({ error: "Full deck (name, cards) is required" });
+    }
+    const deck = await updateDeck(req.params.id, req.user.orgId, body);
+    if (body.accessList !== undefined) {
+      await setDeckAccess(req.params.id, body.accessList);
     }
     res.json(deck);
   } catch (err) { next(err); }
@@ -79,7 +84,7 @@ router.put("/:id/access", async function(req, res, next) {
     var deck = await getDeckById(req.params.id);
     if (!deck) return res.status(404).json({ error: "Deck not found" });
     if (deck.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
-    await setDeckAccess(req.params.id, req.body.accessList || []);
+    await setDeckAccess(req.params.id, (req.body && req.body.accessList) || []);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

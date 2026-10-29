@@ -140,7 +140,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
                   <button key={u.id} onClick={function(){toggleUser(u.id);}}
                     style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",padding:"9px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                     <div style={{width:26,height:26,borderRadius:"50%",background:u.role==="admin"?"rgba(168,255,62,.15)":"rgba(0,180,255,.12)",border:"1px solid "+(u.role==="admin"?"rgba(168,255,62,.3)":"rgba(0,180,255,.2)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:u.role==="admin"?SESS_COLOR:"#00B4FF",flexShrink:0}}>
-                      {u.displayName[0].toUpperCase()}
+                      {(u.displayName || "?")[0].toUpperCase()}
                     </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</div>
@@ -748,9 +748,15 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
 // ─── SESSIONS TAB ─────────────────────────────────────────────────────────────
 // Three sub-views: list, review (single session), analytics (aggregate)
 // All data is scoped to the currently active deck.
-export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onInitialReview, viewScope, setViewScope, authUser, orgUsers, orgTeams }) {
+// Desktop and mobile layouts are separate components so switching across the
+// breakpoint never changes the number of hooks called in one component.
+export function SessionsTab(props) {
   var desktop = useContext(DesktopCtx);
-  if (desktop.isDesktop) return <SessionsDesktop deckId={deckId} deckName={deckName} deckColor={deckColor} deckRootCard={deckRootCard} onInitialReview={onInitialReview} viewScope={viewScope} setViewScope={setViewScope} authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams}/>;
+  return desktop.isDesktop ? <SessionsDesktop {...props}/> : <SessionsMobile {...props}/>;
+}
+
+function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialReview, viewScope, setViewScope, authUser, orgUsers, orgTeams }) {
+  var desktop = useContext(DesktopCtx);
 
   var [view,           setView]           = useState("list");
   var [sessions,       setSessions]       = useState(null);
@@ -790,11 +796,14 @@ export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onIniti
     return url;
   }
   useEffect(function() {
-    if (view === "list" || view === "analytics" || view === "shared") {
+    // Ignore responses from a superseded request (deck/scope changed mid-flight)
+    var cancelled = false;
+    if (view === "list" || view === "analytics" || view === "shared" || view === "review") {
       apiGet(buildSessionUrl())
-        .then(function(data) { setSessions(data.sort(function(a,b){return b.startTs-a.startTs;})); })
-        .catch(function() { setSessions([]); });
+        .then(function(data) { if (!cancelled) setSessions(data.sort(function(a,b){return b.startTs-a.startTs;})); })
+        .catch(function() { if (!cancelled) setSessions([]); });
     }
+    return function() { cancelled = true; };
   }, [deckId, view, viewScope]);
 
   function deleteSession(id) {
@@ -841,9 +850,7 @@ export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onIniti
   if (view === "review" && reviewId) {
     var reviewSess = sessions ? sessions.find(function(s){return s.id===reviewId;}) : null;
     if (!reviewSess && sessions === null) {
-      apiGet(buildSessionUrl()).then(function(data) {
-        setSessions(data.sort(function(a,b){return b.startTs-a.startTs;}));
-      });
+      // Sessions are loaded by the effect below — never fetch during render
       return <div style={{padding:40,textAlign:"center",color:"rgba(255,255,255,.3)",fontSize:13}}>Loading…</div>;
     }
     if (!reviewSess) { setView("list"); return null; }
@@ -1091,7 +1098,7 @@ export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onIniti
                       onMouseDown={function(e){ e.preventDefault(); setUserSearch(u.displayName); setSuggestOpen(false); }}
                       style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                       <div style={{width:22,height:22,borderRadius:"50%",background:"rgba(168,255,62,.15)",border:"1px solid rgba(168,255,62,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
-                        {u.displayName[0].toUpperCase()}
+                        {(u.displayName || "?")[0].toUpperCase()}
                       </div>
                       <div>
                         <div style={{fontSize:12,fontWeight:600,color:"#fff"}}>{u.displayName}</div>
@@ -1143,7 +1150,7 @@ export function SessionsTab({ deckId, deckName, deckColor, deckRootCard, onIniti
               <button onClick={function(){ toggleCollapse(g.user.id); }}
                 style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:10,padding:"9px 12px",cursor:"pointer",fontFamily:"inherit",marginBottom:isCollapsed?0:8,textAlign:"left"}}>
                 <div style={{width:28,height:28,borderRadius:"50%",background:"rgba(168,255,62,.15)",border:"1px solid rgba(168,255,62,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
-                  {g.user.displayName[0].toUpperCase()}
+                  {(g.user.displayName || "?")[0].toUpperCase()}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{g.user.displayName}</div>
