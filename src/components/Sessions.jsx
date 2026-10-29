@@ -798,7 +798,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
   useEffect(function() {
     // Ignore responses from a superseded request (deck/scope changed mid-flight)
     var cancelled = false;
-    if (view === "list" || view === "analytics" || view === "shared" || view === "review") {
+    if (view === "list" || view === "analytics" || view === "shared" || (view === "review" && sessions === null)) {
       apiGet(buildSessionUrl())
         .then(function(data) { if (!cancelled) setSessions(data.sort(function(a,b){return b.startTs-a.startTs;})); })
         .catch(function() { if (!cancelled) setSessions([]); });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid } from "../../lib/constants";
-import { apiPost } from "../../lib/api";
+import { apiPost, apiPostWithRetry } from "../../lib/api";
 import { solidBtn, ghostBtn, ghostSm, inputSt, labelSt } from "../../lib/styles";
 import { SectionHdr } from "../ui";
 import { Navigator, ObjPicker } from "../Play";
@@ -144,7 +144,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
       events:sessionEvents, audioSegments:audioSegs.length>0?audioSegs:null,
     });
     function doSave() {
-      apiPost("/sessions", finished)
+      apiPostWithRetry("/sessions", finished, 3)
         .then(function() {
           setSaving(false); setActiveSession(null); setSessionEvents([]);
           setPlayView("home"); setNewName(""); setNewDesc(""); setNameError(false);

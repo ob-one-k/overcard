@@ -106,7 +106,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/App.jsx` | `App` (root with auth), `MainApp` (authenticated shell with tabs, autosave) |
 | `src/lib/constants.js` | `uid`, `aid`, `osid`, `sid`, `TM`, `OBJ_COLOR`, `SESS_COLOR`, `STYPE`, `DECK_COLORS`, `DECK_ICONS`, `OBJ_ICONS`, `INFLECTIONS`, `INFL_MAP`, `INFL_CATS` |
 | `src/lib/richtext.js` | `parseRichText`, `stripMarkup` |
-| `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler`, `setSessionReplacedHandler`, `setStoredToken`, `getStoredToken`, `fetchWithTimeout` (30s default), `lsGet`/`lsSet` (try/catch-safe localStorage) |
+| `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler`, `setSessionReplacedHandler`, `setStoredToken`, `getStoredToken`, `fetchWithTimeout` (75s default — covers free-tier cold start), `apiPostWithRetry` (retries network/5xx; used for finished-session saves), `lsGet`/`lsSet` (try/catch-safe localStorage) |
 | `src/lib/styles.js` | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
 | `src/components/ErrorBoundary.jsx` | `ErrorBoundary` (wraps `<App/>` in `main.jsx`; shows reload screen on render crash) |
 | `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow` |
@@ -204,7 +204,7 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 
 - **Startup resilience:** `App` checks `/auth/me` with a 75s timeout (shows "Waking up the server" after 5s). Only 401/403 route to login; network errors/timeouts/5xx show a "Can't reach the server" retry screen. Deck load failures show a retry screen too.
 - **Desktop/mobile split:** `PlayTab`, `CardsTab`, `ObjectionsTab`, `SessionsTab` are thin wrappers that render `XDesktop` or `XMobile`. Never put hooks after a conditional `return` — crossing the 1024px breakpoint would change hook order and crash.
-- **Auth sessions:** `requireAuth` requires the JWT `sid` to equal `users.activeToken`. Logout and admin password reset null `activeToken`, revoking all outstanding tokens. JWTs pinned to HS256. bcrypt is async (`hashPassword`/`checkPassword` return promises).
+- **Auth sessions:** `requireAuth` requires the JWT `sid` to equal `users.activeToken`. Logout clears `activeToken` only if the token's `sid` matches (a stale device can't end the active session); admin password reset nulls it unconditionally, revoking all tokens. JWTs pinned to HS256. bcrypt is async (`hashPassword`/`checkPassword` return promises).
 - **Autosave:** 800ms debounce per deck. `dirtyIds` ref tracks which decks have unsaved changes. Saves via `PUT /api/decks/:id`.
 - **Polling:** SessionReview polls feedback every 5s. ShareModal polls shares every 5s. Both clean up intervals on unmount.
 - **Immutable updates:** All state updates use `Object.assign({}, prev, changes)` pattern. No spread operator (ES5-style codebase).

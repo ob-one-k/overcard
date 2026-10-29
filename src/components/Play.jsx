@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid } from "../lib/constants";
-import { apiPost } from "../lib/api";
+import { apiPost, apiPostWithRetry } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge as IntendedBadgeComp } from "./ui";
 import { TipCtx, RichPromptDisplay, OverviewDisplay } from "./Tooltip";
@@ -493,7 +493,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
     });
 
     function doSave() {
-      apiPost("/sessions", finished)
+      apiPostWithRetry("/sessions", finished, 3)
         .then(function() {
           setSaving(false);
           setActiveSession(null);

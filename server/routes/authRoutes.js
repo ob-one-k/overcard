@@ -2,7 +2,7 @@ const express   = require("express");
 const rateLimit = require("express-rate-limit");
 const { randomUUID } = require("crypto");
 const router    = express.Router();
-const { findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams, getAdminTeamIds, setActiveToken } = require("../db");
+const { findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches } = require("../db");
 const { jwtSign, checkPassword, setCookie, clearCookie, requireAuth } = require("../auth");
 
 var loginLimiter = rateLimit({
@@ -82,7 +82,9 @@ router.post("/logout", async function(req, res, next) {
       try {
         const { jwtVerify } = require("../auth");
         const payload = jwtVerify(token);
-        if (payload && payload.sub) await setActiveToken(payload.sub, null);
+        // Only end the session this token belongs to — a stale token from a replaced
+        // device must not sign out the user's current active session
+        if (payload && payload.sub && payload.sid) await clearActiveTokenIfMatches(payload.sub, payload.sid);
       } catch (_) { /* ignore invalid token on logout */ }
     }
     clearCookie(res);

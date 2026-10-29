@@ -95,7 +95,12 @@ async function start() {
   await initSchemaWithRetry(5);
 
   // Start listening first so Render's health check passes immediately
-  app.listen(PORT, function() {
+  app.listen(PORT, function(err) {
+    // Express 5 passes bind errors (EADDRINUSE, EACCES) here instead of throwing
+    if (err) {
+      console.error("Failed to listen on port " + PORT + ":", err.message);
+      process.exit(1);
+    }
     console.log("OverCard server listening on http://localhost:" + PORT);
     console.log("Mode: " + (process.env.NODE_ENV || "development"));
 

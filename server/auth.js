@@ -23,9 +23,9 @@ function hashPassword(plain) {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
 }
 
-// Hash of a random string — compared against when the email is unknown so
-// response timing doesn't reveal which accounts exist
-const DUMMY_HASH = bcrypt.hashSync(require("crypto").randomUUID(), BCRYPT_ROUNDS);
+// Precomputed cost-12 hash of a random string — compared against when the email is
+// unknown so response timing doesn't reveal which accounts exist (no sync hashing at boot)
+const DUMMY_HASH = "$2b$12$TvFgtTANQOidxk7rxBmapORERu7NYvZsk8EE42Qcg8a.a4NQw/OBO";
 
 function checkPassword(plain, hash) {
   return bcrypt.compare(plain, hash || DUMMY_HASH);

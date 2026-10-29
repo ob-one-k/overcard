@@ -267,6 +267,10 @@ async function setActiveToken(userId, token) {
   await pool.query('UPDATE users SET "activeToken"=$1 WHERE id=$2', [token, userId]);
 }
 
+async function clearActiveTokenIfMatches(userId, sid) {
+  await pool.query('UPDATE users SET "activeToken"=NULL WHERE id=$1 AND "activeToken"=$2', [userId, sid]);
+}
+
 async function setUserTeams(userId, teamIds) {
   await withTransaction(async function(client) {
     await client.query('DELETE FROM user_teams WHERE "userId" = $1', [userId]);
@@ -541,11 +545,11 @@ async function getSessions(scope, orgId, userId, filters) {
     if (f.outcome) { sharedConds.push('s.outcome = '   + spush(f.outcome)); }
     if (f.from) {
       const d = new Date(f.from); d.setHours(0, 0, 0, 0);
-      sharedConds.push('s."startTs" >= ' + spush(d.getTime()));
+      if (!isNaN(d.getTime())) sharedConds.push('s."startTs" >= ' + spush(d.getTime()));
     }
     if (f.to) {
       const d = new Date(f.to); d.setHours(23, 59, 59, 999);
-      sharedConds.push('s."startTs" <= ' + spush(d.getTime()));
+      if (!isNaN(d.getTime())) sharedConds.push('s."startTs" <= ' + spush(d.getTime()));
     }
     const sharedSql =
       'SELECT s.*, ss.context AS "_shareContext", ss."fromUserId" AS "_shareFromUserId",' +
@@ -742,7 +746,7 @@ module.exports = {
   findOrgById, createOrg,
   // teams
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
-  getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken,
+  getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches,
   // decks
   getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck,
   getDeckAccess, setDeckAccess,

@@ -25,8 +25,9 @@ export function setStoredToken(t) {
 }
 export function getStoredToken() { return _token; }
 
-// Abort requests that hang (e.g. backend down or cold-starting) instead of waiting forever
-export var REQUEST_TIMEOUT = 30000;
+// Abort requests that hang instead of waiting forever. Long enough to cover a
+// free-tier cold start (matches the 75s budget for the initial /auth/me check).
+export var REQUEST_TIMEOUT = 75000;
 export function fetchWithTimeout(url, opts, ms) {
   var ctrl  = new AbortController();
   var timer = setTimeout(function() { ctrl.abort(); }, ms || REQUEST_TIMEOUT);
@@ -86,4 +87,18 @@ export async function apiDel(path) {
   if (r.status === 401) return handle401(r);
   if (!r.ok) { var e = new Error("API " + r.status); e.status = r.status; throw e; }
   return r.json();
+}
+
+// POST with retries for writes that must not be lost (e.g. a finished session).
+// Retries network errors, timeouts and 5xx; auth/validation errors fail immediately.
+export function apiPostWithRetry(path, body, attempts) {
+  var left = attempts || 3;
+  function attempt(n) {
+    return apiPost(path, body).catch(function(e) {
+      var retryable = !e.status || e.status >= 500;
+      if (!retryable || n >= left) throw e;
+      return new Promise(function(r) { setTimeout(r, n * 3000); }).then(function() { return attempt(n + 1); });
+    });
+  }
+  return attempt(1);
 }
