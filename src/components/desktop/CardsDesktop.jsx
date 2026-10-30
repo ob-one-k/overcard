@@ -158,6 +158,9 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
   var dragStartW = useRef(380);
   var leftWRef   = useRef(leftW);
   var [isDragging, setIsDragging] = useState(false);
+  // Tree mode: the card editor docks on the LEFT of the tree and can be folded to a slim rail
+  var [treeEdCollapsed, setTreeEdCollapsedSt] = useState(function(){ return lsGet("overcard_tree_editorCollapsed") === "1"; });
+  function setTreeEdCollapsed(v) { setTreeEdCollapsedSt(v); lsSet("overcard_tree_editorCollapsed", v ? "1" : "0"); }
   // Overview performance data — sessions run on this deck (whole org for admins, own for users)
   var [perfScope, setPerfScope] = useState(readOnly ? "self" : "org");
   var [perfMode,  setPerfMode]  = useState("all");       // all | live | practice
@@ -818,22 +821,33 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
               </div>
             </div>}
 
+            {/* Left: card editor / read view — collapsible so the tree can take the full width */}
+            {editing && treeEdCollapsed && (
+              <button onClick={function(){ setTreeEdCollapsed(false); }} title="Show card editor" aria-label={"Show editor for " + (editing.title || "card")}
+                style={{width:44,flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"14px 0",background:"rgba(8,20,50,.85)",border:"none",borderRight:"1px solid rgba(255,255,255,.1)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
+                <span style={{fontSize:16,color:TXT}}>›</span>
+                <span style={{writingMode:"vertical-rl",transform:"rotate(180deg)",fontSize:13,fontWeight:700,letterSpacing:.5,color:(TM[editing.type] || TM.pitch).color,whiteSpace:"nowrap",overflow:"hidden",maxHeight:"70vh"}}>
+                  {readOnly ? "View" : "Edit"} · {editing.title || "New card"}
+                </span>
+              </button>
+            )}
+            {editing && !treeEdCollapsed && (
+              <div style={{width:isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:"1px solid rgba(255,255,255,.1)",background:"rgba(8,20,50,.85)",position:"relative"}}>
+                <button onClick={function(){ setTreeEdCollapsed(true); }} title="Collapse editor" aria-label="Collapse card editor"
+                  style={{position:"absolute",top:"50%",right:-1,transform:"translateY(-50%)",zIndex:5,width:20,height:56,borderRadius:"8px 0 0 8px",border:"1px solid rgba(255,255,255,.14)",borderRight:"none",background:"rgba(20,34,64,.95)",color:TXT2,fontSize:13,cursor:"pointer",padding:0,fontFamily:"inherit"}}>‹</button>
+                {renderDetail(false)}
+              </div>
+            )}
+
             {/* Center: full tree view */}
             <div style={{flex:1,overflow:"hidden",position:"relative",minWidth:0}}>
               <TreeView
                 cards={deck.cards}
                 rootCard={deck.rootCard}
-                onEdit={function(c){ openCard(c); }}
+                onEdit={function(c){ setTreeEdCollapsed(false); openCard(c); }}
                 onSetRoot={readOnly ? null : function(id){ onUpdateDeck(deck.id, function(d){ return Object.assign({},d,{rootCard:id}); }); }}
               />
             </div>
-
-            {/* Right: card editor / read view panel */}
-            {editing && (
-              <div style={{width:"clamp(420px, 38%, 560px)",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderLeft:"1px solid rgba(255,255,255,.1)",background:"rgba(8,20,50,.85)"}}>
-                {renderDetail(false)}
-              </div>
-            )}
           </>
         )}
 

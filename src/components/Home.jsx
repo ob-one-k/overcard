@@ -214,9 +214,6 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
     ? computeStats(currentSessions, decks)
     : null;
 
-  var hr = new Date().getHours();
-  var greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
-  var firstName = (authUser.displayName || "").split(" ")[0] || authUser.displayName;
 
   // Deck cards to show: decks with sessions + decks without (used by Deck Performance section)
   var decksWithSessions  = stats ? stats.deckStats.sort(function(a, b){ return b.total - a.total; }) : [];
@@ -244,20 +241,6 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
 
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-
-      {/* ── Header ── */}
-      <div style={{padding:"14px 16px 12px",flexShrink:0,background:"rgba(8,25,55,.3)",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-        <div style={{fontSize:18,fontWeight:700,color:"#fff",marginBottom:3,fontFamily:"'Lora',Georgia,serif"}}>{greeting}, {firstName}</div>
-        {stats ? (
-          <div style={{fontSize:12,color:"rgba(255,255,255,.4)"}}>
-            {stats.total} session{stats.total!==1?"s":""} total
-            {stats.winRate !== null ? " · " + stats.winRate + "% close rate" : ""}
-            {stats.intPct !== null ? " · " + stats.intPct + "% on-path" : ""}
-          </div>
-        ) : (
-          <div style={{fontSize:12,color:"rgba(255,255,255,.3)"}}>Your performance overview</div>
-        )}
-      </div>
 
       {/* ── Sub-tabs (only if user has teams) ── */}
       {myTeams.length > 0 && (

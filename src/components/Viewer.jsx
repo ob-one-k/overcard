@@ -22,6 +22,7 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
   var inboundCount = {};
   Object.values(cards).forEach(function(c) { (c.answers||[]).forEach(function(a) { if(a && a.next) inboundCount[a.next]=(inboundCount[a.next]||0)+1; }); });
   var renderedOnce = new Set();
+  var xlinkSeq = 0;   // the same card can loop back several times at one depth — keys must stay unique
 
   function renderNode(cardId, depth, ansLabel) {
     if (!cardId || !cards[cardId]) return null;
@@ -29,7 +30,7 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
     var isRoot = cardId===rootCard; var isMerge = (inboundCount[cardId]||0)>1;
     if (renderedOnce.has(cardId)) {
       return (
-        <div key={"xlink-"+cardId+"-"+depth} style={{paddingLeft:depth*20,marginBottom:4}}>
+        <div key={"xlink-"+cardId+"-"+depth+"-"+(xlinkSeq++)} style={{paddingLeft:depth*20,marginBottom:4}}>
           {ansLabel && <div style={{fontSize:10,color:"rgba(255,255,255,.18)",fontStyle:"italic",marginBottom:2,paddingLeft:28,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ansLabel}</div>}
           <div style={{display:"flex",alignItems:"center",gap:5,paddingLeft:20}}>
             <button onClick={function(){onEdit(card);}}

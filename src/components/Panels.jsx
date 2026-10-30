@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
+import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
@@ -7,6 +7,7 @@ import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
 import { BrandingFields } from "./BrandingFields";
 import { useDesktop } from "../lib/useDesktop";
+import { OrgMark } from "./OrgMark";
 
 // ─── DECK SWITCHER SHEET ──────────────────────────────────────────────────────
 export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, onEditDeck, orgUsers, orgTeams }) {
@@ -648,7 +649,7 @@ function fmtShortDate(ts) {
 }
 
 // ── Share codes: admins generate org-specific codes that employees use to sign up ──
-function ShareCodesPanel({ isDesktop }) {
+function ShareCodesPanel({ isDesktop, orgUsers, compact, stacked }) {
   var [invites, setInvites] = useState(null);
   var [expiry,  setExpiry]  = useState("7");
   var [maxUses, setMaxUses] = useState("");
@@ -764,13 +765,76 @@ function ShareCodesPanel({ isDesktop }) {
     </div>
   );
 
+  var threeCol = !compact && window.innerWidth >= 1400;
+  var recentCard = isDesktop ? (
+<div style={SIDE_CARD}>
+              <SideTitle>Recently joined</SideTitle>
+              {(orgUsers || []).slice().sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); }).slice(0, 8).map(function(u, i) {
+                var m = roleMeta(u.role);
+                return (
+                  <div key={u.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:i ? "1px solid rgba(255,255,255,.06)" : "none"}}>
+                    <span style={{width:28,height:28,borderRadius:"50%",background:m.bg,border:"1px solid "+m.border,color:m.color,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{(u.displayName || "?")[0].toUpperCase()}</span>
+                    <span style={{flex:1,minWidth:0}}>
+                      <span style={{display:"block",fontSize:14,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</span>
+                      <span style={{display:"block",fontSize:12,color:"rgba(255,255,255,.4)"}}>{u.createdAt ? fmtShortDate(u.createdAt) : ""}</span>
+                    </span>
+                    <RoleBadge role={u.role}/>
+                  </div>
+                );
+              })}
+            </div>
+  ) : null;
+  var guideAndStats = isDesktop ? (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+
+
+            <div style={SIDE_CARD}>
+              <SideTitle>How it works</SideTitle>
+              {[["1","Generate a code","Pick how long it lasts and how many people can use it."],
+                ["2","Send it to your team","Share the code, or the invite link — it opens sign-up with the code filled in."],
+                ["3","They sign up","New accounts join this organization as users. Promote them in Users."]].map(function(st) {
+                return (
+                  <div key={st[0]} style={{display:"flex",gap:12,padding:"7px 0"}}>
+                    <span style={{width:26,height:26,borderRadius:"50%",background:accentA(.15),border:"1px solid "+accentA(.4),color:SESS_COLOR,fontSize:13,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{st[0]}</span>
+                    <span>
+                      <span style={{display:"block",fontSize:14,fontWeight:600,color:"#fff"}}>{st[1]}</span>
+                      <span style={{display:"block",fontSize:13,color:"rgba(255,255,255,.5)",marginTop:2,lineHeight:1.45}}>{st[2]}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            {invites && invites.length > 0 && (
+              <div style={SIDE_CARD}>
+                <StatTiles items={[
+                  ["Active", invites.filter(function(i){ return inviteStatus(i).active; }).length, SESS_COLOR],
+                  ["Sign-ups", invites.reduce(function(t, i){ return t + (i.uses || 0); }, 0), "#00B4FF"],
+                  ["All codes", invites.length],
+                ]}/>
+              </div>
+            )}
+          
+    </div>
+  ) : null;
+  var generatorAndGuide = isDesktop ? <>{generator}{guideAndStats}</> : null;
+
   return (
-    <div style={{flex:1,overflowY:"auto",padding:isDesktop?"20px 24px":"12px 14px"}}>
+    <div style={{flex:1,overflowY:"auto",padding:isDesktop?(compact?"16px":"20px 24px"):"12px 14px"}}>
       {msg && <div style={{marginBottom:12,background:msg.error?"rgba(239,83,80,.1)":"rgba(102,187,106,.1)",border:"1px solid "+(msg.error?"rgba(239,83,80,.3)":"rgba(102,187,106,.25)"),borderRadius:9,padding:"8px 12px",fontSize:fs.small,color:msg.error?"#EF5350":"#66BB6A"}}>{msg.text}</div>}
       {isDesktop ? (
-        <div style={{display:"grid",gridTemplateColumns:"minmax(300px,380px) 1fr",gap:24,alignItems:"start"}}>
-          {generator}
+        // Desktop ≥1400: generator + guide | codes | recently joined.
+        // Tablet landscape / narrower desktop: two columns (recent joins under the guide on tablet).
+        // Tablet portrait: one column, codes first after the generator.
+        <div style={{display:"grid",gridTemplateColumns:threeCol ? "minmax(320px,380px) minmax(0,1fr) minmax(280px,340px)" : stacked ? "minmax(0,1fr)" : "minmax(280px,360px) minmax(0,1fr)",gap:compact ? 16 : 24,alignItems:"start"}}>
+          {stacked ? generator : (
+            <div style={{display:"flex",flexDirection:"column",gap:16}}>
+              {generatorAndGuide}
+              {compact && recentCard}
+            </div>
+          )}
           {listView}
+          {threeCol && recentCard}
+          {stacked && <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,alignItems:"start"}}>{guideAndStats}{recentCard}</div>}
         </div>
       ) : (
         <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:16}}>
@@ -791,7 +855,7 @@ var ORG_FORM_FIELDS = [
   { key:"address",  label:"Address",      placeholder:"Street, city", full:true },
 ];
 
-function OrgPanel({ authUser, orgUsers, isDesktop, onOrgUpdated }) {
+function OrgPanel({ authUser, orgUsers, orgTeams, isDesktop, onOrgUpdated, compact, stacked }) {
   var isOwner = authUser.role === "owner";
   var [org,  setOrg]  = useState(null);
   var [form, setForm] = useState(null);
@@ -912,12 +976,310 @@ function OrgPanel({ authUser, orgUsers, isDesktop, onOrgUpdated }) {
     </div>
   );
 
+  var msgBox = msg && <div style={{marginBottom:12,background:msg.error?"rgba(239,83,80,.1)":"rgba(102,187,106,.1)",border:"1px solid "+(msg.error?"rgba(239,83,80,.3)":"rgba(102,187,106,.25)"),borderRadius:9,padding:"8px 12px",fontSize:fs.small,color:msg.error?"#EF5350":"#66BB6A"}}>{msg.text}</div>;
+
+  if (!isDesktop) {
+    return (
+      <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}}>
+        {msgBox}
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:16,alignItems:"start",paddingBottom:16}}>
+          {details}
+          {ownerCard}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Desktop: header with save bar · details | branding + live preview | owner + at a glance ──
+  var wide3 = !compact && window.innerWidth >= 1400;
+  var previewAccent = form.accentColor && /^#[0-9A-F]{6}$/i.test(form.accentColor) ? normalizeAccent(form.accentColor) : DEFAULT_ACCENT;
+  var detailsCard = (
+    <div style={cardSt}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:14}}>
+        <div style={{fontSize:fs.title,fontWeight:700,color:"#fff"}}>Company details</div>
+        {!isOwner && <span style={{fontSize:fs.small,color:"rgba(255,255,255,.4)"}}>🔒 Owner only</span>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        {ORG_FORM_FIELDS.map(function(d) {
+          return (
+            <div key={d.key} style={{gridColumn:d.full || d.key === "name" ? "1 / -1" : undefined}}>
+              <label style={labelSt()}>{d.label}</label>
+              <input value={form[d.key]} disabled={!isOwner} placeholder={isOwner ? d.placeholder : "—"}
+                onChange={function(e){ var v = e.target.value; setForm(function(p){ var n = Object.assign({}, p); n[d.key] = v; return n; }); }}
+                style={inputSt({marginBottom:0,fontSize:fs.base,opacity:isOwner?1:.75,cursor:isOwner?"text":"default"})}/>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+  var brandingCard = (
+    <div style={cardSt}>
+      <div style={{fontSize:fs.title,fontWeight:700,color:"#fff",marginBottom:4}}>Branding</div>
+      <div style={{fontSize:fs.small,color:"rgba(255,255,255,.45)",marginBottom:14,lineHeight:1.5}}>Your logo replaces the OverCard mark and the accent colour themes the app for everyone in the organization.</div>
+      <BrandingFields logo={form.logo} accent={form.accentColor} disabled={!isOwner} orgName={form.name}
+        onChange={function(patch){ setForm(function(p){ return Object.assign({}, p, patch); }); }}/>
+      {/* Live preview of the sidebar header + accent */}
+      <div style={{marginTop:16}}>
+        <label style={labelSt()}>Preview</label>
+        <div style={{background:"#060d1a",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"14px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <OrgMark authUser={{ orgName: form.name, orgLogo: form.logo }} size={34}/>
+            <span style={{fontSize:16,fontWeight:800,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{form.name || "Your company"}</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,background:previewAccent + "1f",border:"1px solid " + previewAccent + "44"}}>
+            <span style={{fontSize:14,fontWeight:700,color:previewAccent}}>▶ Play</span>
+            <span style={{marginLeft:"auto",fontSize:11,fontWeight:700,color:previewAccent,border:"1px solid " + previewAccent + "55",borderRadius:99,padding:"1px 8px"}}>2</span>
+          </div>
+          <span style={Object.assign({}, solidBtn(previewAccent), {fontSize:13,padding:"9px 14px",borderRadius:10,cursor:"default"})}>Start Practice Session</span>
+        </div>
+      </div>
+    </div>
+  );
+  var teamsN = (orgTeams || []).length;
+  var roleN = { owner:0, admin:0, user:0 };
+  (orgUsers || []).forEach(function(u){ roleN[u.role] = (roleN[u.role] || 0) + 1; });
+  var glanceCard = (
+    <div style={cardSt}>
+      <div style={{fontSize:fs.title,fontWeight:700,color:"#fff",marginBottom:12}}>At a glance</div>
+      <StatTiles items={[["Members", (orgUsers || []).length], ["Admin access", roleN.admin + roleN.owner, SESS_COLOR], ["Teams", teamsN, "#FFD54F"]]}/>
+      <div style={{marginTop:12}}>
+        {[["Created", org.createdAt ? fmtShortDate(org.createdAt) : "—"], ["Last updated", org.updatedAt ? fmtShortDate(org.updatedAt) : "—"], ["Org ID", org.id]].map(function(r) {
+          return (
+            <div key={r[0]} style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:13,padding:"5px 0"}}>
+              <span style={{color:"rgba(255,255,255,.45)"}}>{r[0]}</span>
+              <span style={{color:"rgba(255,255,255,.8)",fontFamily:r[0] === "Org ID" ? "ui-monospace,Menlo,monospace" : "inherit",fontSize:r[0] === "Org ID" ? 12 : 13}}>{r[1]}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
-    <div style={{flex:1,overflowY:"auto",padding:isDesktop?"20px 24px":"12px 14px"}}>
-      {msg && <div style={{marginBottom:12,background:msg.error?"rgba(239,83,80,.1)":"rgba(102,187,106,.1)",border:"1px solid "+(msg.error?"rgba(239,83,80,.3)":"rgba(102,187,106,.25)"),borderRadius:9,padding:"8px 12px",fontSize:fs.small,color:msg.error?"#EF5350":"#66BB6A"}}>{msg.text}</div>}
-      <div style={{display:"grid",gridTemplateColumns:isDesktop?"1fr minmax(300px,380px)":"1fr",gap:isDesktop?24:16,alignItems:"start",paddingBottom:16}}>
-        {details}
-        {ownerCard}
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:compact ? 10 : 16,padding:compact ? "12px 16px" : "16px 24px",borderBottom:"1px solid rgba(255,255,255,.06)",flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:compact ? 200 : 0}}>
+          <div style={{fontSize:compact ? 18 : 20,fontWeight:700,color:"#fff"}}>Organization settings</div>
+          <div style={{fontSize:13,color:"rgba(255,255,255,.45)",marginTop:2}}>{isOwner ? (dirty ? "You have unsaved changes." : "Changes apply to everyone in " + (org.name || "the organization") + ".") : "Only the owner can change these settings."}</div>
+        </div>
+        {isOwner && (
+          <>
+            <button onClick={function(){ setForm(toForm(org)); }} disabled={!dirty || busy} style={Object.assign({}, ghostBtn(), {padding:"10px 20px",fontSize:14,minHeight:compact ? 44 : undefined})}>Discard</button>
+            <button onClick={save} disabled={!dirty || busy || badAccent} style={Object.assign({}, solidBtn(SESS_COLOR), {padding:"10px 26px",fontSize:14,minHeight:compact ? 44 : undefined})}>{busy ? "Saving…" : "Save changes"}</button>
+          </>
+        )}
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:compact ? "16px" : "20px 24px"}}>
+        {msgBox}
+        <div style={{display:"grid",gridTemplateColumns:wide3 ? "minmax(0,1fr) minmax(0,1.1fr) minmax(300px,360px)" : stacked ? "minmax(0,1fr)" : "minmax(0,1.4fr) minmax(280px,1fr)",gap:compact ? 16 : 24,alignItems:"start",paddingBottom:16}}>
+          {wide3 ? detailsCard : <div style={{display:"flex",flexDirection:"column",gap:24}}>{detailsCard}{brandingCard}</div>}
+          {wide3 && brandingCard}
+          <div style={{display:"flex",flexDirection:"column",gap:24}}>{ownerCard}{glanceCard}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN SIDE PANELS (desktop) ──────────────────────────────────────────────
+// Fill the space beside the Users / Teams editors with live data about the selection.
+function sessStats(list) {
+  var live = list.filter(function(x){ return (x.mode || "live") === "live"; });
+  var sold = live.filter(function(x){ return x.sold || x.outcome === "sold"; }).length;
+  var durs = list.filter(function(x){ return x.endTs && x.startTs; }).map(function(x){ return x.endTs - x.startTs; });
+  var avg = durs.length ? durs.reduce(function(a, b){ return a + b; }, 0) / durs.length : 0;
+  var last = list.reduce(function(m, x){ return Math.max(m, x.startTs || 0); }, 0);
+  return { total:list.length, live:live.length, practice:list.length - live.length, sold:sold,
+    rate: live.length ? Math.round(sold / live.length * 100) : null, avgMs:avg, last:last };
+}
+function fmtDurShort(ms) {
+  if (!ms) return "—";
+  var sec = Math.round(ms / 1000);
+  return sec < 60 ? sec + "s" : Math.floor(sec / 60) + "m " + (sec % 60 ? (sec % 60) + "s" : "");
+}
+var SIDE_CARD = { background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.08)", borderRadius:14, padding:"16px 18px" };
+function SideTitle({ children, right }) {
+  return (
+    <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:12}}>
+      <div style={{fontSize:15,fontWeight:700,color:"#fff"}}>{children}</div>
+      {right && <div style={{fontSize:12,color:"rgba(255,255,255,.4)"}}>{right}</div>}
+    </div>
+  );
+}
+function StatTiles({ items }) {
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(0,1fr))",gap:10}}>
+      {items.map(function(it) {
+        return (
+          <div key={it[0]} style={{background:"rgba(0,0,0,.2)",borderRadius:10,padding:"10px 12px",minWidth:0}}>
+            <div style={{fontSize:22,fontWeight:800,color:it[2] || "#fff",lineHeight:1.1,fontVariantNumeric:"tabular-nums"}}>{it[1]}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,.45)",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{it[0]}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function outcomeChip(x) {
+  var o = (x.mode || "live") === "practice" ? ["Practice","#00B4FF"] : (x.sold || x.outcome === "sold") ? ["Sold","#66BB6A"]
+    : x.outcome === "booked" ? ["Booked","#FFD54F"] : x.outcome === "not_contacted" ? ["No contact","rgba(255,255,255,.55)"]
+    : x.outcome === "abandoned" ? ["Abandoned","#EF5350"] : ["Live","rgba(255,255,255,.7)"];
+  return <span style={{fontSize:11,fontWeight:700,color:o[1],border:"1px solid "+(o[1][0]==="#"?o[1]+"55":"rgba(255,255,255,.2)"),borderRadius:99,padding:"2px 8px",flexShrink:0}}>{o[0]}</span>;
+}
+
+// Selected user's call activity + account facts
+function UserActivity({ user, teams }) {
+  var [list, setList] = useState(null);
+  useEffect(function() {
+    var cancelled = false; setList(null);
+    apiGet("/sessions?scope=user:" + encodeURIComponent(user.id))
+      .then(function(d){ if (!cancelled) setList(Array.isArray(d) ? d : []); })
+      .catch(function(){ if (!cancelled) setList([]); });
+    return function(){ cancelled = true; };
+  }, [user.id]);
+  var st = list ? sessStats(list) : null;
+  var recent = list ? list.slice().sort(function(a, b){ return b.startTs - a.startTs; }).slice(0, 6) : [];
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,minWidth:0}}>
+      <div style={SIDE_CARD}>
+        <SideTitle right={st && st.last ? "Last call " + fmtShortDate(st.last) : null}>Call activity</SideTitle>
+        {!st ? <div style={{fontSize:13,color:"rgba(255,255,255,.4)"}}>Loading…</div> : (
+          <StatTiles items={[
+            ["Sessions", st.total], ["Live calls", st.live], ["Practice", st.practice, "#00B4FF"],
+            ["Sold", st.sold, "#66BB6A"], ["Close rate", st.rate === null ? "—" : st.rate + "%", SESS_COLOR], ["Avg call", fmtDurShort(st.avgMs), "#FFD54F"],
+          ]}/>
+        )}
+      </div>
+      <div style={SIDE_CARD}>
+        <SideTitle right={list ? list.length + " total" : null}>Recent calls</SideTitle>
+        {list && recent.length === 0 && <div style={{fontSize:13,color:"rgba(255,255,255,.4)"}}>No sessions yet.</div>}
+        {recent.map(function(x, i) {
+          return (
+            <div key={x.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:i ? "1px solid rgba(255,255,255,.06)" : "none"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{x.name}</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginTop:1}}>{x.deckName} · {fmtShortDate(x.startTs)}{x.endTs ? " · " + fmtDurShort(x.endTs - x.startTs) : ""}</div>
+              </div>
+              {outcomeChip(x)}
+            </div>
+          );
+        })}
+      </div>
+      <div style={SIDE_CARD}>
+        <SideTitle>Account</SideTitle>
+        {[["Email", user.email], ["Phone", user.phone || "—"], ["Teams", teams.length ? teams.map(function(t){ return t.name; }).join(", ") : "—"],
+          ["Joined", user.createdAt ? fmtShortDate(user.createdAt) : "—"], ["Last login", user.lastLoginAt ? fmtShortDate(user.lastLoginAt) : "Never"]].map(function(r) {
+          return (
+            <div key={r[0]} style={{display:"flex",justifyContent:"space-between",gap:12,fontSize:13,padding:"5px 0"}}>
+              <span style={{color:"rgba(255,255,255,.45)"}}>{r[0]}</span>
+              <span style={{color:"rgba(255,255,255,.85)",textAlign:"right",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}}>{r[1]}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Selected team's results + per-member roster
+function TeamOverview({ team, orgUsers }) {
+  var [list, setList] = useState(null);
+  useEffect(function() {
+    var cancelled = false; setList(null);
+    apiGet("/sessions?scope=team:" + encodeURIComponent(team.id))
+      .then(function(d){ if (!cancelled) setList(Array.isArray(d) ? d : []); })
+      .catch(function(){ if (!cancelled) setList([]); });
+    return function(){ cancelled = true; };
+  }, [team.id]);
+  var st = list ? sessStats(list) : null;
+  var members = (team.memberIds || []).map(function(id){ return (orgUsers || []).find(function(u){ return u.id === id; }); }).filter(Boolean);
+  var rows = members.map(function(u) {
+    var ms = sessStats((list || []).filter(function(x){ return x.userId === u.id; }));
+    return { u:u, st:ms };
+  }).sort(function(a, b){ return (b.st.rate === null ? -1 : b.st.rate) - (a.st.rate === null ? -1 : a.st.rate) || b.st.total - a.st.total; });
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,minWidth:0}}>
+      <div style={SIDE_CARD}>
+        <SideTitle right={members.length + " member" + (members.length !== 1 ? "s" : "")}>Team results</SideTitle>
+        {!st ? <div style={{fontSize:13,color:"rgba(255,255,255,.4)"}}>Loading…</div> : (
+          <StatTiles items={[
+            ["Sessions", st.total], ["Live calls", st.live], ["Sold", st.sold, "#66BB6A"],
+            ["Close rate", st.rate === null ? "—" : st.rate + "%", SESS_COLOR], ["Avg call", fmtDurShort(st.avgMs), "#FFD54F"], ["Last call", st.last ? fmtShortDate(st.last) : "—"],
+          ]}/>
+        )}
+      </div>
+      <div style={SIDE_CARD}>
+        <SideTitle right="by close rate">Roster</SideTitle>
+        {members.length === 0 && <div style={{fontSize:13,color:"rgba(255,255,255,.4)"}}>No members yet.</div>}
+        {members.length > 0 && (
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 70px 60px 70px",gap:8,fontSize:12,color:"rgba(255,255,255,.4)",paddingBottom:6,borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+            <span>Member</span><span style={{textAlign:"right"}}>Sessions</span><span style={{textAlign:"right"}}>Sold</span><span style={{textAlign:"right"}}>Close</span>
+          </div>
+        )}
+        {rows.map(function(r) {
+          var m = roleMeta(r.u.role);
+          var isAdm = (team.adminIds || []).indexOf(r.u.id) !== -1;
+          return (
+            <div key={r.u.id} style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 70px 60px 70px",gap:8,alignItems:"center",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,.05)",fontSize:14}}>
+              <span style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                <span style={{width:28,height:28,borderRadius:"50%",background:m.bg,border:"1px solid "+m.border,color:m.color,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{(r.u.displayName || "?")[0].toUpperCase()}</span>
+                <span style={{color:"#fff",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.u.displayName}</span>
+                {isAdm && <span style={{fontSize:10,fontWeight:700,color:SESS_COLOR,border:"1px solid "+accentA(.35),borderRadius:99,padding:"1px 6px",flexShrink:0}}>LEAD</span>}
+              </span>
+              <span style={{textAlign:"right",color:"rgba(255,255,255,.8)",fontVariantNumeric:"tabular-nums"}}>{list ? r.st.total : "…"}</span>
+              <span style={{textAlign:"right",color:"#66BB6A",fontVariantNumeric:"tabular-nums"}}>{list ? r.st.sold : "…"}</span>
+              <span style={{textAlign:"right",color:"rgba(255,255,255,.8)",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{list ? (r.st.rate === null ? "—" : r.st.rate + "%") : "…"}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Nothing selected on Users: an org roster snapshot instead of an empty pane
+function RosterOverview({ users, teams, onOpen }) {
+  var counts = { owner:0, admin:0, user:0 };
+  users.forEach(function(u){ counts[u.role] = (counts[u.role] || 0) + 1; });
+  var recent = users.slice().sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); }).slice(0, 6);
+  var weekAgo = Date.now() - 14 * 24 * 3600 * 1000;
+  var idle = users.filter(function(u){ return !u.lastLoginAt || u.lastLoginAt < weekAgo; }).slice(0, 6);
+  function row(u, meta) {
+    var m = roleMeta(u.role);
+    return (
+      <button key={u.id} onClick={function(){ onOpen(u); }}
+        style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:"1px solid rgba(255,255,255,.06)",padding:"8px 0",cursor:"pointer",fontFamily:"inherit"}}>
+        <span style={{width:28,height:28,borderRadius:"50%",background:m.bg,border:"1px solid "+m.border,color:m.color,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{(u.displayName || "?")[0].toUpperCase()}</span>
+        <span style={{flex:1,minWidth:0,fontSize:14,color:"#fff",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</span>
+        <span style={{fontSize:12,color:"rgba(255,255,255,.45)",flexShrink:0}}>{meta}</span>
+      </button>
+    );
+  }
+  return (
+    <div style={{flex:1,overflowY:"auto",padding:"24px 28px"}}>
+      <div style={{fontSize:20,fontWeight:700,color:"#fff",marginBottom:4}}>People</div>
+      <div style={{fontSize:14,color:"rgba(255,255,255,.45)",marginBottom:18}}>Select someone on the left to edit them, or add a new user.</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:12,marginBottom:16}}>
+        {[["Members", users.length, "#fff"], ["Owner", counts.owner, roleMeta("owner").color], ["Admins", counts.admin, SESS_COLOR], ["Users", counts.user, "#00B4FF"], ["Teams", teams.length, "#FFD54F"]].map(function(k) {
+          return (
+            <div key={k[0]} style={SIDE_CARD}>
+              <div style={{fontSize:28,fontWeight:800,color:k[2],lineHeight:1.1}}>{k[1]}</div>
+              <div style={{fontSize:13,color:"rgba(255,255,255,.5)",marginTop:4}}>{k[0]}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(300px, 1fr))",gap:16,alignItems:"start"}}>
+        <div style={SIDE_CARD}>
+          <SideTitle>Recently joined</SideTitle>
+          {recent.map(function(u){ return row(u, u.createdAt ? fmtShortDate(u.createdAt) : ""); })}
+        </div>
+        <div style={SIDE_CARD}>
+          <SideTitle right="no login in 14 days">Inactive</SideTitle>
+          {idle.length === 0 && <div style={{fontSize:13,color:"#66BB6A"}}>✓ Everyone has signed in recently.</div>}
+          {idle.map(function(u){ return row(u, u.lastLoginAt ? "Last " + fmtShortDate(u.lastLoginAt) : "Never signed in"); })}
+        </div>
       </div>
     </div>
   );
@@ -1236,6 +1598,8 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
 
   if (D) {
     var listPane = null, detailPane = null;
+    // Side-by-side editor + data columns need roughly 1100px of detail pane
+    var wideDetail = !compact && window.innerWidth >= 1400;
     if (sub === "users") {
       listPane = (
         <div>
@@ -1266,7 +1630,9 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       );
       detailPane = editUser ? (
         <div style={{flex:1,overflowY:"auto",padding:compact?"16px 18px":"24px 28px"}}>
-          <div style={{maxWidth:620}}>
+          {/* Editor left, the person's activity right (single column on narrow panes) */}
+          <div style={{display:"grid",gridTemplateColumns:wideDetail ? "minmax(380px,1.05fr) minmax(320px,1fr)" : "minmax(0,1fr)",gap:24,alignItems:"start"}}>
+          <div style={{minWidth:0}}>
             <div style={{fontSize:compact?18:20,fontWeight:700,color:"#fff",marginBottom:4}}>{editUser==="new" ? "New User" : editUser.displayName}</div>
             {editUser !== "new" && (
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:18}}>
@@ -1278,13 +1644,17 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
             {editUser === "new" && <div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:18}}>Or generate a share code so they can sign up themselves.</div>}
             {renderUserForm()}
           </div>
+          {editUser !== "new" ? <UserActivity user={editUser} teams={teamsOf(editUser)}/> : (
+            <div style={SIDE_CARD}>
+              <SideTitle>Inviting lots of people?</SideTitle>
+              <div style={{fontSize:14,color:"rgba(255,255,255,.6)",lineHeight:1.6,marginBottom:12}}>Generate a share code instead — employees sign up themselves with their own password and join as users.</div>
+              <button onClick={function(){ setSub("codes"); setEditUser(null); }} style={ghostSm({fontSize:13,color:"#fff",padding:"8px 14px"})}>🔑 Go to Share Codes</button>
+            </div>
+          )}
+          </div>
         </div>
       ) : (
-        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10,color:"rgba(255,255,255,.25)"}}>
-          <span style={{fontSize:40}}>👥</span>
-          <span style={{fontSize:15}}>Select a user to view or edit</span>
-          <span style={{fontSize:13,color:"rgba(255,255,255,.2)"}}>{sortedUsers.length} member{sortedUsers.length!==1?"s":""} · {admins.length} with admin access</span>
-        </div>
+        <RosterOverview users={sortedUsers} teams={orgTeams || []} onOpen={openUser}/>
       );
     } else if (sub === "teams") {
       listPane = (
@@ -1312,9 +1682,12 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       );
       detailPane = editTeam ? (
         <div style={{flex:1,overflowY:"auto",padding:compact?"16px 18px":"24px 28px"}}>
-          <div style={{maxWidth:620}}>
-            <div style={{fontSize:compact?18:20,fontWeight:700,color:"#fff",marginBottom:18}}>{editTeam==="new"?"New Team":editTeam.name}</div>
-            {renderTeamForm()}
+          <div style={{display:"grid",gridTemplateColumns:wideDetail && editTeam !== "new" ? "minmax(380px,1.05fr) minmax(320px,1fr)" : "minmax(0,1fr)",gap:24,alignItems:"start"}}>
+            <div style={{minWidth:0,maxWidth:editTeam === "new" ? 720 : undefined}}>
+              <div style={{fontSize:compact?18:20,fontWeight:700,color:"#fff",marginBottom:18}}>{editTeam==="new"?"New Team":editTeam.name}</div>
+              {renderTeamForm()}
+            </div>
+            {editTeam !== "new" && <TeamOverview team={editTeam} orgUsers={orgUsers}/>}
           </div>
         </div>
       ) : (
@@ -1345,8 +1718,8 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
           )}
         </div>
         {msgBanner}
-        {sub === "codes" && <ShareCodesPanel isDesktop={true}/>}
-        {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={true} onOrgUpdated={onOrgUpdated}/>}
+        {sub === "codes" && <ShareCodesPanel isDesktop={true} orgUsers={orgUsers} compact={compact} stacked={stackedA}/>}
+        {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams} isDesktop={true} onOrgUpdated={onOrgUpdated} compact={compact} stacked={stackedA}/>}
         {(sub === "users" || sub === "teams") && (
           <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
             {showListA && (

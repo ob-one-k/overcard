@@ -168,7 +168,7 @@ function EmptyNote({ icon, title, body, action }) {
 
 // ─── HOME DESKTOP ─────────────────────────────────────────────────────────────
 // Full-width dashboard.
-//   Header:   greeting + Me / team switcher
+//   Header:   Me / All / team scope switcher
 //   KPI strip: sessions, close rate, on-path, avg time, objections handled
 //   Body (3 full-height panels, each scrolls on its own):
 //     Me tab:   Recent sessions | Decks (quick launch) | Insights (funnel, objections, ranking, top close)
@@ -307,9 +307,6 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
   var activeTeam = isTeamTab && activeSubTab !== "all" ? myTeams.find(function(t){ return t.id === activeSubTab; }) : null;
   var scopeLabel = activeSubTab === "all" ? (isAdmin ? "Whole organization" : "All your teams") : activeTeam ? activeTeam.name : "";
 
-  var hr = new Date().getHours();
-  var greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
-  var firstName = (authUser.displayName || "").split(" ")[0] || authUser.displayName;
   var personName = person ? (person.displayName || person.email) : "";
 
   // Recency-sorted decks for quick-launch section
@@ -571,15 +568,8 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
 
-      {/* ── Header: greeting + scope switcher ── */}
+      {/* ── Header: scope switcher ── */}
       <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:compact?12:20,padding:compact?"14px "+padX+"px 0":"18px 24px 0",flexWrap:"wrap"}}>
-        <div style={{flex:1,minWidth:compact?220:260}}>
-          <div style={{fontSize:compact?21:24,fontWeight:700,color:"#fff",fontFamily:"'Lora',Georgia,serif"}}>{greeting}, {firstName}</div>
-          <div style={{fontSize:compact?13:14,color:MUTED,marginTop:4}}>
-            {isTeamTab ? (activeSubTab === "all" ? "Overview · " : "Team view · ") + scopeLabel
-              : viewingSelf ? "Here's how your calls are going." : "Viewing " + personName + "'s calls"}
-          </div>
-        </div>
         {(myTeams.length > 0 || isAdmin) && (
           <div role="tablist" aria-label="Dashboard scope" style={{display:"flex",alignItems:"center",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderRadius:12,padding:4,gap:2,flexWrap:"wrap"}}>
             {isAdmin && (
