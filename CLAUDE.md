@@ -71,6 +71,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", "deckColor", "deckIcon", mode, status, outcome, sold, "soldCardId", "soldCardTitle", events (JSONB), notes (JSONB), metrics (JSONB) |
 | `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
 | `session_shares` | Session sharing between users | id, "sessionId", "fromUserId", "toUserId", context |
+| `notifications` | In-app notifications (cascade with user/session) | id, "userId", type, "sessionId", "actorName", text, "createdAt", "readAt" |
 | `session_audio` | Session recordings (BYTEA, one per session; cascades on session delete) | "sessionId" PK, "orgId", "mimeType", "durationMs", "sizeBytes", data |
 
 **Column naming:** All camelCase column names are double-quoted in every SQL string throughout db.js to preserve case in PostgreSQL (e.g., `"orgId"`, `"userId"`, `"startTs"`).
@@ -134,6 +135,9 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/Cards.jsx` | `CardsTab`, `ObjStackEditor`, `ObjectionsTab` |
 | `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` (Users / Teams / Share Codes / Organization sub-tabs) |
 | `src/components/CardStage.jsx` | `CardStage`, `PaneRail` |
+| `src/components/StudyCard.jsx` | `StudyPopout` (Play tab study popout for intended-path steps and objection stacks; horizontal on desktop, vertical on tablet/phone), `intendedOutline`, `stackOrder` |
+| `src/components/ReferenceSession.jsx` | `ReferencePicker` (live-session start form), `ReferencePanel` (in-call reference: rail on desktop/tablet, strip on phone) |
+| `src/components/NotificationBell.jsx` | `NotificationBell` |
 | `src/lib/cardGraph.js` | `getParents`, `orderParents`, `getChildren` |
 | `src/components/Signup.jsx` | `SignupScreen` (join with share code, or create organization with master code) |
 | `src/components/AudioPlayer.jsx` | `useSessionAudio`, `AudioMiniBar`, `AudioPlayback`, `UploadNotice`, `wallClockToAudioMs`, `segColor`, `msToMmss` |
@@ -198,6 +202,23 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 |--------|------|------|-------------|
 | PUT | `/api/sessions/:id/audio?durationMs=` | Owner | Raw audio body (`audio/*`), max 60 MB → 413. Replaces any existing recording |
 | GET | `/api/sessions/:id/audio` | Owner, org admin, share recipient | Streams the recording; honours `Range` (206/416). `X-Audio-Duration-Ms` header |
+| GET | `/api/sessions/:id/audio/meta` | Same | `{ mimeType, durationMs, sizeBytes, chapters }` — chapters = the per-card segment markers stamped onto the recording at upload |
+
+### Reference Sessions
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/sessions/reference-options?deckId=&q=` | Any org member | Up to 50 completed org sessions (name, rep, outcome, date) to pick as a live-call reference |
+| GET | `/api/sessions/:id/reference` | Any org member | Outline of a completed session: visits (card, time), notes, outcome — no feedback/shares/audio |
+
+Sessions store the chosen reference in `"referenceSessionId"`.
+
+### Notifications
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/notifications` | Yes | `{ items (latest 30, with sessionName/deckId), unreadCount }` |
+| POST | `/api/notifications/read` | Yes | `{ ids }` or `{ sessionId }` marks those read; empty body marks all |
+
+Created when someone else leaves feedback on your session (`type: "feedback"`). Client store: `src/lib/notifications.js` (polls every 30s); UI: `NotificationBell` in the desktop shell and mobile header; opening your own session's review marks its notifications read.
 
 ### Admin (requires admin role)
 | Method | Path | Description |
@@ -244,6 +265,8 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 ## Key Patterns
 
 - **Startup resilience:** `App` checks `/auth/me` with a 75s timeout (shows "Waking up the server" after 5s). Only 401/403 route to login; network errors/timeouts/5xx show a "Can't reach the server" retry screen. Deck load failures show a retry screen too.
+- **Org branding & theme:** orgs have `logo` (raster `data:` URL ≤ ~300 KB, client-resized to 256px by `BrandingFields`; SVG rejected server-side) and `"accentColor"` (#RRGGBB), edited by the owner (Admin → Organization) or at org creation. `/auth/me` returns `orgName`, `orgLogo`, `orgAccent`. `App` calls `setAccentColor(authUser.orgAccent)` before rendering; `SESS_COLOR` in `constants.js` is a live binding that becomes the org accent, and `accentA(alpha)` replaces hard-coded `rgba(168,255,62,…)`. Never hard-code the lime accent again — use `SESS_COLOR` / `accentA()`; `solidBtn` picks black/white text by luminance (`inkOn`). Semantic colours (card types, Live/Practice `STYPE`, outcomes) are intentionally not themed. `OrgMark` shows the org logo (or initial) wherever the OverCard "O" used to be inside the app.
+- **Sign-in:** `LoginScreen` reads `useDesktop()` directly (it renders outside `DesktopCtx`): desktop and wide tablets get a split brand panel + large form, portrait tablets a larger single column, phones the original layout.
 - **Recording:** `src/lib/useRecorder.js` is the only recorder (used by `PlayMobile` and `PlayDesktop`): device list with permission + `devicechange`, optional call audio (`getDisplayMedia` mixed with the mic via Web Audio, desktop only), level meter, 3s test, mono 32 kbps, mime fallback webm→mp4. Navigators close the current card's visit on EVERY card change (forward, back, jump, exit objection, restart) and once more on finish, so segments tile the recording. `finishSession` → save session JSON → `uploadSessionAudio()` (`src/lib/audioUpload.js`: IndexedDB backup first, upload with retries, local copy deleted on success, "Retry upload" on failure). UI: `src/components/RecordingSetup.jsx` (`RecordingSetup`, `RecIndicator`).
 - **Playback:** `useSessionAudio(session)` in `AudioPlayer.jsx` owns one `<audio>` per `SessionReview`, loading server → device fallback. Modes: full recording, or `playClip(seg)` which stops at the segment end (rAF-precise). Views: `AudioMiniBar` (every tab), `AudioPlayback` (Playback tab: segment timeline, transport, list in order / by card), Path-tab ▶ per visit, Notes "▶ hear this" (via `wallClockToAudioMs`). WebM without a duration header is fixed by seeking far ahead once on load.
 - **Empty org:** A new org has no decks. `MainApp` shows admins/owners a "Create your first deck" form (and everyone a Sign out button) instead of the main shell, since most tabs require a deck.

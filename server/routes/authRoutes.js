@@ -69,6 +69,8 @@ async function buildUserResponse(user) {
     lastName:    user.lastName  || null,
     phone:       user.phone     || null,
     orgName:     org ? org.name : null,
+    orgLogo:     org ? org.logo || null : null,
+    orgAccent:   org ? org.accentColor || null : null,
     role:        user.role,
     orgId:       user.orgId,
     teamId:      user.teamId,

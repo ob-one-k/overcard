@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta } from "../lib/constants";
+import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker } from "./ui";
 import { RichPromptDisplay } from "./Tooltip";
-import { useSessionAudio, AudioMiniBar, AudioPlayback, UploadNotice, wallClockToAudioMs, segColor } from "./AudioPlayer";
+import { markSessionNotificationsRead } from "../lib/notifications";
+import { useSessionAudio, AudioMiniBar, AudioPlayback, UploadNotice, CardClipPlayer, wallClockToAudioMs, segColor } from "./AudioPlayer";
 import { deleteAudioBlob } from "../lib/audioStore";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
@@ -120,7 +121,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {selectedUsers.map(function(u){
                 return (
-                  <span key={u.id} style={{display:"inline-flex",alignItems:"center",gap:4,background:isAdminRole(u.role)?"rgba(168,255,62,.12)":"rgba(0,180,255,.1)",border:"1px solid "+(isAdminRole(u.role)?"rgba(168,255,62,.3)":"rgba(0,180,255,.25)"),borderRadius:99,padding:"3px 8px",fontSize:11,color:isAdminRole(u.role)?SESS_COLOR:"#00B4FF"}}>
+                  <span key={u.id} style={{display:"inline-flex",alignItems:"center",gap:4,background:isAdminRole(u.role)?accentA(.12):"rgba(0,180,255,.1)",border:"1px solid "+(isAdminRole(u.role)?accentA(.3):"rgba(0,180,255,.25)"),borderRadius:99,padding:"3px 8px",fontSize:11,color:isAdminRole(u.role)?SESS_COLOR:"#00B4FF"}}>
                     {u.displayName}
                     <button onClick={function(){toggleUser(u.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"inherit",opacity:.6,fontSize:12,padding:"0 0 0 2px",fontFamily:"inherit",lineHeight:1}}>×</button>
                   </span>
@@ -139,7 +140,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
                 return (
                   <button key={u.id} onClick={function(){toggleUser(u.id);}}
                     style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",padding:"9px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                    <div style={{width:26,height:26,borderRadius:"50%",background:isAdminRole(u.role)?"rgba(168,255,62,.15)":"rgba(0,180,255,.12)",border:"1px solid "+(isAdminRole(u.role)?"rgba(168,255,62,.3)":"rgba(0,180,255,.2)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:isAdminRole(u.role)?SESS_COLOR:"#00B4FF",flexShrink:0}}>
+                    <div style={{width:26,height:26,borderRadius:"50%",background:isAdminRole(u.role)?accentA(.15):"rgba(0,180,255,.12)",border:"1px solid "+(isAdminRole(u.role)?accentA(.3):"rgba(0,180,255,.2)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:isAdminRole(u.role)?SESS_COLOR:"#00B4FF",flexShrink:0}}>
                       {(u.displayName || "?")[0].toUpperCase()}
                     </div>
                     <div style={{flex:1,minWidth:0}}>
@@ -234,6 +235,11 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
     return n <= 9 ? n + 3 : n + 2;
   }
   var touchMin = desktop && desktop.isTouchPrimary ? 44 : undefined;
+  // Opening your own session's review clears its feedback notifications
+  useEffect(function() {
+    if (session && authUser && session.userId === authUser.id) markSessionNotificationsRead(session.id);
+  }, [session.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // One audio player shared by every tab (mini-bar, Playback, Path clips, Notes "hear this")
   var audio = useSessionAudio(session);
   var audioSize = desktop && desktop.isDesktop ? "lg" : undefined;
@@ -268,6 +274,13 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   var intPct = v.length ? Math.round(iv.length/v.length*100) : 0;
   var reachedClose = pv.some(function(x){return x.cardType==="close";});
   var lastPitch = pv[pv.length-1];
+  // One outcome line for every session type (practice used to read "Not sold")
+  var outcomeLine = session.sold || session.outcome === "sold" ? { text:"✓ Sold", color:"#66BB6A" }
+    : session.outcome === "booked"        ? { text:"📅 Booked", color:"#FFD54F" }
+    : session.outcome === "not_contacted" ? { text:"📵 No contact", color:"rgba(255,255,255,.55)" }
+    : session.outcome === "abandoned"     ? { text:"✗ Abandoned", color:"#EF5350" }
+    : (session.mode || "live") === "practice" ? { text:"🎯 Practice run completed", color:"#00B4FF" }
+    : { text:"✗ Not sold", color:"rgba(255,255,255,.45)" };
 
   var tbc = {};
   v.forEach(function(x) {
@@ -405,14 +418,16 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
         {/* OVERVIEW */}
         {tab==="overview" && (
           <div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+            {/* Same sections, same order for every session (live or practice) — empty ones show a placeholder */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4, minmax(0,1fr))",gap:8,marginBottom:12}}>
               <StatBox value={d?fmtSec(d):"—"} label="Duration" color="rgba(255,255,255,.65)"/>
               <StatBox value={pv.length} label="Cards visited" color={SESS_COLOR}/>
               <StatBox value={ov.length} label="Obj visits" color={OBJ_COLOR}/>
+              <StatBox value={n.length} label="Notes" color="#00B4FF"/>
             </div>
             <div style={{background:session.sold?"rgba(102,187,106,.08)":"rgba(255,255,255,.05)",border:"1px solid "+(session.sold?"rgba(102,187,106,.22)":"rgba(255,255,255,.07)"),borderRadius:12,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:fz(13),fontWeight:700,color:session.sold?"#66BB6A":"rgba(255,255,255,.45)",marginBottom:2}}>{session.sold?"✓ Sold":"✗ Not sold"}</div>
+                <div style={{fontSize:fz(13),fontWeight:700,color:outcomeLine.color,marginBottom:2}}>{outcomeLine.text}</div>
                 {session.sold && session.soldCardTitle && <div style={{fontSize:fz(10),color:"rgba(255,255,255,.32)"}}>Closed on: {session.soldCardTitle}</div>}
                 {!session.sold && lastPitch && <div style={{fontSize:fz(10),color:"rgba(255,255,255,.28)"}}>Last card: {lastPitch.cardTitle}</div>}
               </div>
@@ -423,10 +438,11 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
               <div style={{height:5,background:"rgba(255,255,255,.07)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",background:"#66BB6A",borderRadius:99,width:intPct+"%",transition:"width .4s"}}/></div>
               <div style={{fontSize:fz(9),color:"rgba(255,255,255,.28)",marginTop:5}}>{iv.length} of {v.length} card visits on intended path</div>
             </div>
-            {Object.keys(objStacks).length > 0 && (
+            {(
               <div style={{marginBottom:12}}>
                 <SectionHdr>Objections hit</SectionHdr>
                 <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"11px 13px"}}>
+                  {Object.keys(objStacks).length === 0 && <div style={{fontSize:fz(12),color:"rgba(255,255,255,.35)"}}>No objections raised</div>}
                   {Object.entries(objStacks).map(function(entry, i, arr) {
                     return <div key={entry[0]} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:i<arr.length-1?8:0,marginBottom:i<arr.length-1?8:0,borderBottom:i<arr.length-1?"1px solid rgba(255,255,255,.05)":"none"}}>
                       <span style={{fontSize:fz(12),color:"rgba(255,255,255,.65)"}}>{entry[0]}</span>
@@ -436,10 +452,11 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 </div>
               </div>
             )}
-            {top3.length > 0 && (
+            {(
               <div style={{marginBottom:12}}>
                 <SectionHdr>Top cards by time</SectionHdr>
                 <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"12px 14px"}}>
+                  {top3.length === 0 && <div style={{fontSize:fz(12),color:"rgba(255,255,255,.35)"}}>No card timings recorded</div>}
                   {top3.map(function(c, i) { var m=TM[c.type]||TM.pitch; var pct=Math.round(c.ms/maxMs*100); return (
                     <div key={c.title} style={{marginBottom:i<top3.length-1?10:0}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
@@ -452,9 +469,10 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 </div>
               </div>
             )}
-            {(topObj || topVisitedStack) && (
+            {(
               <div style={{background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.15)",borderRadius:12,padding:"12px 14px",marginBottom:12}}>
                 <SectionHdr style={{color:OBJ_COLOR,marginBottom:10}}>🛡️ Objection Highlights</SectionHdr>
+                {!topObj && !topVisitedStack && <div style={{fontSize:fz(12),color:"rgba(255,255,255,.35)"}}>No objection time recorded</div>}
                 {topObj && (
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:topVisitedStack?8:0}}>
                     <div>
@@ -483,13 +501,18 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                   <button onClick={function(){setTab("notes");}} style={ghostSm({fontSize:fz(10),padding:"3px 9px"})}>See all</button>
                 </div>
                 {n.slice(0,2).map(function(note, i) {
-                  return <div key={i} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.18)",borderRadius:11,padding:"10px 13px",marginBottom:7}}>
+                  return <div key={i} style={{background:accentA(.07),border:("1px solid "+accentA(.18)),borderRadius:11,padding:"10px 13px",marginBottom:7}}>
                     <div style={{fontSize:fz(10),fontWeight:700,color:SESS_COLOR,marginBottom:3}}>{note.cardTitle}</div>
                     <div style={{fontSize:fz(12),color:"rgba(255,255,255,.82)",lineHeight:1.5}}>{note.text}</div>
                   </div>;
                 })}
               </div>
-            ) : <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"12px 0",fontSize:fz(12)}}>No notes recorded</div>}
+            ) : (
+              <div style={{marginBottom:12}}>
+                <SectionHdr>Notes (0)</SectionHdr>
+                <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:11,padding:"10px 13px",fontSize:fz(12),color:"rgba(255,255,255,.35)"}}>No notes recorded</div>
+              </div>
+            )}
             {/* ── Shared with (owner/admin only) ── */}
             {(isOwner || isAdmin) && reviewShares !== null && reviewShares.length > 0 && (
               <div style={{marginTop:12}}>
@@ -581,22 +604,14 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                           <div style={{fontSize:fz(14),fontWeight:700,color:m.color}}>{m.icon}</div>
                           <div style={{fontSize:fz(8),color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>{m.label}</div>
                         </div>
-                        {(function() {
-                          var seg = segForVisit(x);
-                          if (!seg) return null;
-                          return (
-                            <>
-                              <button onClick={function(){ audio.playClip(seg); }}
-                                style={Object.assign({}, ghostSm({color:SESS_COLOR,borderColor:"rgba(168,255,62,.3)",fontSize:fz(11)}), {display:"flex",alignItems:"center",gap:5,padding:"5px 11px"})}>
-                                ▶ This card only
-                              </button>
-                              <button onClick={function(){ audio.playFrom(seg.startMs); }}
-                                style={Object.assign({}, ghostSm({fontSize:fz(11)}), {padding:"5px 11px"})}>
-                                Play call from here
-                              </button>
-                            </>
-                          );
-                        })()}
+                      </div>
+                      {/* Card audio: this visit first, then the card's other visits */}
+                      <div style={{marginBottom:10}}>
+                        <CardClipPlayer ctl={audio} size={audioSize} segs={(function() {
+                          var own = segForVisit(x);
+                          var all = audio.segments.filter(function(sg) { return sg.cardId === x.cardId && !!sg.isObjCard === !!x.isObjCard; });
+                          return own ? [own].concat(all.filter(function(sg) { return sg.segId !== own.segId; })) : all;
+                        })()}/>
                       </div>
                       {/* Flow: came from / led to */}
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
@@ -614,7 +629,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                         <div style={{marginBottom:8}}>
                           <div style={{fontSize:fz(8),color:SESS_COLOR,textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>📝 Notes ({cardNotes.length})</div>
                           {cardNotes.map(function(note, ni){
-                            return <div key={ni} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.15)",borderRadius:8,padding:"7px 9px",marginBottom:5,fontSize:fz(11),color:"rgba(255,255,255,.8)",lineHeight:1.5}}>{note.text}</div>;
+                            return <div key={ni} style={{background:accentA(.07),border:("1px solid "+accentA(.15)),borderRadius:8,padding:"7px 9px",marginBottom:5,fontSize:fz(11),color:"rgba(255,255,255,.8)",lineHeight:1.5}}>{note.text}</div>;
                           })}
                         </div>
                       )}
@@ -676,13 +691,13 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 <div style={{marginBottom: hasObjNotes ? 18 : 0}}>
                   {hasObjNotes && <div style={{fontSize:fz(9),fontWeight:700,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:1.1,marginBottom:8}}>Call Notes ({callNotes.length})</div>}
                   {callNotes.map(function(note, i) { return (
-                    <div key={i} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.18)",borderRadius:11,padding:"11px 13px",marginBottom:9}}>
+                    <div key={i} style={{background:accentA(.07),border:("1px solid "+accentA(.18)),borderRadius:11,padding:"11px 13px",marginBottom:9}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
                         <span style={{fontSize:fz(11),fontWeight:700,color:SESS_COLOR}}>{note.cardTitle}</span>
                         <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
                           {noteAudioMs(note) !== null && (
                             <button onClick={function(){ audio.playFrom(Math.max(0, noteAudioMs(note) - 3000)); }} title="Hear the moment this note was taken"
-                              style={{background:"none",border:"1px solid rgba(168,255,62,.3)",color:SESS_COLOR,borderRadius:99,fontSize:fz(9),padding:"1px 7px",cursor:"pointer",fontFamily:"inherit"}}>▶ hear this</button>
+                              style={{background:"none",border:("1px solid "+accentA(.3)),color:SESS_COLOR,borderRadius:99,fontSize:fz(9),padding:"1px 7px",cursor:"pointer",fontFamily:"inherit"}}>▶ hear this</button>
                           )}
                           <span style={{fontSize:fz(9),color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
                         </span>
@@ -709,7 +724,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                           <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
                           {noteAudioMs(note) !== null && (
                             <button onClick={function(){ audio.playFrom(Math.max(0, noteAudioMs(note) - 3000)); }} title="Hear the moment this note was taken"
-                              style={{background:"none",border:"1px solid rgba(168,255,62,.3)",color:SESS_COLOR,borderRadius:99,fontSize:fz(9),padding:"1px 7px",cursor:"pointer",fontFamily:"inherit"}}>▶ hear this</button>
+                              style={{background:"none",border:("1px solid "+accentA(.3)),color:SESS_COLOR,borderRadius:99,fontSize:fz(9),padding:"1px 7px",cursor:"pointer",fontFamily:"inherit"}}>▶ hear this</button>
                           )}
                           <span style={{fontSize:fz(9),color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
                         </span>
@@ -772,13 +787,13 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
               );
             })}
             {canWriteFeedback && (
-              <div style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.18)",borderRadius:12,padding:"12px 13px",marginBottom:12}}>
+              <div style={{background:accentA(.06),border:("1px solid "+accentA(.18)),borderRadius:12,padding:"12px 13px",marginBottom:12}}>
                 <div style={{fontSize:fz(11),fontWeight:700,color:SESS_COLOR,marginBottom:8}}>Add feedback</div>
                 {visitedCards.length > 0 && (
                   <div style={{marginBottom:8}}>
                     <div style={{fontSize:fz(9),color:"rgba(255,255,255,.3)",marginBottom:3,textTransform:"uppercase",letterSpacing:.6}}>Link to card (optional)</div>
                     <select value={fbCardId} onChange={function(e){setFbCardId(e.target.value);}}
-                      style={{width:"100%",background:"#081428",border:"1px solid rgba(168,255,62,.25)",borderRadius:8,padding:"7px 10px",color:"rgba(255,255,255,.7)",fontSize:fz(11),fontFamily:"inherit",outline:"none",appearance:"none"}}>
+                      style={{width:"100%",background:"#081428",border:("1px solid "+accentA(.25)),borderRadius:8,padding:"7px 10px",color:"rgba(255,255,255,.7)",fontSize:fz(11),fontFamily:"inherit",outline:"none",appearance:"none"}}>
                       <option value="">General feedback</option>
                       {visitedCards.map(function(c){
                         return <option key={c.id} value={c.id}>{c.title}</option>;
@@ -951,7 +966,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     ];
   } else if (fType === "live") {
     statBoxes = [
-      { value: filtLive.length, label: "Live sessions", color: "#A8FF3E" },
+      { value: filtLive.length, label: "Live sessions", color: SESS_COLOR },
       { value: filtCr + "%", label: "Close rate", color: "#66BB6A" },
       { value: filtLiveAvgDur ? fmtSec(filtLiveAvgDur) : "—", label: "Avg duration", color: "rgba(255,255,255,.65)" },
     ];
@@ -1028,7 +1043,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
           <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
             {(isOwner || isAdmin) && !s._shared && (
               <button onClick={function(e){e.stopPropagation();setShareTarget(s);}}
-                style={ghostSm({fontSize:10,padding:"4px 8px",color:"rgba(168,255,62,.7)",borderColor:"rgba(168,255,62,.2)"})}>Share</button>
+                style={ghostSm({fontSize:10,padding:"4px 8px",color:accentA(.7),borderColor:accentA(.2)})}>Share</button>
             )}
             {isOwner && (
               <button onClick={function(e){e.stopPropagation();deleteSession(s.id);}} style={ghostSm({color:"rgba(239,83,80,.5)",borderColor:"rgba(239,83,80,.2)",fontSize:10,padding:"4px 7px"})}>🗑</button>
@@ -1109,7 +1124,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
                 👥{sharedWithMe.length > 0 && <span style={{background:"rgba(0,180,255,.25)",borderRadius:99,padding:"0 5px",fontSize:9,minWidth:14,textAlign:"center"}}>{sharedWithMe.length}</span>}
               </button>
             )}
-            <button onClick={function(){setView("analytics");}} style={{background:"rgba(168,255,62,.1)",border:"1px solid rgba(168,255,62,.25)",borderRadius:10,color:SESS_COLOR,fontSize:11,fontWeight:700,padding:"6px 12px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>
+            <button onClick={function(){setView("analytics");}} style={{background:accentA(.1),border:("1px solid "+accentA(.25)),borderRadius:10,color:SESS_COLOR,fontSize:11,fontWeight:700,padding:"6px 12px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>
               📊 Analytics
             </button>
           </div>
@@ -1135,7 +1150,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
         {isAdmin && (
           <div style={{marginBottom:8}}>
             <select value={viewScope||"self"} onChange={function(e){ setViewScope(e.target.value); setSessions(null); }}
-              style={{width:"100%",background:"#081428",border:"1px solid rgba(168,255,62,.2)",borderRadius:10,padding:"8px 12px",color:SESS_COLOR,fontSize:11,fontFamily:"inherit",cursor:"pointer",outline:"none",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23A8FF3E'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}>
+              style={{width:"100%",background:"#081428",border:("1px solid "+accentA(.2)),borderRadius:10,padding:"8px 12px",color:SESS_COLOR,fontSize:11,fontFamily:"inherit",cursor:"pointer",outline:"none",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='"+SESS_COLOR.replace("#","%23")+"'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}>
               <option value="self">👤 My sessions</option>
               <option value="org">🌐 Entire org</option>
               {(orgTeams||[]).map(function(t){ return <option key={t.id} value={"team:"+t.id}>🏷️ {t.name}</option>; })}
@@ -1166,7 +1181,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
                     <button key={u.id}
                       onMouseDown={function(e){ e.preventDefault(); setUserSearch(u.displayName); setSuggestOpen(false); }}
                       style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                      <div style={{width:22,height:22,borderRadius:"50%",background:"rgba(168,255,62,.15)",border:"1px solid rgba(168,255,62,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
+                      <div style={{width:22,height:22,borderRadius:"50%",background:accentA(.15),border:("1px solid "+accentA(.3)),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
                         {(u.displayName || "?")[0].toUpperCase()}
                       </div>
                       <div>
@@ -1187,7 +1202,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
             style={{display:"flex",justifyContent:"space-between",alignItems:"center",width:"100%",background:"none",border:"none",padding:"8px 11px",cursor:"pointer",fontFamily:"inherit"}}>
             <div style={{display:"flex",alignItems:"center",gap:7}}>
               <span style={{fontSize:11,color:"rgba(255,255,255,.45)",fontWeight:600}}>📅 Date range</span>
-              {(fFrom||fTo) && <span style={{background:"rgba(168,255,62,.15)",border:"1px solid rgba(168,255,62,.25)",color:SESS_COLOR,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:99}}>active</span>}
+              {(fFrom||fTo) && <span style={{background:accentA(.15),border:("1px solid "+accentA(.25)),color:SESS_COLOR,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:99}}>active</span>}
             </div>
             <span style={{color:"rgba(255,255,255,.3)",fontSize:10}}>{filtersOpen?"▲":"▼"}</span>
           </button>
@@ -1218,7 +1233,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
             <div key={g.user.id} style={{marginBottom:isCollapsed?8:16}}>
               <button onClick={function(){ toggleCollapse(g.user.id); }}
                 style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:10,padding:"9px 12px",cursor:"pointer",fontFamily:"inherit",marginBottom:isCollapsed?0:8,textAlign:"left"}}>
-                <div style={{width:28,height:28,borderRadius:"50%",background:"rgba(168,255,62,.15)",border:"1px solid rgba(168,255,62,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:accentA(.15),border:("1px solid "+accentA(.3)),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
                   {(g.user.displayName || "?")[0].toUpperCase()}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
@@ -1226,7 +1241,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
                   <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginTop:1}}>
                     {g.user.email}
                     <span style={{marginLeft:6}}>{g.sessions.length} session{g.sessions.length!==1?"s":""}</span>
-                    {liveCt>0 && <span style={{marginLeft:6,color:"rgba(168,255,62,.6)"}}>{soldCt}/{liveCt} sold</span>}
+                    {liveCt>0 && <span style={{marginLeft:6,color:accentA(.6)}}>{soldCt}/{liveCt} sold</span>}
                     {pracCt>0 && <span style={{marginLeft:6,color:"rgba(0,180,255,.5)"}}>{pracCt} practice</span>}
                   </div>
                 </div>
@@ -1282,7 +1297,7 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
         <div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
             <StatBox value={cr+"%"} label="Close rate" color="#66BB6A"/>
-            <StatBox value={sold.length+"/"+live.length} label="Sold / Live" color="#A8FF3E"/>
+            <StatBox value={sold.length+"/"+live.length} label="Sold / Live" color={SESS_COLOR}/>
             <StatBox value={fmtSec(avgSec)||"—"} label="Avg duration" color={SESS_COLOR}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
@@ -1353,7 +1368,7 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
             style={{display:"flex",justifyContent:"space-between",alignItems:"center",width:"100%",background:"none",border:"none",padding:"10px 12px",cursor:"pointer",fontFamily:"inherit"}}>
             <div style={{display:"flex",alignItems:"center",gap:7}}>
               <span style={{fontSize:12,color:"rgba(255,255,255,.5)",fontWeight:700}}>Date filter</span>
-              {hasDateFilter && <span style={{background:"rgba(168,255,62,.18)",border:"1px solid rgba(168,255,62,.3)",color:SESS_COLOR,fontSize:9,fontWeight:700,padding:"1px 7px",borderRadius:99}}>active</span>}
+              {hasDateFilter && <span style={{background:accentA(.18),border:("1px solid "+accentA(.3)),color:SESS_COLOR,fontSize:9,fontWeight:700,padding:"1px 7px",borderRadius:99}}>active</span>}
             </div>
             <span style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{filtersOpen?"▲":"▼"}</span>
           </button>
@@ -1378,7 +1393,7 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
               <BarRow label="Contacted"       value={contacted}     denom={live.length}    color={SESS_COLOR}/>
               <BarRow label="Into discovery"  value={pastIntro}     denom={contacted}      color="#00B4FF"/>
               <BarRow label="Reached close"   value={reachedClose}  denom={pastIntro}      color="#66BB6A"/>
-              <BarRow label="Sold"            value={sold.length}   denom={reachedClose}   color="#A8FF3E"/>
+              <BarRow label="Sold"            value={sold.length}   denom={reachedClose}   color={SESS_COLOR}/>
             </div>
           </div>
         )}

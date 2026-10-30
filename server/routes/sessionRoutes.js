@@ -4,8 +4,9 @@ const {
   getSessions, getSessionById, upsertSession, deleteSession,
   getFeedback, createFeedback, updateFeedback, deleteFeedback, getFeedbackById,
   createShare, getSharesForSession, deleteShare, getShareRecord,
-  getOrgUsers, getUserTeams,
-  saveSessionAudio, getSessionAudioMeta, getSessionAudioRange,
+  getOrgUsers, getUserTeams, findUserById,
+  saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
+  createNotification,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
 
@@ -91,6 +92,41 @@ router.delete("/:id", async function(req, res, next) {
   } catch (err) { next(err); }
 });
 
+// ─── REFERENCE SESSIONS ───────────────────────────────────────────────────────
+// Any org member may browse completed sessions to use as a reference for a live call.
+// Only the call outline (path, timing, outcome, notes) is exposed — not feedback, shares or audio.
+
+// GET /api/sessions/reference-options?deckId=&q=
+router.get("/reference-options", async function(req, res, next) {
+  try {
+    res.json(await getReferenceOptions(req.user.orgId, req.query.deckId || null, req.query.q || null));
+  } catch (err) { next(err); }
+});
+
+// GET /api/sessions/:id/reference
+router.get("/:id/reference", async function(req, res, next) {
+  try {
+    const s = await getSessionById(req.params.id);
+    if (!s || s.orgId !== req.user.orgId || s.status !== "completed" || !s.endTs) {
+      return res.status(404).json({ error: "Reference session not found" });
+    }
+    const owner = await findUserById(s.userId);
+    var events = s.events || [];
+    res.json({
+      id: s.id, name: s.name, userName: owner ? owner.displayName : null,
+      mode: s.mode, outcome: s.outcome, sold: !!s.sold, soldCardTitle: s.soldCardTitle || null,
+      startTs: s.startTs, endTs: s.endTs, deckName: s.deckName,
+      visits: events.filter(function(e) { return e.type === "visit"; }).map(function(e) {
+        return { cardId: e.cardId, cardTitle: e.cardTitle, cardType: e.cardType, isObjCard: !!e.isObjCard,
+                 stackLabel: e.stackLabel || null, intendedPath: !!e.intendedPath, durationMs: e.durationMs || 0 };
+      }),
+      notes: events.filter(function(e) { return e.type === "note"; }).concat(s.notes || []).map(function(n) {
+        return { cardId: n.cardId, cardTitle: n.cardTitle, text: n.text };
+      }),
+    });
+  } catch (err) { next(err); }
+});
+
 // ─── AUDIO ────────────────────────────────────────────────────────────────────
 // ~4 hours at the client's 32 kbps; body-parser answers larger uploads with 413
 var AUDIO_LIMIT = "60mb";
@@ -113,6 +149,17 @@ router.put("/:id/audio",
     } catch (err) { next(err); }
   }
 );
+
+// GET /api/sessions/:id/audio/meta — recording info + per-card chapter markers
+router.get("/:id/audio/meta", async function(req, res, next) {
+  try {
+    const session = await getSessionById(req.params.id);
+    if (!await canAccessFeedback(session, req.user)) return res.status(403).json({ error: "Access denied" });
+    const meta = await getSessionAudioMeta(session.id);
+    if (!meta) return res.status(404).json({ error: "No recording for this session" });
+    res.json({ mimeType: meta.mimeType, durationMs: meta.durationMs, sizeBytes: meta.sizeBytes, chapters: meta.chapters || session.audioSegments || [] });
+  } catch (err) { next(err); }
+});
 
 // GET /api/sessions/:id/audio — same access as feedback (owner, org admin, share recipient).
 // Honours Range requests so <audio> elements can seek without downloading everything.
@@ -192,6 +239,14 @@ router.post("/:id/feedback", async function(req, res, next) {
       cardTitle:  cardTitle || null,
       text:       text.trim(),
     });
+    // Tell the session owner (never notify yourself)
+    if (session.userId !== req.user.id) {
+      await createNotification({
+        userId: session.userId, orgId: session.orgId, type: "feedback", sessionId: session.id,
+        actorId: req.user.id, actorName: req.user.displayName,
+        text: text.trim().slice(0, 160),
+      });
+    }
     res.json(fb);
   } catch (err) { next(err); }
 });

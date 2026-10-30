@@ -1,7 +1,9 @@
 // ─── STYLE HELPERS ────────────────────────────────────────────────────────────
+import { inkOn } from "./constants";
+
 export function solidBtn(color) {
-  var lightColors = ["#F5A623","#FFD54F","#66BB6A","#00B4FF","#A8FF3E"];
-  var tc = lightColors.includes(color) ? "#000" : "#fff";
+  // Text colour from the background's luminance, so any org accent stays readable
+  var tc = inkOn(color);
   return { background:color, border:"none", borderRadius:14, color:tc, fontSize:14, fontWeight:700, padding:"12px 20px", cursor:"pointer", fontFamily:"inherit", textAlign:"center", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6 };
 }
 export function ghostBtn() {

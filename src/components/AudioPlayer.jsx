@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, OBJ_COLOR, SESS_COLOR } from "../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, accentA } from "../lib/constants";
 import { solidBtn, ghostSm } from "../lib/styles";
 import { apiGetBlob } from "../lib/api";
 import { getAudioBlob } from "../lib/audioStore";
@@ -59,6 +59,7 @@ export function useSessionAudio(session) {
   var audioRef = useRef(null);
   var urlRef   = useRef(null);
   var clipRef  = useRef(null);
+  var queueRef = useRef([]);      // further clips to play after the current one (Play all visits)
   var rafRef   = useRef(null);
   var fixDurRef = useRef(false);
   var upload   = useUploadStatus(session.id);
@@ -109,24 +110,33 @@ export function useSessionAudio(session) {
     };
   }, [session.id, session.hasAudio, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A clip reached its end: jump to the next queued clip, or stop
+  function clipEnded(a, c) {
+    var next = queueRef.current.shift();
+    if (next) {
+      setClipSeg(next);
+      a.currentTime = next.startMs / 1000;
+      return true;   // keep playing
+    }
+    a.pause();
+    a.currentTime = c.endMs / 1000;
+    setCurrentMs(c.endMs);
+    return false;
+  }
+
   // Precise clip end: poll every frame while a clip plays (timeupdate only fires ~4×/s)
   function watchClip() {
     cancelAnimationFrame(rafRef.current);
     function tick() {
       var a = audioRef.current, c = clipRef.current;
       if (!a || !c) return;
-      if (a.currentTime * 1000 >= c.endMs) {
-        a.pause();
-        a.currentTime = c.endMs / 1000;
-        setCurrentMs(c.endMs);
-        return;
-      }
+      if (a.currentTime * 1000 >= c.endMs && !clipEnded(a, c)) return;
       if (!a.paused) rafRef.current = requestAnimationFrame(tick);
     }
     rafRef.current = requestAnimationFrame(tick);
   }
 
-  function setClipSeg(seg) { clipRef.current = seg; setClip(seg); }
+  function setClipSeg(seg) { clipRef.current = seg; setClip(seg); if (!seg) queueRef.current = []; }
 
   function playAt(ms) {
     var a = audioRef.current;
@@ -149,7 +159,14 @@ export function useSessionAudio(session) {
     // Full recording from a position (in context)
     playFrom: function(ms) { setClipSeg(null); playAt(ms); },
     // One card's segment, out of context — stops at its end
-    playClip: function(seg) { setClipSeg(seg); playAt(seg.startMs); watchClip(); },
+    playClip: function(seg) { setClipSeg(seg); queueRef.current = []; playAt(seg.startMs); watchClip(); },
+    // Several clips back to back (every visit to one card), skipping the audio in between
+    playClips: function(segs) {
+      if (!segs || !segs.length) return;
+      setClipSeg(segs[0]); queueRef.current = segs.slice(1);
+      playAt(segs[0].startMs); watchClip();
+    },
+    queued: queueRef.current.length,
     // Leave clip mode and keep listening from the current position
     continueFull: function() { setClipSeg(null); var a = audioRef.current; if (a) a.play().catch(function() {}); },
     toggle: function() {
@@ -207,7 +224,7 @@ export function useSessionAudio(session) {
         if (!a || fixDurRef.current) return;
         var ms = a.currentTime * 1000;
         var c = clipRef.current;
-        if (c && ms >= c.endMs) { a.pause(); ms = c.endMs; }
+        if (c && ms >= c.endMs) { clipEnded(a, c); ms = a.currentTime * 1000; }
         setCurrentMs(ms);
       }}
       onPlay={function() { setPlaying(true); }}
@@ -283,6 +300,67 @@ export function UploadNotice({ ctl, size }) {
   );
 }
 
+// ─── CARD CLIP PLAYER ─────────────────────────────────────────────────────────
+// Listening tools for the card you have open (Path tab expansion, Playback tab selection):
+// every visit to that card as a clip with its own scrubber, "Play all visits" back to back,
+// and "Play call from here" to hear it in context.
+export function CardClipPlayer({ ctl, segs, size }) {
+  var f = scale(size);
+  var lg = size === "lg";
+  if (ctl.state === "loading") return <div style={{fontSize:f.sm,color:"rgba(255,255,255,.35)"}}>Loading recording…</div>;
+  if (ctl.state !== "ready") return <div style={{fontSize:f.sm,color:"rgba(255,255,255,.35)"}}>🎙️ No recording for this session.</div>;
+  if (!segs || !segs.length) return <div style={{fontSize:f.sm,color:"rgba(255,255,255,.35)"}}>🎙️ No audio was captured on this card.</div>;
+  var c = segColor(segs[0]);
+  var total = segs.reduce(function(t, sg) { return t + (sg.endMs - sg.startMs); }, 0);
+  return (
+    <div style={{background:"rgba(255,255,255,.04)",border:"1px solid "+c+"33",borderRadius:12,padding:lg?"12px 14px":"10px 11px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:f.xs,fontWeight:700,color:c,textTransform:"uppercase",letterSpacing:.6,flex:1,minWidth:120}}>
+          🎧 Card audio · {segs.length} clip{segs.length !== 1 ? "s" : ""} · {msToMmss(total)}
+        </span>
+        {segs.length > 1 && (
+          <button onClick={function(){ ctl.playClips(segs); }} style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:c,borderColor:c+"66"})}>▶ Play all visits</button>
+        )}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {segs.map(function(sg, i) {
+          var isClip = ctl.clip && ctl.clip.segId === sg.segId;
+          var len = Math.max(1, sg.endMs - sg.startMs);
+          var inside = ctl.currentMs >= sg.startMs && ctl.currentMs <= sg.endMs;
+          var pct = inside ? Math.min(100, (ctl.currentMs - sg.startMs) / len * 100) : 0;
+          return (
+            <div key={sg.segId} style={{display:"flex",alignItems:"center",gap:lg?10:8}}>
+              <button onClick={function(){ if (isClip && ctl.playing) ctl.toggle(); else ctl.playClip(sg); }} aria-label={(isClip && ctl.playing ? "Pause" : "Play") + " clip " + (i + 1)}
+                style={{width:lg?32:28,height:lg?32:28,borderRadius:"50%",border:"none",background:isClip?c:c+"26",color:isClip?"#000":c,fontSize:lg?12:11,fontWeight:800,cursor:"pointer",flexShrink:0}}>
+                {isClip && ctl.playing ? "❚❚" : "▶"}
+              </button>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:f.xs,color:"rgba(255,255,255,.5)",marginBottom:4,fontVariantNumeric:"tabular-nums"}}>
+                  <span>{segs.length > 1 ? "Visit " + (i + 1) + " · " : ""}at {msToMmss(sg.startMs)}</span>
+                  <span>{inside ? msToMmss(ctl.currentMs - sg.startMs) + " / " : ""}{msToMmss(len)}</span>
+                </div>
+                {/* Scrubber limited to this clip */}
+                <div onClick={function(e){
+                    var r = e.currentTarget.getBoundingClientRect();
+                    var ms = sg.startMs + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * len;
+                    if (!isClip) ctl.playClip(sg);
+                    ctl.seek(ms);
+                  }}
+                  role="slider" aria-label={"Seek within clip " + (i + 1)} aria-valuemin={0} aria-valuemax={Math.round(len / 1000)} aria-valuenow={Math.round(inside ? (ctl.currentMs - sg.startMs) / 1000 : 0)}
+                  style={{position:"relative",height:lg?8:7,background:"rgba(255,255,255,.1)",borderRadius:99,cursor:"pointer"}}>
+                  <div style={{position:"absolute",left:0,top:0,bottom:0,width:pct+"%",background:c,borderRadius:99}}/>
+                </div>
+              </div>
+              <button onClick={function(){ ctl.playFrom(sg.startMs); }} title="Hear it in context — keep playing the call from here"
+                style={ghostSm({fontSize:f.xs,padding:lg?"5px 10px":"4px 8px",flexShrink:0})}>In context</button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── MINI PLAYER BAR (docked in the review on every tab) ─────────────────────
 export function AudioMiniBar({ ctl, size }) {
   var f = scale(size);
@@ -310,7 +388,7 @@ export function AudioMiniBar({ ctl, size }) {
       </span>
       {ctl.clip && (
         <button onClick={ctl.continueFull} title="Keep listening to the full recording from here"
-          style={ghostSm({fontSize:f.xs,padding:"4px 9px",color:SESS_COLOR,borderColor:"rgba(168,255,62,.35)"})}>Continue ▸</button>
+          style={ghostSm({fontSize:f.xs,padding:"4px 9px",color:SESS_COLOR,borderColor:accentA(.35)})}>Continue ▸</button>
       )}
       {lg && <button onClick={function(){ ctl.skip(-15000); }} style={ghostSm({fontSize:f.xs,padding:"4px 8px"})} aria-label="Back 15 seconds">−15</button>}
       {lg && <button onClick={function(){ ctl.skip(15000); }} style={ghostSm({fontSize:f.xs,padding:"4px 8px"})} aria-label="Forward 15 seconds">+15</button>}
@@ -328,6 +406,7 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
   var lg = size === "lg";
   var [grouped, setGrouped] = useState(false);
   var [hoverSeg, setHoverSeg] = useState(null);
+  var [selCard, setSelCard] = useState(null);   // { cardId, isObjCard } of the row clicked
 
   // Keyboard: space play/pause, ←/→ ±5s, J/L ±15s (ignored while typing)
   useEffect(function() {
@@ -382,7 +461,9 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
     var prog = on ? Math.min(1, (ctl.currentMs - sg.startMs) / Math.max(1, sg.endMs - sg.startMs)) : 0;
     return (
       <div key={sg.segId} onMouseEnter={function(){ setHoverSeg(sg); }} onMouseLeave={function(){ setHoverSeg(null); }}
-        style={{position:"relative",display:"flex",alignItems:"center",gap:lg?10:8,borderRadius:10,padding:lg?"9px 12px":"7px 9px",
+        onClick={function(){ setSelCard({ cardId: sg.cardId, isObjCard: !!sg.isObjCard }); }}
+        style={{position:"relative",display:"flex",alignItems:"center",gap:lg?10:8,borderRadius:10,padding:lg?"9px 12px":"7px 9px",cursor:"pointer",
+          outline:selCard && selCard.cardId === sg.cardId && selCard.isObjCard === !!sg.isObjCard ? "1px solid " + segColor(sg) + "66" : "none",
           background:on?"rgba(255,255,255,.08)":hoverSeg&&hoverSeg.segId===sg.segId?"rgba(255,255,255,.04)":"transparent",
           borderLeft:"3px solid "+(on?c:c+"55"),overflow:"hidden"}}>
         {on && <div style={{position:"absolute",left:0,bottom:0,height:2,width:(prog * 100)+"%",background:c}}/>}
@@ -392,11 +473,11 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
           {sg.isObjCard && sg.stackLabel && <div style={{fontSize:f.xs,color:OBJ_COLOR}}>🛡 {sg.stackLabel}</div>}
         </div>
         <span style={{fontSize:f.xs,color:"rgba(255,255,255,.4)",fontVariantNumeric:"tabular-nums",flexShrink:0}}>{msToMmss(sg.endMs - sg.startMs)}</span>
-        <button onClick={function(){ isClip && ctl.playing ? ctl.toggle() : ctl.playClip(sg); }} title="Play only this card's audio"
+        <button onClick={function(e){ e.stopPropagation(); isClip && ctl.playing ? ctl.toggle() : ctl.playClip(sg); }} title="Play only this card's audio"
           style={ghostSm({fontSize:f.xs,padding:lg?"5px 10px":"4px 8px",color:isClip?"#000":c,background:isClip?c:"transparent",borderColor:c+"66"})}>
           {isClip && ctl.playing ? "❚❚ Clip" : "▶ Clip"}
         </button>
-        <button onClick={function(){ ctl.playFrom(sg.startMs); }} title="Play the full recording from here"
+        <button onClick={function(e){ e.stopPropagation(); ctl.playFrom(sg.startMs); }} title="Play the full recording from here"
           style={ghostSm({fontSize:f.xs,padding:lg?"5px 10px":"4px 8px"})}>
           From here
         </button>
@@ -405,8 +486,18 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
   }
 
   var curSeg = ctl.clip || ctl.activeSeg;
+  var selSegs = selCard ? ctl.segments.filter(function(sg) { return sg.cardId === selCard.cardId && !!sg.isObjCard === selCard.isObjCard; }) : [];
   var transport = (
     <div>
+      {selSegs.length > 0 && (
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <span style={{fontSize:f.md,fontWeight:700,color:"#fff"}}>{selSegs[0].cardTitle}</span>
+            <button onClick={function(){ setSelCard(null); }} aria-label="Close card audio" style={ghostSm({fontSize:f.xs,padding:"2px 8px"})}>✕</button>
+          </div>
+          <CardClipPlayer ctl={ctl} segs={selSegs} size={size}/>
+        </div>
+      )}
       <div style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+(curSeg ? segColor(curSeg) : "rgba(255,255,255,.2)"),borderRadius:"0 12px 12px 0",padding:lg?"12px 14px":"9px 12px",marginBottom:14,minHeight:lg?58:44}}>
         {curSeg ? (
           <div>
@@ -436,9 +527,9 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
         {RATES.map(function(r) {
           var on = ctl.rate === r;
           return <button key={r} onClick={function(){ ctl.setRate(r); }}
-            style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:on?SESS_COLOR:"rgba(255,255,255,.45)",borderColor:on?"rgba(168,255,62,.4)":"rgba(255,255,255,.12)"})}>{r}×</button>;
+            style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:on?SESS_COLOR:"rgba(255,255,255,.45)",borderColor:on?accentA(.4):"rgba(255,255,255,.12)"})}>{r}×</button>;
         })}
-        {ctl.clip && <button onClick={ctl.continueFull} style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:SESS_COLOR,borderColor:"rgba(168,255,62,.35)"})}>Continue full call ▸</button>}
+        {ctl.clip && <button onClick={ctl.continueFull} style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:SESS_COLOR,borderColor:accentA(.35)})}>Continue full call ▸</button>}
         {canDownload && (
           <a href={ctl.url} download={(sessionName || "session").replace(/[\\/:*?"<>|]+/g, "-") + ctl.fileExt}
             style={Object.assign({}, ghostSm({fontSize:f.xs,padding:"4px 10px"}), {textDecoration:"none"})}>⬇ Download</a>

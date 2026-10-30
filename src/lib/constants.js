@@ -19,10 +19,47 @@ export var ROLE_META = {
   user:  { label:"User",  color:"#00B4FF", bg:"rgba(0,180,255,.1)",   border:"rgba(0,180,255,.2)" },
 };
 export function isAdminRole(role) { return role === "admin" || role === "owner"; }
-export function roleMeta(role) { return ROLE_META[role] || ROLE_META.user; }
+export function roleMeta(role) {
+  // Admin badges follow the org accent
+  if (role === "admin") return { label:"Admin", color:SESS_COLOR, bg:accentA(.15), border:accentA(.3) };
+  return ROLE_META[role] || ROLE_META.user;
+}
 
 export var OBJ_COLOR  = "#EF5350";
-export var SESS_COLOR = "#A8FF3E";
+// ─── ORG ACCENT (theme) ───────────────────────────────────────────────────────
+// SESS_COLOR is the app's primary accent. It's an ES live binding: setAccentColor() reassigns it
+// at login from the org's chosen colour and every component reads the new value on its next render.
+// Semantic colours (card types, Live/Practice, outcomes) are deliberately NOT themed.
+export var DEFAULT_ACCENT = "#A8FF3E";
+export var SESS_COLOR = DEFAULT_ACCENT;
+
+function hexToRgb(hex) {
+  var h = String(hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+function luminance(rgb) {
+  var c = rgb.map(function(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+// The UI is dark: lift accents that would be unreadable on navy by mixing toward white
+export function normalizeAccent(hex) {
+  var rgb = hexToRgb(hex);
+  if (!rgb) return DEFAULT_ACCENT;
+  for (var i = 0; i < 10 && luminance(rgb) < 0.18; i++) rgb = rgb.map(function(v) { return Math.round(v + (255 - v) * 0.15); });
+  return "#" + rgb.map(function(v) { return ("0" + v.toString(16)).slice(-2); }).join("").toUpperCase();
+}
+export function setAccentColor(hex) { SESS_COLOR = hex ? normalizeAccent(hex) : DEFAULT_ACCENT; }
+// rgba() of the current accent — replaces the old hard-coded rgba(168,255,62,a)
+export function accentA(alpha) {
+  var rgb = hexToRgb(SESS_COLOR) || [168, 255, 62];
+  return "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + alpha + ")";
+}
+// Black or white text, whichever reads better on a solid background of this colour
+export function inkOn(hex) {
+  var rgb = hexToRgb(hex);
+  return rgb && luminance(rgb) > 0.32 ? "#000" : "#fff";
+}
 export var STYPE = {
   live:     { label:"Live",     color:"#A8FF3E", bg:"rgba(168,255,62,.09)", border:"rgba(168,255,62,.28)" },
   practice: { label:"Practice", color:"#00B4FF", bg:"rgba(0,180,255,.08)",   border:"rgba(0,180,255,.25)"   },

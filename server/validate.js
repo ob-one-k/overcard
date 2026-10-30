@@ -64,6 +64,20 @@ function validateOrg(fields, requireName) {
   if (fields.phone) { var pe = validatePhone(fields.phone, false); if (pe) return "Company " + pe.toLowerCase(); }
   // http(s) URL or bare domain only — rejects javascript:/data: so it's safe to render as a link later
   if (fields.website && !/^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?(\/[^\s]*)?$/i.test(fields.website.trim())) return "Invalid website";
+  return validateBranding(fields);
+}
+
+// Logo: raster data: URL only (no SVG — it can carry script), capped at ~300 KB.
+// Accent: #rrggbb. null / "" clears either.
+var LOGO_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
+function validateBranding(fields) {
+  if (fields.logo !== undefined && fields.logo !== null && fields.logo !== "") {
+    if (typeof fields.logo !== "string" || !LOGO_RE.test(fields.logo)) return "Logo must be a PNG, JPEG or WebP image";
+    if (fields.logo.length > 400000) return "Logo image is too large (max ~300 KB)";
+  }
+  if (fields.accentColor !== undefined && fields.accentColor !== null && fields.accentColor !== "") {
+    if (typeof fields.accentColor !== "string" || !/^#[0-9a-f]{6}$/i.test(fields.accentColor)) return "Accent colour must be a hex colour like #A8FF3E";
+  }
   return null;
 }
 
@@ -75,6 +89,11 @@ function cleanOrg(fields) {
     var v = typeof fields[k] === "string" ? fields[k].trim() : fields[k];
     out[k] = v === "" ? null : v;
   }
+  ["logo", "accentColor"].forEach(function(k) {
+    if (fields[k] === undefined) return;
+    out[k] = fields[k] ? String(fields[k]) : null;
+    if (k === "accentColor" && out[k]) out[k] = out[k].toUpperCase();
+  });
   return out;
 }
 

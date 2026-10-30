@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { SESS_COLOR, OBJ_COLOR, isAdminRole } from "../../lib/constants";
+import { SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../../lib/constants";
 import { apiGet } from "../../lib/api";
 import { solidBtn } from "../../lib/styles";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "../Sessions";
@@ -177,8 +177,13 @@ function EmptyNote({ icon, title, body, action }) {
 export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
-  var [activeSubTab, setActiveSubTab] = useState("me");
+  var [activeSubTab, setActiveSubTab] = useState("me");   // "me" | "all" | teamId
   var [loadingTeam,  setLoadingTeam]  = useState(null);
+  // Admins/owners can view any individual in the org through the "Me" scope
+  var isAdmin = isAdminRole(authUser.role);
+  var [personId,       setPersonId]       = useState(authUser.id);
+  var [personSessions, setPersonSessions] = useState({});   // userId -> sessions (others only)
+  var [orgSessions,    setOrgSessions]    = useState(null); // admins' "All" scope
   var [vw,           setVw]           = useState(function(){ return window.innerWidth; });
   var desktop = useContext(DesktopCtx);
   var compact = !!desktop.compact;   // tablet: compact desktop
@@ -235,32 +240,77 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
       });
   }
 
+  function loadAll() {
+    if (isAdmin) {
+      if (orgSessions !== null) return;
+      apiGet("/sessions?scope=org")
+        .then(function(data){ setOrgSessions(Array.isArray(data) ? data : []); })
+        .catch(function(){ setOrgSessions([]); });
+    } else {
+      // Non-admins can only read their own teams — "All" is every team they belong to
+      myTeams.forEach(function(team) { loadTeamSessions(team.id); });
+    }
+  }
+
+  function loadPerson(userId) {
+    if (String(userId) === String(authUser.id) || personSessions[userId] !== undefined) return;
+    apiGet("/sessions?scope=user:" + encodeURIComponent(userId))
+      .then(function(data){ setPersonSessions(function(prev){ var n = Object.assign({}, prev); n[userId] = Array.isArray(data) ? data : []; return n; }); })
+      .catch(function(){ setPersonSessions(function(prev){ var n = Object.assign({}, prev); n[userId] = []; return n; }); });
+  }
+
   function handleSubTab(tabId) {
     userPickedRef.current = true;
     setActiveSubTab(tabId);
-    if (tabId !== "me") loadTeamSessions(tabId);
+    if (tabId === "all") loadAll();
+    else if (tabId !== "me") loadTeamSessions(tabId);
+  }
+
+  function pickPerson(userId) {
+    userPickedRef.current = true;
+    setPersonId(userId);
+    setActiveSubTab("me");
+    loadPerson(userId);
+  }
+
+  var viewingSelf = String(personId) === String(authUser.id);
+  var person = viewingSelf ? null : (orgUsers || []).find(function(u){ return String(u.id) === String(personId); });
+
+  // Union of the caller's team sessions (deduped) for a non-admin "All" scope
+  function unionTeams() {
+    var seen = {}, out = [], pending = false;
+    myTeams.forEach(function(t) {
+      var list = teamSessions[t.id];
+      if (list === undefined) { pending = true; return; }
+      list.forEach(function(x){ if (!seen[x.id]) { seen[x.id] = true; out.push(x); } });
+    });
+    return pending ? null : out;
   }
 
   var currentSessions;
   if (activeSubTab === "me") {
-    currentSessions = mySessions;
+    currentSessions = viewingSelf ? mySessions : (personSessions[personId] === undefined ? null : personSessions[personId]);
+  } else if (activeSubTab === "all") {
+    currentSessions = isAdmin ? orgSessions : unionTeams();
   } else {
     var loaded = teamSessions[activeSubTab];
     currentSessions = (loaded === undefined) ? null : loaded;
   }
 
-  var isLoadingTeam = activeSubTab !== "me" && loadingTeam === activeSubTab;
+  var isLoadingTeam = activeSubTab !== "me" && activeSubTab !== "all" && loadingTeam === activeSubTab;
   var isLoading = currentSessions === null || isLoadingTeam;
   var stats = (!isLoading && currentSessions && currentSessions.length > 0)
     ? computeStats(currentSessions, decks)
     : null;
 
-  var isTeamTab = activeSubTab !== "me";
-  var activeTeam = isTeamTab ? myTeams.find(function(t){ return t.id === activeSubTab; }) : null;
+  var isTeamTab = activeSubTab !== "me";   // team or "all": leaderboard + rep-labelled sessions
+  var activeTeam = isTeamTab && activeSubTab !== "all" ? myTeams.find(function(t){ return t.id === activeSubTab; }) : null;
+  var scopeLabel = activeSubTab === "all" ? (isAdmin ? "Whole organization" : "All your teams") : activeTeam ? activeTeam.name : "";
 
   var hr = new Date().getHours();
   var greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
   var firstName = (authUser.displayName || "").split(" ")[0] || authUser.displayName;
+  var personName = person ? (person.displayName || person.email) : "";
 
   // Recency-sorted decks for quick-launch section
   var deckLastUsed = {};
@@ -274,7 +324,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     return (a.name || "").localeCompare(b.name || "");
   });
   // Deck stats always come from the user's own sessions so the quick-launch list is personal
-  var myStats = (mySessions && mySessions.length > 0) ? (activeSubTab === "me" && stats ? stats : computeStats(mySessions, decks)) : null;
+  var myStats = (mySessions && mySessions.length > 0) ? (activeSubTab === "me" && viewingSelf && stats ? stats : computeStats(mySessions, decks)) : null;
   var myDeckStats = myStats ? myStats.deckStats : [];
 
   var userName = {};
@@ -363,7 +413,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
                 </div>
                 {onSwitchDeckAndPlay && (
                   <button onClick={function(){ onSwitchDeckAndPlay(d.id); }} aria-label={"Play " + d.name}
-                    style={{background:"rgba(168,255,62,.12)",border:"1px solid rgba(168,255,62,.35)",borderRadius:10,padding:"9px 13px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:"#A8FF3E",fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
+                    style={{background:accentA(.12),border:("1px solid "+accentA(.35)),borderRadius:10,padding:"9px 13px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:SESS_COLOR,fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
                     ▶ Play
                   </button>
                 )}
@@ -377,10 +427,14 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
 
   // ── Panel: team leaderboard ─────────────────────────────────────────────────
   function renderLeaderboard() {
-    var rankings = currentSessions && currentSessions.length > 0 ? computeRankings(currentSessions, orgUsers) : [];
+    var allRanks = currentSessions && currentSessions.length > 0 ? computeRankings(currentSessions, orgUsers) : [];
+    // Top 10 (fewer only when the scope has fewer reps); your own rank is pinned below if you're outside it
+    var rankings = allRanks.slice(0, 10);
+    var myIdx = allRanks.findIndex(function(e){ return String(e.userId) === String(authUser.id); });
+    var meBelow = myIdx >= 10 ? allRanks[myIdx] : null;
     return (
       <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH })}>
-        <PanelHead compact={compact} title="Leaderboard" meta={rankings.length > 0 ? rankings.length + " rep" + (rankings.length!==1?"s":"") + " · ranked by close rate" : null}/>
+        <PanelHead compact={compact} title="Leaderboard" meta={allRanks.length > 0 ? (allRanks.length > 10 ? "Top 10 of " + allRanks.length + " reps" : allRanks.length + " rep" + (allRanks.length!==1?"s":"")) + " · by close rate" : null}/>
         <div style={{flex:1,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:6}}>
           {isLoading && <EmptyNote title="Loading team…"/>}
           {!isLoading && rankings.length === 0 && <EmptyNote icon="🏆" title="No rankings yet" body="Rankings appear once team members record sessions."/>}
@@ -389,7 +443,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
             var rn = idx + 1;
             var rc = rn === 1 ? "#FFD700" : rn === 2 ? "#C0C0C0" : rn === 3 ? "#CD7F32" : "rgba(255,255,255,.45)";
             return (
-              <div key={entry.userId} style={{background:isMe?"rgba(168,255,62,.07)":"rgba(255,255,255,.035)",border:"1px solid "+(isMe?"rgba(168,255,62,.3)":"rgba(255,255,255,.06)"),borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:14}}>
+              <div key={entry.userId} style={{background:isMe?accentA(.07):"rgba(255,255,255,.035)",border:"1px solid "+(isMe?accentA(.3):"rgba(255,255,255,.06)"),borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:14}}>
                 <div style={{fontSize:16,fontWeight:900,color:rc,minWidth:30,textAlign:"center"}}>#{rn}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:15,fontWeight:isMe?700:600,color:isMe?SESS_COLOR:"rgba(255,255,255,.9)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
@@ -407,6 +461,18 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
               </div>
             );
           })}
+          {!isLoading && meBelow && (
+            <div style={{marginTop:4,borderTop:"1px dashed rgba(255,255,255,.12)",paddingTop:10}}>
+              <div style={{background:accentA(.07),border:("1px solid "+accentA(.3)),borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:14}}>
+                <div style={{fontSize:16,fontWeight:900,color:"rgba(255,255,255,.45)",minWidth:30,textAlign:"center"}}>#{myIdx + 1}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:15,fontWeight:700,color:SESS_COLOR}}>You</div>
+                  <div style={{fontSize:13,color:MUTED,marginTop:2}}>{meBelow.total} sessions{meBelow.live > 0 ? " · " + meBelow.live + " live · " + meBelow.sold + " sold" : ""}</div>
+                </div>
+                <div style={{fontSize:18,fontWeight:700,color:meBelow.winRate!==null?"#66BB6A":"rgba(255,255,255,.3)"}}>{meBelow.winRate !== null ? meBelow.winRate+"%" : "—"}</div>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     );
@@ -421,7 +487,8 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
         if (!tSess || tSess.length === 0) return null;
         var rankings = computeRankings(tSess, orgUsers);
         if (rankings.length < 2) return null;
-        var myIdx = rankings.findIndex(function(r){ return String(r.userId) === String(authUser.id); });
+        // Rank of whoever is being viewed (yourself, or the person an admin picked)
+        var myIdx = rankings.findIndex(function(r){ return String(r.userId) === String(personId); });
         if (myIdx === -1) return null;
         var me = rankings[myIdx];
         return { team: team, rank: myIdx + 1, total: rankings.length, winRate: me.winRate, totalSess: me.total };
@@ -430,7 +497,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     var hasAny = stats && (stats.live > 0 || stats.allObjEntries.length > 0 || stats.topClose || rankRows.length > 0);
     return (
       <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH, gridColumn: wide ? undefined : "1 / -1" })}>
-        <PanelHead compact={compact} title="Insights" meta={isTeamTab && activeTeam ? activeTeam.name : "Your performance"}/>
+        <PanelHead compact={compact} title="Insights" meta={isTeamTab ? scopeLabel : viewingSelf ? "Your performance" : personName}/>
         <div style={{flex:1,overflowY:"auto",padding:"16px 20px",display:wide?"block":"grid",gridTemplateColumns:"1fr 1fr",columnGap:28}}>
           {isLoading && <EmptyNote title="Loading…"/>}
           {!isLoading && !hasAny && <EmptyNote icon="📈" title="No insights yet" body="Funnel, objection and close-card insights appear once sessions are recorded."/>}
@@ -441,7 +508,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
               <Bar label="Contacted"      value={stats.contacted}    denom={stats.live}         color={SESS_COLOR}/>
               <Bar label="Into discovery" value={stats.pastIntro}    denom={stats.contacted}    color="#00B4FF"/>
               <Bar label="Reached close"  value={stats.reachedClose} denom={stats.pastIntro}    color="#66BB6A"/>
-              <Bar label="Sold"           value={stats.sold}         denom={stats.reachedClose} color="#A8FF3E"/>
+              <Bar label="Sold"           value={stats.sold}         denom={stats.reachedClose} color={SESS_COLOR}/>
             </div>
           )}
 
@@ -456,7 +523,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
 
           {!isLoading && rankRows.length > 0 && (
             <div style={{marginBottom:20}}>
-              <SubHead>My ranking</SubHead>
+              <SubHead>{viewingSelf ? "My ranking" : personName.split(" ")[0] + "'s ranking"}</SubHead>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {rankRows.map(function(row) {
                   var rc = row.rank === 1 ? "#FFD700" : row.rank === 2 ? "#C0C0C0" : row.rank === 3 ? "#CD7F32" : SESS_COLOR;
@@ -509,20 +576,38 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
         <div style={{flex:1,minWidth:compact?220:260}}>
           <div style={{fontSize:compact?21:24,fontWeight:700,color:"#fff",fontFamily:"'Lora',Georgia,serif"}}>{greeting}, {firstName}</div>
           <div style={{fontSize:compact?13:14,color:MUTED,marginTop:4}}>
-            {isTeamTab ? "Team view · " + (activeTeam ? activeTeam.name : "") : "Here's how your calls are going."}
+            {isTeamTab ? (activeSubTab === "all" ? "Overview · " : "Team view · ") + scopeLabel
+              : viewingSelf ? "Here's how your calls are going." : "Viewing " + personName + "'s calls"}
           </div>
         </div>
-        {myTeams.length > 0 && (
-          <div role="tablist" aria-label="Dashboard scope" style={{display:"flex",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderRadius:12,padding:4,gap:2,flexWrap:"wrap"}}>
-            {[{ id:"me", label:"Me" }].concat(myTeams).map(function(t){
+        {(myTeams.length > 0 || isAdmin) && (
+          <div role="tablist" aria-label="Dashboard scope" style={{display:"flex",alignItems:"center",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderRadius:12,padding:4,gap:2,flexWrap:"wrap"}}>
+            {isAdmin && (
+              // Admins/owners: the individual scope is a person picker (defaults to themselves)
+              <label style={{position:"relative",display:"flex",alignItems:"center",borderRadius:9,background:activeSubTab==="me"?accentA(.14):"transparent",border:"1px solid "+(activeSubTab==="me"?accentA(.35):"transparent"),minHeight:compact?44:undefined}}>
+                <span style={{position:"absolute",left:12,fontSize:14,pointerEvents:"none"}} aria-hidden="true">👤</span>
+                <select aria-label="View an individual" value={String(personId)}
+                  onChange={function(e){ pickPerson(e.target.value); }}
+                  onClick={function(){ if (activeSubTab !== "me") { userPickedRef.current = true; setActiveSubTab("me"); } }}
+                  style={{appearance:"none",WebkitAppearance:"none",background:"transparent",border:"none",color:activeSubTab==="me"?SESS_COLOR:"rgba(255,255,255,.7)",fontSize:14,fontWeight:activeSubTab==="me"?700:500,fontFamily:"inherit",padding:"8px 30px 8px 34px",cursor:"pointer",maxWidth:220}}>
+                  <option value={String(authUser.id)} style={{color:"#000"}}>Me</option>
+                  {(orgUsers || []).filter(function(u){ return String(u.id) !== String(authUser.id); })
+                    .slice().sort(function(a, b){ return (a.displayName || "").localeCompare(b.displayName || ""); })
+                    .map(function(u){ return <option key={u.id} value={String(u.id)} style={{color:"#000"}}>{u.displayName || u.email}</option>; })}
+                </select>
+                <span style={{position:"absolute",right:11,fontSize:11,color:activeSubTab==="me"?SESS_COLOR:SUBTLE,pointerEvents:"none"}} aria-hidden="true">▾</span>
+              </label>
+            )}
+            {(isAdmin ? [] : [{ id:"me", label:"Me" }]).concat(isAdmin || myTeams.length > 1 ? [{ id:"all", label:isAdmin ? "All" : "All teams" }] : []).concat(myTeams).map(function(t){
               var on = activeSubTab === t.id;
               var cnt = t.id === "me" ? (mySessions ? mySessions.length : null)
+                : t.id === "all" ? (isAdmin ? (orgSessions ? orgSessions.length : null) : (unionTeams() ? unionTeams().length : null))
                 : (teamSessions[t.id] !== undefined ? teamSessions[t.id].length : null);
               return (
                 <button key={t.id} role="tab" aria-selected={on} onClick={function(){ handleSubTab(t.id); }}
-                  style={{background:on?"rgba(168,255,62,.14)":"transparent",border:"1px solid "+(on?"rgba(168,255,62,.35)":"transparent"),borderRadius:9,cursor:"pointer",padding:"8px 14px",minHeight:compact?44:undefined,fontSize:14,fontWeight:on?700:500,color:on?SESS_COLOR:"rgba(255,255,255,.7)",fontFamily:"inherit",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:7}}>
+                  style={{background:on?accentA(.14):"transparent",border:"1px solid "+(on?accentA(.35):"transparent"),borderRadius:9,cursor:"pointer",padding:"8px 14px",minHeight:compact?44:undefined,fontSize:14,fontWeight:on?700:500,color:on?SESS_COLOR:"rgba(255,255,255,.7)",fontFamily:"inherit",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:7}}>
                   {t.label || t.name}
-                  {cnt !== null && <span style={{fontSize:12,fontWeight:600,color:on?"rgba(168,255,62,.75)":SUBTLE}}>{cnt}</span>}
+                  {cnt !== null && <span style={{fontSize:12,fontWeight:600,color:on?accentA(.75):SUBTLE}}>{cnt}</span>}
                 </button>
               );
             })}

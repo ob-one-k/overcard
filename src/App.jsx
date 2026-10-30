@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole } from "./lib/constants";
+import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor } from "./lib/constants";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
@@ -11,6 +11,8 @@ import { SessionReview, SessionsTab, SessionAnalytics } from "./components/Sessi
 import { CardsTab, ObjectionsTab } from "./components/Cards";
 import { DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel } from "./components/Panels";
 import { SignupScreen } from "./components/Signup";
+import { NotificationBell } from "./components/NotificationBell";
+import { OrgMark } from "./components/OrgMark";
 import { HomeTab } from "./components/Home";
 import { HomeDesktop } from "./components/desktop/HomeDesktop";
 import { CommandPalette } from "./components/CommandPalette";
@@ -22,7 +24,7 @@ import { DesktopShell } from "./components/DesktopShell";
 // Fixed per-tab accent colors — each represents the tab's purpose, on-theme
 var TAB_ACCENTS = {
   home:       "#4DB6AC",  // teal       — overview, performance, home base
-  play:       "#A8FF3E",  // lime green — action, go, start
+  play:       null,       // org accent (SESS_COLOR) — resolved at render, since it's themed per org
   sessions:   "#FFD54F",  // yellow     — review, history, analytics
   cards:      "#00B4FF",  // electric blue — building, structure
   objections: "#EF5350",  // red        — defense, conflict handling
@@ -126,6 +128,9 @@ export default function App() {
       <button onClick={retryAuth} style={solidBtn("#1565C0")}>Retry</button>
     </div>
   );
+  // Theme the app with the signed-in org's accent (reset to the default when signed out)
+  setAccentColor(authUser ? authUser.orgAccent : null);
+
   if (!authUser && showSignup) return (
     <SignupScreen
       initialCode={joinCode}
@@ -140,11 +145,15 @@ export default function App() {
       onShowSignup={function(){ setShowSignup(true); }}
     />
   );
-  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setAuthUser(false); }}/>;
+  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setAuthUser(false); }}
+    onOrgUpdated={function(org){
+      // Owner edited branding/name — refresh the signed-in user's org fields so the shell re-themes
+      setAuthUser(function(u){ return u ? Object.assign({}, u, { orgName: org.name, orgLogo: org.logo || null, orgAccent: org.accentColor || null }) : u; });
+    }}/>;
 }
 
 // ─── APP ────────────────────────────────────────────────────────────────────
-function MainApp({ authUser, onLogout }) {
+function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var layout      = useDesktop();
   // Tablet = compact desktop: hand the context isDesktop:true so every
   // `isDesktop ? <XDesktop/> : <XMobile/>` switch renders the desktop UI;
@@ -152,7 +161,10 @@ function MainApp({ authUser, onLogout }) {
   var desktop     = useMemo(function() {
     return layout.layout === "tablet" ? Object.assign({}, layout, { isDesktop: true }) : layout;
   }, [layout]);
-  var TABS        = isAdminRole(authUser.role) ? ADMIN_TABS : USER_TABS;
+  // The Play tab takes the org's accent, which is only known after login
+  var TABS        = (isAdminRole(authUser.role) ? ADMIN_TABS : USER_TABS).map(function(t) {
+    return t.id === "play" ? Object.assign({}, t, { accent: SESS_COLOR }) : t;
+  });
   var [decks,     setDecks]    = useState([]);
   var [activeId,  setActiveId] = useState("d1");
   var [tab,       setTab]      = useState(function() {
@@ -324,6 +336,14 @@ function MainApp({ authUser, onLogout }) {
     }
   }
 
+  // ── Notification → open that session's review (switching deck first if needed) ─
+  function openSessionFromNotification(sessionId, deckId) {
+    if (activeSession) return;   // never yank the rep out of a live call
+    if (deckId && deckId !== activeId && decks.some(function(d) { return d.id === deckId; })) switchDeck(deckId);
+    setPendingReview(sessionId);
+    switchTab("sessions");
+  }
+
   // ── Tab switching ─────────────────────────────────────────────────────────────
   function handleTabClick(tabId) {
     if (tabId !== "sessions") setPendingReview(null); // clear portal on manual nav
@@ -348,8 +368,8 @@ function MainApp({ authUser, onLogout }) {
   if (saveStatus === "idle") {
     return (
       <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
-        <div style={{width:48,height:48,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#fff"}}>O</div>
-        <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading…</div>
+        <OrgMark authUser={authUser} size={48}/>
+        <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {authUser.orgName || ""}…</div>
       </div>
     );
   }
@@ -380,7 +400,7 @@ function MainApp({ authUser, onLogout }) {
             <div style={{color:"rgba(255,255,255,.5)",fontSize:14,lineHeight:1.6}}>Create your first sales deck to get started. You can invite your team from the Admin tab afterwards.</div>
             <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound Pitch"
               autoFocus style={inputSt({marginBottom:0})}/>
-            <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn("#A8FF3E")}>Create deck</button>
+            <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn(SESS_COLOR)}>Create deck</button>
           </form>
         ) : (
           <div style={{color:"rgba(255,255,255,.5)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
@@ -392,7 +412,7 @@ function MainApp({ authUser, onLogout }) {
     );
   }
 
-  var tabAccent = TAB_ACCENTS[tab] || TAB_ACCENTS.home;
+  var tabAccent = (tab === "play" ? SESS_COLOR : TAB_ACCENTS[tab]) || TAB_ACCENTS.home;
 
   // Shared tab content — rendered in both mobile and desktop layouts
   var tabContent = (
@@ -456,6 +476,7 @@ function MainApp({ authUser, onLogout }) {
           orgTeams={orgTeams}
           onRefreshUsers={refreshOrgUsers}
           onRefreshTeams={refreshOrgTeams}
+          onOrgUpdated={onOrgUpdated}
         />
       )}
     </div>
@@ -511,6 +532,7 @@ function MainApp({ authUser, onLogout }) {
             onOpenDeckSwitcher={function(){setShowDS(true);}}
             onOpenProfile={function(){setShowProfile(true);}}
             onOpenCommandPalette={function(){setShowCmdPalette(true);}}
+            onOpenSession={openSessionFromNotification}
             tabContextData={{
               play: {
                 sessionName: activeSession ? activeSession.name : null,
@@ -543,6 +565,8 @@ function MainApp({ authUser, onLogout }) {
 
           {/* Top bar — Deck switcher on left, user avatar on right */}
           <div style={{padding:"10px 14px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)",background:"rgba(8,25,55,.4)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+            <OrgMark authUser={authUser} size={30}/>
             {/* Deck switcher button */}
             <button onClick={function(){setShowDS(true);}}
               style={{display:"flex",alignItems:"center",gap:9,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:13,padding:"7px 12px",cursor:"pointer",fontFamily:"inherit",transition:"background .12s"}}>
@@ -553,10 +577,12 @@ function MainApp({ authUser, onLogout }) {
               </div>
               <span style={{fontSize:10,color:"rgba(255,255,255,.28)",marginLeft:2}}>⌄</span>
             </button>
+            </div>
 
             <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <NotificationBell onOpenSession={openSessionFromNotification}/>
               <button onClick={function(){ setShowProfile(true); }}
-                style={{width:34,height:34,borderRadius:"50%",background:isAdminRole(authUser.role)?"rgba(168,255,62,.12)":"rgba(255,255,255,.06)",border:"1px solid "+(isAdminRole(authUser.role)?"rgba(168,255,62,.3)":"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,cursor:"pointer",color:isAdminRole(authUser.role)?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700}}
+                style={{width:34,height:34,borderRadius:"50%",background:isAdminRole(authUser.role)?accentA(.12):"rgba(255,255,255,.06)",border:"1px solid "+(isAdminRole(authUser.role)?accentA(.3):"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,cursor:"pointer",color:isAdminRole(authUser.role)?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700}}
                 title="Profile">
                 {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
               </button>

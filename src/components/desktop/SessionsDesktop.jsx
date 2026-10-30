@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext } from "react";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { STYPE, OBJ_COLOR, isAdminRole, roleMeta } from "../../lib/constants";
+import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR } from "../../lib/constants";
 import { apiGet, apiDel } from "../../lib/api";
 import { inputSt } from "../../lib/styles";
 import { DarkDatePicker } from "../ui";
@@ -115,6 +115,9 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   var [hoverId,     setHoverId]     = useState(null);
   var [fbSeenTs,    setFbSeenTs]    = useState(function(){ try { return JSON.parse(localStorage.getItem("rc_fb_seen") || "{}"); } catch(e){ return {}; } });
   var [showOverview, setShowOverview] = useState(false); // tablet portrait: overview shown as the "detail" view
+  var [repSort,  setRepSort]  = useState({ key:"total", dir:"desc" });   // By-rep table ordering
+  var [repGroup, setRepGroup] = useState(false);                         // group By-rep rows by team
+  var [hoverWeek, setHoverWeek] = useState(null);                        // activity chart tooltip
 
   // Tablet (compact): smaller type, 44px targets, no hover-only controls.
   // When the window is too narrow for two panes (portrait), list and detail
@@ -272,11 +275,18 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
     var newest = filtered.reduce(function(m, s){ return Math.max(m, s.startTs || 0); }, 0);
     var end = new Date(newest); end.setHours(23,59,59,999);
     var endTs = end.getTime();
-    for (var w = 11; w >= 0; w--) weeks.push({ start:endTs - (w + 1) * WEEK + 1, live:0, practice:0 });
+    for (var w = 11; w >= 0; w--) weeks.push({ start:endTs - (w + 1) * WEEK + 1, live:0, practice:0, sold:0, booked:0, durSum:0, durN:0 });
     filtered.forEach(function(s) {
       var idx = 11 - Math.floor((endTs - s.startTs) / WEEK);
       if (idx < 0 || idx > 11) return;
-      if ((s.mode||"live") === "practice") weeks[idx].practice++; else weeks[idx].live++;
+      var wk = weeks[idx];
+      if ((s.mode||"live") === "practice") wk.practice++;
+      else {
+        wk.live++;
+        if (s.sold || s.outcome === "sold") wk.sold++;
+        if (s.outcome === "booked") wk.booked++;
+      }
+      var d = sessionDurSec(s); if (d) { wk.durSum += d; wk.durN++; }
     });
   }
 
@@ -340,7 +350,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
           {intPct !== null && <span style={{color:"rgba(255,213,79,.8)"}}>{intPct}% on path</span>}
           {objV > 0 && <span style={{color:OBJ_COLOR}}>{objV} obj</span>}
           {n.length > 0 && <span>{n.length} note{n.length!==1?"s":""}</span>}
-          {hasFb && <span style={{color:fbUnseen?"#A8FF3E":TXT3,fontWeight:fbUnseen?700:400}}>{s.feedbackCount} feedback</span>}
+          {hasFb && <span style={{color:fbUnseen?SESS_COLOR:TXT3,fontWeight:fbUnseen?700:400}}>{s.feedbackCount} feedback</span>}
           {(s.shareCount||0) > 0 && !s._shared && <span style={{color:"rgba(0,180,255,.8)"}}>shared ×{s.shareCount}</span>}
           {isOwner && (touch || sel || hov || confirming) && (
             <span style={{marginLeft:"auto",display:"flex",gap:6}}>
@@ -477,10 +487,38 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
                 <div style={{display:"grid",gridTemplateColumns:"repeat(12, minmax(0, 1fr))",gap:8,alignItems:"end"}}>
                   {weeks.map(function(w, i) {
                     var tot = w.live + w.practice;
+                    var hov = hoverWeek === i;
+                    var wEnd = w.start + 7 * 24 * 3600 * 1000 - 1;
                     return (
-                      <div key={i} title={tot + " session" + (tot!==1?"s":"") + " · week of " + fmtDate(w.start)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,minWidth:0}}>
+                      <div key={i}
+                        onMouseEnter={function(){ setHoverWeek(i); }} onMouseLeave={function(){ setHoverWeek(null); }}
+                        onClick={function(){ setHoverWeek(hov ? null : i); }}
+                        style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:6,minWidth:0,cursor:"default"}}>
+                        {hov && (
+                          <div role="tooltip" style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",transform:"translateX(" + (i < 2 ? "-20%" : i > 9 ? "-80%" : "-50%") + ")",zIndex:20,
+                            minWidth:190,background:"#0b1a34",border:"1px solid rgba(255,255,255,.16)",borderRadius:10,padding:"10px 12px",boxShadow:"0 12px 32px rgba(0,0,0,.6)",pointerEvents:"none",textAlign:"left"}}>
+                            <div style={{fontSize:12,color:TXT3,marginBottom:6,whiteSpace:"nowrap"}}>
+                              {new Date(w.start).toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(wEnd).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                            </div>
+                            {[
+                              ["Total sessions", tot, TXT],
+                              ["Live", w.live, STYPE.live.color],
+                              ["Practice", w.practice, STYPE.practice.color],
+                              ["Sold", w.sold, "#66BB6A"],
+                              ["Booked", w.booked, "#FFD54F"],
+                              ["Close rate (live)", w.live ? Math.round(w.sold / w.live * 100) + "%" : "—", TXT2],
+                              ["Avg duration", w.durN ? fmtSec(Math.round(w.durSum / w.durN)) : "—", TXT2],
+                            ].map(function(row) {
+                              return (
+                                <div key={row[0]} style={{display:"flex",justifyContent:"space-between",gap:16,fontSize:13,lineHeight:1.7,whiteSpace:"nowrap"}}>
+                                  <span style={{color:TXT3}}>{row[0]}</span><strong style={{color:row[2],fontVariantNumeric:"tabular-nums"}}>{row[1]}</strong>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                         <span style={{fontSize:12,color:tot?TXT2:"rgba(255,255,255,.25)",fontWeight:600}}>{tot}</span>
-                        <div style={{width:"100%",maxWidth:44,height:90,display:"flex",flexDirection:"column",justifyContent:"flex-end",background:"rgba(255,255,255,.03)",borderRadius:6,overflow:"hidden"}}>
+                        <div style={{width:"100%",maxWidth:44,height:90,display:"flex",flexDirection:"column",justifyContent:"flex-end",background:hov?"rgba(255,255,255,.08)":"rgba(255,255,255,.03)",borderRadius:6,overflow:"hidden",boxShadow:hov?"0 0 0 1px rgba(255,255,255,.25)":"none",transition:"background .12s"}}>
                           <div style={{height:Math.round(w.practice / maxW * 90),background:STYPE.practice.color,opacity:.85}}/>
                           <div style={{height:Math.round(w.live / maxW * 90),background:STYPE.live.color,opacity:.85}}/>
                         </div>
@@ -496,11 +534,87 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
           {/* By rep */}
           {showReps && (
             <div style={panelSt({gridColumn:"1 / -1"})}>
-              <PanelTitle right={fUser ? <button onClick={function(){ setFUser(""); }} style={pillBtn(true)}>Show all reps ×</button> : <span style={{fontSize:13,color:TXT3}}>Click a rep to filter the list</span>}>By rep</PanelTitle>
-              <div style={{display:"grid",gridTemplateColumns:"minmax(180px,2fr) repeat(5, minmax(70px,1fr))",fontSize:13,color:TXT3,padding:"0 10px 8px",borderBottom:"1px solid "+LINE,gap:8}}>
-                <span>Rep</span><span style={{textAlign:"right"}}>Sessions</span><span style={{textAlign:"right"}}>Live</span><span style={{textAlign:"right"}}>Sold</span><span style={{textAlign:"right"}}>Close rate</span><span style={{textAlign:"right"}}>Last run</span>
-              </div>
-              {repRows.map(function(r) {
+              <PanelTitle right={
+                <span style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                  {(orgTeams||[]).length > 0 && (
+                    <span style={{display:"inline-flex",background:"rgba(255,255,255,.05)",borderRadius:99,padding:2}}>
+                      {[[false,"All reps"],[true,"By team"]].map(function(o) {
+                        var on = repGroup === o[0];
+                        return <button key={o[1]} onClick={function(){ setRepGroup(o[0]); }}
+                          style={{background:on?"rgba(255,255,255,.12)":"transparent",border:"none",borderRadius:99,padding:compact?"8px 14px":"4px 12px",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{o[1]}</button>;
+                      })}
+                    </span>
+                  )}
+                  {fUser ? <button onClick={function(){ setFUser(""); }} style={pillBtn(true)}>Show all reps ×</button> : <span style={{fontSize:13,color:TXT3}}>Click a rep to filter the list</span>}
+                </span>
+              }>By rep</PanelTitle>
+              {(function() {
+                // Clickable column headers: first click sorts descending (numbers) / ascending (name, last run older→newer reversed)
+                var cols = [["name","Rep","left"],["total","Sessions"],["live","Live"],["sold","Sold"],["rate","Close rate"],["last","Last run"]];
+                return (
+                  <div role="row" style={{display:"grid",gridTemplateColumns:"minmax(180px,2fr) repeat(5, minmax(70px,1fr))",fontSize:13,color:TXT3,padding:"0 10px 8px",borderBottom:"1px solid "+LINE,gap:8}}>
+                    {cols.map(function(c) {
+                      var on = repSort.key === c[0];
+                      return (
+                        <button key={c[0]} role="columnheader" aria-sort={on ? (repSort.dir === "asc" ? "ascending" : "descending") : "none"}
+                          onClick={function(){ setRepSort(on ? { key:c[0], dir:repSort.dir === "asc" ? "desc" : "asc" } : { key:c[0], dir:c[0] === "name" ? "asc" : "desc" }); }}
+                          title={"Sort by " + c[1].toLowerCase()}
+                          style={{background:"none",border:"none",padding:compact?"8px 0":0,cursor:"pointer",fontFamily:"inherit",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,textAlign:c[2]||"right",display:"flex",alignItems:"center",justifyContent:c[2]==="left"?"flex-start":"flex-end",gap:4}}>
+                          {c[1]}<span style={{fontSize:10,opacity:on?1:.35}}>{on ? (repSort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              {(function() {
+                function val(r) {
+                  var k = repSort.key;
+                  if (k === "name") return (r.name || "").toLowerCase();
+                  if (k === "rate") return r.live ? r.sold / r.live : -1;
+                  return r[k] || 0;
+                }
+                function cmp(a, b) {
+                  var va = val(a), vb = val(b);
+                  var d = va < vb ? -1 : va > vb ? 1 : 0;
+                  if (d === 0) d = (a.name || "").localeCompare(b.name || "");
+                  return repSort.dir === "asc" ? d : -d;
+                }
+                var sorted = repRows.slice().sort(cmp);
+                if (!repGroup) return sorted.map(renderRepRow);
+                // Group by team (a rep in several teams appears under each); reps with no team last
+                var groups = (orgTeams||[]).map(function(t) {
+                  return { id:t.id, name:t.name, rows:sorted.filter(function(r){ return (t.memberIds||[]).indexOf(r.id) !== -1; }) };
+                }).filter(function(g){ return g.rows.length; });
+                var inTeam = {};
+                groups.forEach(function(g){ g.rows.forEach(function(r){ inTeam[r.id] = true; }); });
+                var loose = sorted.filter(function(r){ return !inTeam[r.id]; });
+                if (loose.length) groups.push({ id:"__none", name:"No team", rows:loose });
+                return groups.map(function(g) {
+                  var t = g.rows.reduce(function(a, r){ a.total += r.total; a.live += r.live; a.sold += r.sold; a.last = Math.max(a.last, r.last); return a; }, { total:0, live:0, sold:0, last:0 });
+                  return (
+                    <div key={g.id} style={{marginTop:10}}>
+                      <div style={{display:"grid",gridTemplateColumns:"minmax(180px,2fr) repeat(5, minmax(70px,1fr))",gap:8,padding:"8px 10px",background:"rgba(255,255,255,.04)",borderRadius:8,fontSize:13,color:TXT2,fontWeight:700}}>
+                        <span style={{color:TXT}}>🏷️ {g.name} <span style={{fontWeight:500,color:TXT3}}>· {g.rows.length} rep{g.rows.length!==1?"s":""}</span></span>
+                        <span style={{textAlign:"right"}}>{t.total}</span>
+                        <span style={{textAlign:"right"}}>{t.live}</span>
+                        <span style={{textAlign:"right",color:"#66BB6A"}}>{t.sold}</span>
+                        <span style={{textAlign:"right"}}>{t.live ? Math.round(t.sold / t.live * 100) + "%" : "—"}</span>
+                        <span style={{textAlign:"right",fontWeight:500,color:TXT3}}>{t.last ? fmtDate(t.last) : "—"}</span>
+                      </div>
+                      {g.rows.map(renderRepRow)}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+  // One By-rep table row (used flat and inside team groups)
+  function renderRepRow(r) {
                 var on = fUser && fUser === r.id;
                 var rm = r.role ? roleMeta(r.role) : null;
                 var rate = r.live ? Math.round(r.sold / r.live * 100) + "%" : "—";
@@ -519,12 +633,6 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
                     <span style={{textAlign:"right",fontSize:13,color:TXT3}}>{r.last ? fmtDate(r.last) : "—"}</span>
                   </button>
                 );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    );
   }
 
   // Stacked (tablet portrait): show exactly one pane at a time
@@ -637,7 +745,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
               {v:stats.total, l:"Sessions", c:TXT},
               {v:stats.winRate !== null ? stats.winRate+"%" : "—", l:"Close rate", c:"#66BB6A"},
               {v:stats.avgSec !== null ? fmtSec(stats.avgSec) : "—", l:"Avg time", c:ACCENT},
-              {v:stats.soldCount, l:"Sold", c:"#A8FF3E"},
+              {v:stats.soldCount, l:"Sold", c:SESS_COLOR},
             ].map(function(st, i) {
               return (
                 <div key={i} style={{flex:1,padding:"10px 0 9px",textAlign:"center",borderRight:i<3?"1px solid "+LINE:"none"}}>

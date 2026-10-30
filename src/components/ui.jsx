@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, SESS_COLOR } from "../lib/constants";
+import { TM, SESS_COLOR, accentA } from "../lib/constants";
 import { inputSt } from "../lib/styles";
 
 // ─── TINY COMPONENTS ──────────────────────────────────────────────────────────
@@ -114,17 +114,17 @@ export function DarkDatePicker({ value, onChange, style }) {
               return (
                 <div key={i} onClick={function(){ onChange({target:{value:toISO(item.date)}}); setOpen(false); }}
                   style={{textAlign:"center",fontSize:11,padding:"5px 2px",borderRadius:6,cursor:"pointer",
-                    background: isSel ? "#A8FF3E" : "transparent",
+                    background: isSel ? SESS_COLOR : "transparent",
                     color: isSel ? "#0a1a00" : item.cur ? "rgba(255,255,255,.78)" : "rgba(255,255,255,.2)",
                     fontWeight: isSel || isToday ? 700 : 400,
-                    outline: isToday && !isSel ? "1px solid rgba(168,255,62,.45)" : "none",
+                    outline: isToday && !isSel ? ("1px solid "+accentA(.45)) : "none",
                   }}>{item.date.getDate()}</div>
               );
             })}
           </div>
           <div style={{display:"flex",justifyContent:"space-between",marginTop:10,borderTop:"1px solid rgba(255,255,255,.07)",paddingTop:8}}>
             <button onClick={function(){ onChange({target:{value:""}}); setOpen(false); }} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",fontSize:11,cursor:"pointer",fontFamily:"inherit",padding:"2px 4px"}}>Clear</button>
-            <button onClick={function(){ onChange({target:{value:toISO(todayD)}}); setOpen(false); }} style={{background:"none",border:"none",color:"#A8FF3E",fontSize:11,cursor:"pointer",fontFamily:"inherit",padding:"2px 4px",fontWeight:700}}>Today</button>
+            <button onClick={function(){ onChange({target:{value:toISO(todayD)}}); setOpen(false); }} style={{background:"none",border:"none",color:SESS_COLOR,fontSize:11,cursor:"pointer",fontFamily:"inherit",padding:"2px 4px",fontWeight:700}}>Today</button>
           </div>
         </div>
       )}

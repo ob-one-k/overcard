@@ -8,6 +8,7 @@ const {
 } = require("./db");
 const { hashPassword } = require("./auth");
 const crypto = require("crypto");
+const SEED_BRANDING = require("./seedBranding");
 
 async function runSeed() {
 
@@ -290,6 +291,17 @@ async function seedRole(orgId, userId, role) {
   return other.rows.length ? "admin" : "owner";
 }
 
+// Demo logo + accent — only filled in while the org has no branding at all,
+// so anything the owner sets (or clears to a different value) is left alone
+async function seedBranding(orgId) {
+  var b = SEED_BRANDING[orgId];
+  if (!b) return;
+  await pool.query(
+    'UPDATE orgs SET logo = $2, "accentColor" = $3 WHERE id = $1 AND logo IS NULL AND "accentColor" IS NULL',
+    [orgId, b.logo, b.accentColor]
+  );
+}
+
 function seedHash(obj) {
   return crypto.createHash("md5").update(JSON.stringify(obj)).digest("hex");
 }
@@ -378,6 +390,7 @@ await seedUpsert("orgs", ORG_ID,
     return res.rows[0] ? seedHash({ name: res.rows[0].name }) : null;
   }
 );
+await seedBranding(ORG_ID);
 
 // ─── TEAMS ────────────────────────────────────────────────────────────────────
 const TEAMS = [
@@ -729,6 +742,7 @@ await seedUpsert("orgs", ORG2_ID,
     return res.rows[0] ? seedHash({ name: res.rows[0].name }) : null;
   }
 );
+await seedBranding(ORG2_ID);
 
 var M_TEAMS = [
   { id: "team_north", name: "Team North" },

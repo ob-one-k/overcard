@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useContext } from "react";
 import { TM, uid, aid } from "../../lib/constants";
-import { lsGet, lsSet } from "../../lib/api";
+import { lsGet, lsSet, apiGet } from "../../lib/api";
 import { solidBtn, inputSt, resizeHandle } from "../../lib/styles";
 import { CardEditorSheet } from "../Editor";
 import { TreeView } from "../Viewer";
@@ -158,6 +158,19 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
   var dragStartW = useRef(380);
   var leftWRef   = useRef(leftW);
   var [isDragging, setIsDragging] = useState(false);
+  // Overview performance data — sessions run on this deck (whole org for admins, own for users)
+  var [perfScope, setPerfScope] = useState(readOnly ? "self" : "org");
+  var [perfMode,  setPerfMode]  = useState("all");       // all | live | practice
+  var [perfSessions, setPerfSessions] = useState(null);
+  var [perfSort, setPerfSort] = useState({ key:"visits", dir:"desc" });
+  useEffect(function() {
+    var cancelled = false;
+    setPerfSessions(null);
+    apiGet("/sessions?deckId=" + encodeURIComponent(deck.id) + (perfScope === "org" ? "&scope=org" : ""))
+      .then(function(list) { if (!cancelled) setPerfSessions(Array.isArray(list) ? list.filter(function(x){ return !x._shared; }) : []); })
+      .catch(function() { if (!cancelled) setPerfSessions([]); });
+    return function() { cancelled = true; };
+  }, [deck.id, perfScope]);
 
   function updateLeftW(w) { leftWRef.current = w; setLeftW(w); }
 
@@ -265,6 +278,50 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
   });
 
   var intendedTotal = allCards.filter(function(c){ return c.intendedPath; }).length;
+
+  // ── Card performance from real sessions ─────────────────────────────────────
+  // reach = share of sessions that visited the card · endedHere = sessions whose last
+  // main-deck card was this one · closeAfter = sold rate of live sessions that visited it ·
+  // objAfter = how often an objection stack was opened while on this card
+  var perf = (function() {
+    var list = (perfSessions || []).filter(function(x) {
+      return perfMode === "all" || (x.mode || "live") === perfMode;
+    });
+    var by = {};
+    allCards.forEach(function(c) { by[c.id] = { visits:0, sessions:0, ms:0, endedHere:0, liveVisited:0, soldAfter:0, objAfter:0 }; });
+    var live = 0, sold = 0, durSum = 0, durN = 0, onPath = 0, pathVisits = 0;
+    list.forEach(function(x) {
+      var isLive = (x.mode || "live") === "live";
+      if (isLive) { live++; if (x.sold || x.outcome === "sold") sold++; }
+      if (x.endTs && x.startTs) { durSum += x.endTs - x.startTs; durN++; }
+      var visits = (x.events || []).filter(function(e){ return e.type === "visit"; });
+      var seen = {}, lastMain = null, prevMain = null;
+      visits.forEach(function(v) {
+        // First objection card after a main card = an objection raised on that card (count once)
+        if (v.isObjCard) { if (prevMain && by[prevMain]) { by[prevMain].objAfter++; prevMain = null; } return; }
+        prevMain = v.cardId;
+        var b = by[v.cardId]; if (!b) return;
+        b.visits++; b.ms += v.durationMs || 0;
+        if (v.intendedPath) onPath++;
+        pathVisits++;
+        if (!seen[v.cardId]) { seen[v.cardId] = true; b.sessions++; if (isLive) { b.liveVisited++; if (x.sold || x.outcome === "sold") b.soldAfter++; } }
+        lastMain = v.cardId;
+      });
+      if (lastMain && by[lastMain]) by[lastMain].endedHere++;
+    });
+    return { list:list, n:list.length, live:live, sold:sold, by:by,
+      avgMs: durN ? durSum / durN : 0,
+      closeRate: live ? Math.round(sold / live * 100) : null,
+      adherence: pathVisits ? Math.round(onPath / pathVisits * 100) : null };
+  })();
+
+  // Deck health: share of cards that are reachable, scripted and fully linked
+  var health = (function() {
+    if (!allCards.length) return null;
+    var bad = {};
+    issues.forEach(function(it){ bad[it.card.id] = true; });
+    return Math.round((allCards.length - Object.keys(bad).length) / allCards.length * 100);
+  })();
   var q = search.toLowerCase();
 
   // ── Detail panel (editor for admins, read view for users) ───────────────────
@@ -334,98 +391,229 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
   }
 
   // ── Overview pane (nothing selected) ─────────────────────────────────────────
+  // Deck dashboard: structure (health, path, issues) joined with how each card performs in
+  // real sessions (reach, time, drop-off, objections, close rate after visiting).
+  function fmtDur(ms) {
+    if (!ms) return "—";
+    var sec = Math.round(ms / 1000);
+    return sec < 60 ? sec + "s" : Math.floor(sec / 60) + "m " + (sec % 60 ? (sec % 60) + "s" : "");
+  }
+  function pct(a, b) { return b ? Math.round(a / b * 100) : null; }
+
   function renderOverview() {
-    var panel = { background:"rgba(255,255,255,.035)", border:"1px solid "+LINE, borderRadius:14, padding:"16px 18px", minWidth:0 };
+    var compact = !!(desktop && desktop.compact);
+    var panel = { background:"rgba(255,255,255,.035)", border:"1px solid "+LINE, borderRadius:14, padding:compact?"14px":"16px 18px", minWidth:0 };
+    var hdr = { fontSize:compact?15:16, fontWeight:700, color:TXT };
+    var loading = perfSessions === null;
+    var n = perf.n;
+
+    function pill(on, label, onClick) {
+      return (
+        <button key={label} onClick={onClick}
+          style={{background:on?"rgba(255,255,255,.12)":"transparent",border:"none",borderRadius:99,padding:compact?"8px 14px":"5px 12px",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+      );
+    }
+    var healthColor = health === null ? TXT3 : health >= 90 ? GREEN : health >= 70 ? "#FFD54F" : "#EF5350";
+    var kpis = [
+      { v: health === null ? "—" : health + "%", l:"Deck health", s: issues.length ? issues.length + " issue" + (issues.length !== 1 ? "s" : "") : "No issues", c:healthColor },
+      { v: perf.closeRate === null ? "—" : perf.closeRate + "%", l:"Close rate", s: perf.live ? perf.sold + " sold of " + perf.live + " live" : "No live calls yet", c:GREEN },
+      { v: fmtDur(perf.avgMs), l:"Avg call", s: n + " session" + (n !== 1 ? "s" : ""), c:"#FFD54F" },
+      { v: perf.adherence === null ? "—" : perf.adherence + "%", l:"On intended path", s:"of card visits", c:"#4DB6AC" },
+      { v: allCards.length, l:"Cards", s: typeStats.map(function(t){ return t.count + " " + t.m.label.toLowerCase(); }).join(" · "), c:"#00B4FF" },
+    ];
+
+    // Funnel along the intended path
+    var reachRows = intendedPath.map(function(c) { var b = perf.by[c.id] || {}; return { c:c, reach:pct(b.sessions || 0, n), ms: b.visits ? b.ms / b.visits : 0 }; });
+
+    // Where objections hit (cards that most often lead to an objection stack)
+    var objRows = allCards.map(function(c){ return { c:c, n:(perf.by[c.id] || {}).objAfter || 0 }; })
+      .filter(function(r){ return r.n > 0; }).sort(function(a,b){ return b.n - a.n; }).slice(0, 5);
+    var objMax = objRows.length ? objRows[0].n : 1;
+
+    // Card performance table
+    var cols = [
+      ["title","Card","left"],["visits","Visits"],["reach","Reach"],["avg","Avg time"],
+      ["ended","Ended here"],["close","Close after"],["links","Links"],["path","Path"],
+    ];
+    var rows = allCards.map(function(c) {
+      var b = perf.by[c.id] || {};
+      var nAns = (c.answers || []).filter(function(a){ return a && a.label; }).length;
+      var nIn = getParents(deck.cards, c.id).length;
+      return { c:c, visits:b.visits || 0, reach:pct(b.sessions || 0, n), avg: b.visits ? b.ms / b.visits : 0,
+        ended:pct(b.endedHere || 0, b.sessions || 0), close:pct(b.soldAfter || 0, b.liveVisited || 0),
+        nAns:nAns, nIn:nIn, links:nAns + nIn, path:c.intendedPath ? 1 : 0, title:(c.title || "").toLowerCase() };
+    });
+    rows.sort(function(a, b) {
+      var k = perfSort.key, va = a[k], vb = b[k];
+      if (va === null) va = -1; if (vb === null) vb = -1;
+      var d = va < vb ? -1 : va > vb ? 1 : 0;
+      if (!d) d = a.title < b.title ? -1 : 1;
+      return perfSort.dir === "asc" ? d : -d;
+    });
+    var gridCols = "minmax(170px,2.2fr) repeat(7, minmax(62px,1fr))";
+
     return (
-      <div style={{flex:1,overflowY:"auto",padding:"22px 26px 28px"}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap",marginBottom:4}}>
-          <div style={{fontSize:22,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{deck.name}</div>
-          <div style={{fontSize:14,color:TXT3}}>{allCards.length} card{allCards.length!==1?"s":""} · {intendedTotal} on intended path</div>
-        </div>
-        <div style={{fontSize:14,color:TXT3,marginBottom:18}}>
-          {readOnly ? "Select a card on the left to read its script and responses." : "Select a card on the left to edit it, or create a new one."}
+      <div style={{flex:1,overflowY:"auto",padding:compact?"16px":"22px 26px 28px"}}>
+        {/* Header + data scope */}
+        <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:16}}>
+          <div style={{minWidth:0}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap"}}>
+              <div style={{fontSize:compact?20:22,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{deck.name}</div>
+              <div style={{fontSize:14,color:TXT3}}>{allCards.length} card{allCards.length!==1?"s":""} · {intendedTotal} on intended path</div>
+            </div>
+            <div style={{fontSize:13,color:TXT3,marginTop:4}}>
+              {readOnly ? "Select a card to read it." : "Select a card to edit it, or create a new one."} Performance below is from {loading ? "…" : n + " session" + (n !== 1 ? "s" : "")}{perfScope === "org" ? " across the org" : " you ran"}.
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <span style={{display:"inline-flex",background:"rgba(255,255,255,.05)",borderRadius:99,padding:2}}>
+              {pill(perfMode === "all", "All", function(){ setPerfMode("all"); })}
+              {pill(perfMode === "live", "Live", function(){ setPerfMode("live"); })}
+              {pill(perfMode === "practice", "Practice", function(){ setPerfMode("practice"); })}
+            </span>
+            {!readOnly && (
+              <span style={{display:"inline-flex",background:"rgba(255,255,255,.05)",borderRadius:99,padding:2}}>
+                {pill(perfScope === "org", "Org", function(){ setPerfScope("org"); })}
+                {pill(perfScope === "self", "Mine", function(){ setPerfScope("self"); })}
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Type mix */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(0, 1fr))",gap:12,marginBottom:16}}>
-          {typeStats.map(function(ts) {
+        {/* KPI strip */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(" + (compact ? 150 : 132) + "px, 1fr))",gap:12,marginBottom:16}}>
+          {kpis.map(function(k) {
             return (
-              <div key={ts.type} style={Object.assign({}, panel, {borderLeft:"4px solid "+ts.m.color,padding:"14px 16px"})}>
-                <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                  <span style={{fontSize:28,fontWeight:800,color:ts.m.color,lineHeight:1}}>{ts.count}</span>
-                  <span style={{fontSize:15,fontWeight:600,color:TXT2}}>{ts.m.label}</span>
-                </div>
-                <div style={{fontSize:13,color:TXT3,marginTop:6}}>{ts.intendedCount} on intended path</div>
+              <div key={k.l} style={Object.assign({}, panel, {padding:compact?"12px 14px":"14px 16px"})}>
+                <div style={{fontSize:compact?24:28,fontWeight:800,color:k.c,lineHeight:1.1,fontVariantNumeric:"tabular-nums"}}>{loading && k.l !== "Deck health" && k.l !== "Cards" ? "…" : k.v}</div>
+                <div style={{fontSize:14,fontWeight:600,color:TXT2,marginTop:4}}>{k.l}</div>
+                <div style={{fontSize:12,color:TXT3,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{k.s}</div>
               </div>
             );
           })}
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(320px, 1fr))",gap:16,alignItems:"start"}}>
-          {/* Intended path */}
+        <div style={{display:"grid",gridTemplateColumns:compact?"minmax(0,1fr)":"minmax(0,2fr) minmax(300px,1fr)",gap:16,alignItems:"start"}}>
+          {/* Intended path funnel — one row per step: reach bar, avg time, drop-off to the next step */}
           <div style={panel}>
-            <div style={{fontSize:16,fontWeight:700,color:TXT,marginBottom:12}}>★ Intended path</div>
+            <div style={hdr}>★ Intended path</div>
+            <div style={{fontSize:12,color:TXT3,marginTop:2,marginBottom:12}}>How far calls get along the path · click a step to open it</div>
             {intendedPath.length === 0 && <div style={{fontSize:14,color:TXT3}}>No entry card set yet.</div>}
-            {intendedPath.map(function(c, i) {
-              var m = TM[c.type] || TM.pitch;
+            {reachRows.map(function(r, i) {
+              var m = TM[r.c.type] || TM.pitch;
+              var next = reachRows[i + 1];
+              var drop = next && r.reach !== null && next.reach !== null ? r.reach - next.reach : null;
               return (
-                <button key={c.id} onClick={function(){ openCard(c); }}
-                  style={{display:"flex",alignItems:"center",gap:12,width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:i?"1px solid "+LINE:"none",padding:"9px 4px",cursor:"pointer",fontFamily:"inherit"}}>
-                  <span style={{width:26,height:26,borderRadius:"50%",background:m.color+"22",border:"1.5px solid "+m.color+"88",color:m.color,fontSize:13,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i+1}</span>
-                  <span style={{fontSize:15,fontWeight:600,color:TXT,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title || "Untitled"}</span>
-                  <MiniBadge color={m.color}>{m.label}</MiniBadge>
-                </button>
+                <div key={r.c.id}>
+                  <button onClick={function(){ openCard(r.c); }}
+                    style={{display:"grid",gridTemplateColumns:"28px minmax(110px,1.6fr) minmax(70px,1.4fr) 44px 50px",gap:12,alignItems:"center",width:"100%",textAlign:"left",background:"transparent",border:"none",borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit"}}>
+                    <span style={{width:26,height:26,borderRadius:"50%",background:m.color+"22",border:"1.5px solid "+m.color+"88",color:m.color,fontSize:13,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{i + 1}</span>
+                    <span style={{minWidth:0}}>
+                      <span style={{display:"block",fontSize:15,fontWeight:600,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.c.title || "Untitled"}</span>
+                      <span style={{display:"block",fontSize:12,color:m.color}}>{m.label}</span>
+                    </span>
+                    <span style={{height:10,borderRadius:99,background:"rgba(255,255,255,.07)",overflow:"hidden"}} title={(r.reach === null ? 0 : r.reach) + "% of sessions reached this step"}>
+                      <span style={{display:"block",height:"100%",width:(r.reach || 0) + "%",background:"linear-gradient(90deg," + m.color + "aa," + m.color + ")",borderRadius:99,transition:"width .4s"}}/>
+                    </span>
+                    <span style={{fontSize:14,fontWeight:700,color:TXT,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{loading ? "…" : r.reach === null ? "—" : r.reach + "%"}</span>
+                    <span style={{fontSize:13,color:TXT3,textAlign:"right",fontVariantNumeric:"tabular-nums"}} title="Average time on this card">{fmtDur(r.ms)}</span>
+                  </button>
+                  {next && (
+                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"0 0 0 18px",height:14}}>
+                      <span style={{width:2,height:14,background:LINE}}/>
+                      {drop !== null && drop > 0 && <span style={{fontSize:11,fontWeight:700,color:drop >= 15 ? "#EF8070" : TXT3}}>−{drop}% drop-off</span>}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
 
-          {/* Needs attention */}
-          <div style={panel}>
-            <div style={{fontSize:16,fontWeight:700,color:TXT,marginBottom:12}}>Needs attention</div>
-            {issues.length === 0 && <div style={{fontSize:14,color:GREEN}}>✓ Every card is reachable, scripted and linked.</div>}
-            {issues.slice(0, 8).map(function(it, i) {
-              return (
-                <button key={it.card.id + i} onClick={function(){ openCard(it.card); }}
-                  style={{display:"flex",alignItems:"center",gap:12,width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:i?"1px solid "+LINE:"none",padding:"9px 4px",cursor:"pointer",fontFamily:"inherit"}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:it.color,flexShrink:0}}/>
-                  <span style={{flex:1,minWidth:0}}>
-                    <span style={{display:"block",fontSize:15,fontWeight:600,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.card.title || "Untitled"}</span>
-                    <span style={{display:"block",fontSize:13,color:TXT3,marginTop:2}}>{it.text}</span>
-                  </span>
-                </button>
-              );
-            })}
-            {issues.length > 8 && <div style={{fontSize:13,color:TXT3,marginTop:6}}>+ {issues.length - 8} more</div>}
+          {/* Right column: issues + objections */}
+          <div style={{display:"flex",flexDirection:"column",gap:16,minWidth:0}}>
+            <div style={panel}>
+              <div style={Object.assign({}, hdr, {marginBottom:10})}>Needs attention</div>
+              {issues.length === 0 && <div style={{fontSize:14,color:GREEN}}>✓ Every card is reachable, scripted and linked.</div>}
+              {issues.slice(0, 5).map(function(it, i) {
+                return (
+                  <button key={it.card.id + i} onClick={function(){ openCard(it.card); }}
+                    style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:i?"1px solid "+LINE:"none",padding:"8px 2px",cursor:"pointer",fontFamily:"inherit"}}>
+                    <span style={{width:8,height:8,borderRadius:"50%",background:it.color,flexShrink:0}}/>
+                    <span style={{flex:1,minWidth:0}}>
+                      <span style={{display:"block",fontSize:14,fontWeight:600,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.card.title || "Untitled"}</span>
+                      <span style={{display:"block",fontSize:12,color:TXT3,marginTop:1}}>{it.text}</span>
+                    </span>
+                    <span style={{fontSize:12,color:"#00B4FF",flexShrink:0}}>{readOnly ? "View" : "Fix"} ›</span>
+                  </button>
+                );
+              })}
+              {issues.length > 5 && <div style={{fontSize:12,color:TXT3,marginTop:6}}>+ {issues.length - 5} more</div>}
+            </div>
+            <div style={panel}>
+              <div style={Object.assign({}, hdr, {marginBottom:4})}>Where objections hit</div>
+              <div style={{fontSize:12,color:TXT3,marginBottom:10}}>Cards where prospects most often raised an objection</div>
+              {loading && <div style={{fontSize:13,color:TXT3}}>Loading…</div>}
+              {!loading && objRows.length === 0 && <div style={{fontSize:13,color:TXT3}}>No objections recorded on this deck yet.</div>}
+              {objRows.map(function(r) {
+                var m = TM[r.c.type] || TM.pitch;
+                return (
+                  <button key={r.c.id} onClick={function(){ openCard(r.c); }}
+                    style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",padding:"6px 2px",cursor:"pointer",fontFamily:"inherit"}}>
+                    <span style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:4}}>
+                      <span style={{color:TXT,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.c.title}</span>
+                      <span style={{color:"#EF5350",fontWeight:700,flexShrink:0,marginLeft:8}}>{r.n}</span>
+                    </span>
+                    <span style={{display:"block",height:5,borderRadius:99,background:"rgba(255,255,255,.07)",overflow:"hidden"}}>
+                      <span style={{display:"block",height:"100%",width:(r.n / objMax * 100) + "%",background:"linear-gradient(90deg," + m.color + ",#EF5350)",borderRadius:99}}/>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
-        {/* All cards at a glance */}
+        {/* Card performance */}
         {allCards.length > 0 && (
           <div style={Object.assign({}, panel, {marginTop:16,padding:"16px 0 6px",overflowX:"auto"})}>
-            <div style={{fontSize:16,fontWeight:700,color:TXT,margin:"0 18px 10px"}}>All cards</div>
-            <div style={{display:"grid",gridTemplateColumns:"minmax(160px,2.2fr) 110px repeat(3, minmax(70px,1fr))",gap:10,fontSize:13,color:TXT3,padding:"0 18px 8px",borderBottom:"1px solid "+LINE}}>
-              <span>Card</span><span>Type</span><span style={{textAlign:"right"}}>Responses</span><span style={{textAlign:"right"}}>Linked from</span><span style={{textAlign:"right"}}>Path</span>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",margin:"0 18px 10px",gap:12,flexWrap:"wrap"}}>
+              <div style={hdr}>Card performance</div>
+              <div style={{fontSize:12,color:TXT3}}>Reach = % of sessions that visited · Ended here = sessions that stopped on it · Close after = live close rate when visited</div>
             </div>
-            {pitchTypes.map(function(t) {
-              return allCards.filter(function(c){ return c.type === t; }).sort(function(a,b){ return (a.sortIndex||0)-(b.sortIndex||0); }).map(function(c) {
-                var m = TM[c.type] || TM.pitch;
-                var nAns = (c.answers || []).filter(function(a){ return a && a.label; }).length;
-                var nIn = allCards.filter(function(p){ return p.id !== c.id && (p.answers || []).some(function(a){ return a && a.next === c.id; }); }).length;
+            <div style={{display:"grid",gridTemplateColumns:gridCols,gap:10,fontSize:13,color:TXT3,padding:"0 18px 8px",borderBottom:"1px solid "+LINE,minWidth:720}}>
+              {cols.map(function(col) {
+                var on = perfSort.key === col[0];
                 return (
-                  <button key={c.id} onClick={function(){ openCard(c); }}
-                    style={{display:"grid",gridTemplateColumns:"minmax(160px,2.2fr) 110px repeat(3, minmax(70px,1fr))",gap:10,alignItems:"center",width:"100%",textAlign:"left",background:"transparent",border:"none",borderBottom:"1px solid "+LINE,padding:"10px 18px",cursor:"pointer",fontFamily:"inherit",fontSize:14,color:TXT2}}>
-                    <span style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-                      <span style={{width:4,height:20,borderRadius:99,background:m.color,flexShrink:0}}/>
-                      <span style={{fontWeight:600,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title || "Untitled"}</span>
-                      {c.id === deck.rootCard && <MiniBadge color={GREEN}>Entry</MiniBadge>}
-                    </span>
-                    <span style={{color:m.color,fontSize:13,fontWeight:600}}>{m.label}</span>
-                    <span style={{textAlign:"right"}}>{nAns}</span>
-                    <span style={{textAlign:"right"}}>{nIn}</span>
-                    <span style={{textAlign:"right",color:c.intendedPath?GREEN:TXT3}}>{c.intendedPath ? "★ Intended" : "—"}</span>
+                  <button key={col[0]} aria-sort={on ? (perfSort.dir === "asc" ? "ascending" : "descending") : "none"}
+                    onClick={function(){ setPerfSort(on ? { key:col[0], dir:perfSort.dir === "asc" ? "desc" : "asc" } : { key:col[0], dir:col[0] === "title" ? "asc" : "desc" }); }}
+                    style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,display:"flex",gap:4,alignItems:"center",justifyContent:col[2]==="left"?"flex-start":"flex-end"}}>
+                    {col[1]}<span style={{fontSize:10,opacity:on?1:.35}}>{on ? (perfSort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
                   </button>
                 );
-              });
+              })}
+            </div>
+            {rows.map(function(r) {
+              var c = r.c, m = TM[c.type] || TM.pitch;
+              var cell = { textAlign:"right", fontVariantNumeric:"tabular-nums" };
+              return (
+                <button key={c.id} onClick={function(){ openCard(c); }}
+                  style={{display:"grid",gridTemplateColumns:gridCols,gap:10,alignItems:"center",width:"100%",minWidth:720,textAlign:"left",background:"transparent",border:"none",borderBottom:"1px solid "+LINE,padding:"10px 18px",cursor:"pointer",fontFamily:"inherit",fontSize:14,color:TXT2}}>
+                  <span style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                    <span style={{width:4,height:22,borderRadius:99,background:m.color,flexShrink:0}}/>
+                    <span style={{minWidth:0}}>
+                      <span style={{display:"block",fontWeight:600,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title || "Untitled"}</span>
+                      <span style={{display:"block",fontSize:12,color:m.color}}>{m.label}{c.id === deck.rootCard ? " · Entry" : ""}</span>
+                    </span>
+                  </span>
+                  <span style={Object.assign({}, cell, {color:TXT,fontWeight:700})}>{loading ? "…" : r.visits}</span>
+                  <span style={cell}>{r.reach === null ? "—" : r.reach + "%"}</span>
+                  <span style={cell}>{fmtDur(r.avg)}</span>
+                  <span style={Object.assign({}, cell, {color:r.ended >= 40 && c.type !== "close" ? "#EF8070" : TXT2})}>{r.ended === null ? "—" : r.ended + "%"}</span>
+                  <span style={Object.assign({}, cell, {color:r.close === null ? TXT3 : r.close >= 30 ? GREEN : TXT2})}>{r.close === null ? "—" : r.close + "%"}</span>
+                  <span style={Object.assign({}, cell, {fontSize:13})} title={r.nIn + " in · " + r.nAns + " out"}>{r.nIn} in · {r.nAns} out</span>
+                  <span style={Object.assign({}, cell, {color:c.intendedPath?GREEN:TXT3})}>{c.intendedPath ? "★" : "—"}</span>
+                </button>
+              );
             })}
           </div>
         )}

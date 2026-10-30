@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole } from "../lib/constants";
+import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../lib/constants";
 import { apiGet } from "../lib/api";
 import { SectionHdr, StatBox, BarRow } from "./ui";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "./Sessions";
@@ -384,7 +384,7 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
                               {deckStat ? (
                                 <>
                                   <span style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{deckStat.total} session{deckStat.total!==1?"s":""}</span>
-                                  {deckStat.live > 0 && <span style={{fontSize:10,color:"rgba(168,255,62,.65)"}}>{deckWinRate}% close</span>}
+                                  {deckStat.live > 0 && <span style={{fontSize:10,color:accentA(.65)}}>{deckWinRate}% close</span>}
                                   {deckStat.practice > 0 && <span style={{fontSize:10,color:"rgba(0,180,255,.55)"}}>{deckStat.practice} practice</span>}
                                 </>
                               ) : (
@@ -464,7 +464,7 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
                     <BarRow label="Contacted"      value={stats.contacted}     denom={stats.live}          color={SESS_COLOR}/>
                     <BarRow label="Into discovery" value={stats.pastIntro}     denom={stats.contacted}     color="#00B4FF"/>
                     <BarRow label="Reached close"  value={stats.reachedClose}  denom={stats.pastIntro}     color="#66BB6A"/>
-                    <BarRow label="Sold"           value={stats.sold}          denom={stats.reachedClose}  color="#A8FF3E"/>
+                    <BarRow label="Sold"           value={stats.sold}          denom={stats.reachedClose}  color={SESS_COLOR}/>
                   </div>
                 </div>
               )}
@@ -484,8 +484,8 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
                         var rankColor = rankNum === 1 ? "#FFD700" : rankNum === 2 ? "#C0C0C0" : rankNum === 3 ? "#CD7F32" : "rgba(255,255,255,.3)";
                         return (
                           <div key={entry.userId} style={{
-                            background: isMe ? "rgba(168,255,62,.07)" : "rgba(255,255,255,.04)",
-                            border: "1px solid " + (isMe ? "rgba(168,255,62,.3)" : "rgba(255,255,255,.07)"),
+                            background: isMe ? accentA(.07) : "rgba(255,255,255,.04)",
+                            border: "1px solid " + (isMe ? accentA(.3) : "rgba(255,255,255,.07)"),
                             borderRadius:12,padding:"10px 13px",display:"flex",alignItems:"center",gap:10
                           }}>
                             <div style={{fontSize:13,fontWeight:900,color:rankColor,minWidth:22,textAlign:"center"}}>#{rankNum}</div>

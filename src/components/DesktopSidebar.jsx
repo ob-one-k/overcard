@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { isAdminRole, roleMeta } from "../lib/constants";
+import { isAdminRole, roleMeta, SESS_COLOR } from "../lib/constants";
+import { OrgMark } from "./OrgMark";
 
 // ─── DESKTOP SIDEBAR ──────────────────────────────────────────────────────────
 // Left sidebar navigation for desktop layout.
@@ -78,8 +79,8 @@ export function DesktopSidebar({
               </button>
             ) : (
               <>
-                <div style={{width:36,height:36,borderRadius:11,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:19,fontWeight:900,color:"#fff",flexShrink:0}}>O</div>
-                {!isCollapsed && <span style={{fontSize:18,fontWeight:800,color:"#fff",letterSpacing:-.3,flex:inDrawer?1:undefined}}>OverCard</span>}
+                <OrgMark authUser={authUser} size={36}/>
+                {!isCollapsed && <span title={authUser.orgName || "OverCard"} style={{fontSize:18,fontWeight:800,color:"#fff",letterSpacing:-.3,flex:inDrawer?1:undefined,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{authUser.orgName || "OverCard"}</span>}
                 {inDrawer && (
                   <button
                     onClick={function(){ setDrawerOpen(false); }}
@@ -181,7 +182,7 @@ export function DesktopSidebar({
                   </span>
                 )}
                 {t.id === "play" && sessionActive && (
-                  <span aria-label="Session in progress" style={{width:8,height:8,borderRadius:"50%",background:"#A8FF3E",flexShrink:0,animation:"savePulse 1.2s ease infinite",position:isCollapsed?"absolute":"static",top:8,right:8}}/>
+                  <span aria-label="Session in progress" style={{width:8,height:8,borderRadius:"50%",background:SESS_COLOR,flexShrink:0,animation:"savePulse 1.2s ease infinite",position:isCollapsed?"absolute":"static",top:8,right:8}}/>
                 )}
                 {locked && !isCollapsed && (
                   <span aria-hidden="true" style={{fontSize:12,color:"rgba(255,255,255,.35)",flexShrink:0}}>🔒</span>

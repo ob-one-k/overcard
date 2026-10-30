@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid } from "../../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA } from "../../lib/constants";
 import { apiGet, apiPost, apiPostWithRetry } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
 import { useRecorder, buildAudioSegments } from "../../lib/useRecorder";
 import { uploadSessionAudio } from "../../lib/audioUpload";
 import { RecordingSetup, RecIndicator } from "../RecordingSetup";
+import { StudyPopout } from "../StudyCard";
+import { ReferencePicker, ReferencePanel } from "../ReferenceSession";
 
 // ─── PLAY DESKTOP ─────────────────────────────────────────────────────────────
 // Desktop layout for the Play tab.
@@ -23,6 +25,16 @@ import { RecordingSetup, RecIndicator } from "../RecordingSetup";
 var MUTED   = "rgba(255,255,255,.55)";
 var SUBTLE  = "rgba(255,255,255,.4)";
 var PANEL   = { background:"rgba(255,255,255,.045)", border:"1px solid rgba(255,255,255,.08)", borderRadius:16 };
+
+// Hover / focus affordance for the clickable study rows (inline styles can't express :hover)
+var STUDY_ROW_CSS =
+  ".oc-study-row{transition:background .15s}" +
+  ".oc-study-row .oc-study-chev{opacity:0;transition:opacity .15s,transform .15s;transform:translateX(-4px)}" +
+  ".oc-study-row:hover:not(:disabled){background:rgba(255,255,255,.06)!important}" +
+  ".oc-study-row-obj:hover:not(:disabled){background:rgba(239,83,80,.13)!important}" +
+  ".oc-study-row:hover .oc-study-chev,.oc-study-row:focus-visible .oc-study-chev{opacity:1;transform:none}" +
+  ".oc-study-row:focus-visible{outline:2px solid rgba(255,255,255,.55);outline-offset:1px}" +
+  "@media (hover:none){.oc-study-row .oc-study-chev{opacity:.8;transform:none}}";
 
 function panelHdr(color) {
   return { fontSize:12, fontWeight:700, letterSpacing:1.1, textTransform:"uppercase", color: color || SUBTLE };
@@ -88,6 +100,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [recent,         setRecent]         = useState(null);
   var [recentScope,    setRecentScope]    = useState("self");
   var [vw,             setVw]             = useState(function() { return window.innerWidth; });
+  var [study,          setStudy]          = useState(null);   // null | { kind:"path", index } | { kind:"stack", stackId }
+  var [refSel,         setRefSel]         = useState(null);   // chosen reference-session option (live sessions only)
 
   // In-session navigation state (desktop navigator)
   var [pitchHist, setPitchHist] = useState(deck.rootCard ? [deck.rootCard] : []);
@@ -156,6 +170,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
     // Keep navigator state pointed at the current deck
     setPitchHist(deck.rootCard ? [deck.rootCard] : []);
     setObjMode(null);
+    setStudy(null);
   }, [deck.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcuts while a session is active (handler kept in a ref so it sees fresh state)
@@ -177,7 +192,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
       startTs:Date.now(), endTs:null,
       status:"active", outcome:"in_progress",
       sold:false, soldCardId:null, soldCardTitle:null, events:[],
+      referenceSessionId: pendingType === "live" && refSel ? refSel.id : null,
     };
+    setStudy(null);
     // Called from the Start click/Enter so the screen-share prompt (call audio) has its user gesture
     if (recordAudio) rec.start(s.id);
     setPitchHist(deck.rootCard ? [deck.rootCard] : []);
@@ -211,7 +228,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           // Upload runs in the background; the review shows its progress / retry
           if (audio) uploadSessionAudio(finished.id, audio.blob, audio.mimeType, audio.durationMs);
           setSaving(false); setActiveSession(null); setSessionEvents([]);
-          setPlayView("home"); setNewName(""); setNewDesc(""); setNameError(false);
+          setPlayView("home"); setNewName(""); setNewDesc(""); setNameError(false); setRefSel(null);
           onPortalToReview(finished.id);
         })
         .catch(function() {
@@ -596,7 +613,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
 
             {/* Note composer */}
             <div style={{flexShrink:0,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-              <label htmlFor="desk-note" style={Object.assign({},panelHdr("rgba(168,255,62,.8)"),{display:"block",marginBottom:8})}>📝 Add note</label>
+              <label htmlFor="desk-note" style={Object.assign({},panelHdr(accentA(.8)),{display:"block",marginBottom:8})}>📝 Add note</label>
               <textarea
                 id="desk-note"
                 ref={noteRef}
@@ -611,23 +628,30 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:8}}>
                 <span style={{fontSize:12,color:SUBTLE}}>Enter to save · N to focus</span>
                 <button onClick={submitPanelNote} disabled={!panelNote.trim() || !card}
-                  style={{background:"rgba(168,255,62,.14)",border:"1px solid rgba(168,255,62,.35)",borderRadius:9,padding:"6px 14px",cursor:(!panelNote.trim()||!card)?"not-allowed":"pointer",color:SESS_COLOR,fontSize:13,fontWeight:700,fontFamily:"inherit",opacity:(!panelNote.trim()||!card)?.35:1}}>
+                  style={{background:accentA(.14),border:("1px solid "+accentA(.35)),borderRadius:9,padding:"6px 14px",cursor:(!panelNote.trim()||!card)?"not-allowed":"pointer",color:SESS_COLOR,fontSize:13,fontWeight:700,fontFamily:"inherit",opacity:(!panelNote.trim()||!card)?.35:1}}>
                   Save note
                 </button>
               </div>
             </div>
 
+            {/* Reference session — their path synced to the card on screen */}
+            {activeSession.referenceSessionId && (
+              <div style={{flex:"2 1 0",minHeight:180,display:"flex",flexDirection:"column",borderBottom:"1px solid rgba(255,255,255,.06)",background:"rgba(179,157,219,.035)"}}>
+                <ReferencePanel refId={activeSession.referenceSessionId} currentCardId={card ? card.id : null} variant="rail"/>
+              </div>
+            )}
+
             {/* Notes list */}
-            <div style={{flex:1,overflowY:"auto",padding:"14px 16px"}}>
+            <div style={{flex:1,overflowY:"auto",padding:"14px 16px",minHeight:activeSession.referenceSessionId?100:undefined}}>
               <div style={Object.assign({},panelHdr(),{marginBottom:10})}>Notes{noteEvents.length > 0 ? " (" + noteEvents.length + ")" : ""}</div>
               {noteEvents.length === 0 && (
                 <div style={{fontSize:14,color:SUBTLE,lineHeight:1.6}}>Notes you add are pinned to the card you're on and show up in the session review.</div>
               )}
               {noteEvents.slice().reverse().map(function(ev, i) {
                 return (
-                  <div key={i} style={{background:"rgba(168,255,62,.05)",border:"1px solid rgba(168,255,62,.13)",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div key={i} style={{background:accentA(.05),border:("1px solid "+accentA(.13)),borderRadius:10,padding:"10px 12px",marginBottom:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:4}}>
-                      <span style={{fontSize:12,color:"rgba(168,255,62,.75)",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.cardTitle || "General"}</span>
+                      <span style={{fontSize:12,color:accentA(.75),fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.cardTitle || "General"}</span>
                       <span style={{fontSize:12,color:SUBTLE,flexShrink:0,fontFeatureSettings:'"tnum"'}}>{fmtClock(Math.max(0, Math.floor((ev.ts - activeSession.startTs) / 1000)))}</span>
                     </div>
                     <div style={{fontSize:14,color:"rgba(255,255,255,.85)",lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{ev.text}</div>
@@ -733,6 +757,13 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
             </div>
           </div>
 
+          {/* Reference session (live only) */}
+          {pendingType === "live" && (
+            <div style={{marginTop:14}}>
+              <ReferencePicker deckId={deck.id} value={refSel} onChange={setRefSel} size="lg"/>
+            </div>
+          )}
+
           {/* Audio recording */}
           <div style={{marginTop:14}}>
             <RecordingSetup rec={rec} enabled={recordAudio} setEnabled={setRecordAudio} size="lg"/>
@@ -760,7 +791,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
               var ready = !!(stack.rootCard && stack.cards[stack.rootCard]);
               var tc = stack.targetCard && stack.targetCard !== "__pick" ? deck.cards[stack.targetCard] : null;
               return (
-                <div key={stack.id} style={{display:"flex",alignItems:"center",gap:11,background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.18)",borderRadius:12,padding:"10px 12px"}}>
+                <button key={stack.id} className="oc-study-row oc-study-row-obj" onClick={function(){ setStudy({ kind:"stack", stackId:stack.id }); }} disabled={n === 0}
+                  title={n > 0 ? "Study this objection stack" : "This stack has no cards yet"}
+                  style={{display:"flex",alignItems:"center",gap:11,width:"100%",textAlign:"left",fontFamily:"inherit",background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.18)",borderRadius:12,padding:"10px 12px",minHeight:touch?52:undefined,cursor:n>0?"pointer":"default",opacity:n>0?1:.6}}>
                   <span style={{fontSize:20,flexShrink:0}}>{stack.icon}</span>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stack.label}</div>
@@ -768,7 +801,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
                       {ready ? n + " card" + (n!==1?"s":"") + (tc ? " · then " + tc.title : " · returns to card") : "No entry card yet"}
                     </div>
                   </div>
-                </div>
+                  {n > 0 && <span className="oc-study-chev" aria-hidden="true" style={{fontSize:13,color:"rgba(239,83,80,.75)",flexShrink:0}}>Study ›</span>}
+                </button>
               );
             })}
           </div>
@@ -782,7 +816,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
         <section style={Object.assign({},PANEL,{flex:narrow?"none":"1 1 0",minHeight:narrow?0:200,display:"flex",flexDirection:"column",overflow:"hidden"})}>
           <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",padding:"18px 22px 12px",flexShrink:0}}>
             <h2 style={{margin:0,fontSize:17,fontWeight:700,color:"#fff"}}>Intended call path</h2>
-            <span style={{fontSize:13,color:MUTED}}>{outline.length} step{outline.length!==1?"s":""}</span>
+            <span style={{fontSize:13,color:MUTED}}>{outline.length} step{outline.length!==1?"s":""}{outline.length > 0 ? " · " + (touch ? "tap" : "click") + " a step to study" : ""}</span>
           </div>
           <ol style={{listStyle:"none",margin:0,padding:"0 14px 16px",overflowY:"auto",flex:1}}>
             {outline.length === 0 && <li style={{fontSize:14,color:SUBTLE,padding:"0 8px"}}>Mark cards as “intended path” in the Cards tab to outline the ideal call here.</li>}
@@ -790,7 +824,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
               var om = TM[oc.type] || TM.pitch;
               var first = (oc.overview || []).filter(function(b){ return b && b.trim(); })[0];
               return (
-                <li key={oc.id} style={{display:"flex",gap:12,padding:"8px 8px",borderRadius:10}}>
+                <li key={oc.id}>
+                <button className="oc-study-row" onClick={function(){ setStudy({ kind:"path", index:i }); }} title="Study this card"
+                  style={{display:"flex",gap:12,width:"100%",textAlign:"left",background:"transparent",border:"none",fontFamily:"inherit",cursor:"pointer",padding:"8px 8px",borderRadius:10,minHeight:touch?52:undefined}}>
                   <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0}}>
                     <span style={{width:28,height:28,borderRadius:"50%",border:"2px solid "+om.color,color:om.color,fontSize:13,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{i + 1}</span>
                     {i < outline.length - 1 && <span style={{width:2,flex:1,minHeight:10,background:"rgba(255,255,255,.1)",marginTop:4}}/>}
@@ -802,6 +838,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
                     </div>
                     {first && <div style={{fontSize:13,color:MUTED,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{first}</div>}
                   </div>
+                  <span className="oc-study-chev" aria-hidden="true" style={{alignSelf:"center",fontSize:13,color:"rgba(255,255,255,.35)",flexShrink:0}}>Study ›</span>
+                </button>
                 </li>
               );
             })}
@@ -844,6 +882,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           </div>
         </section>
       </div>
+
+      <style>{STUDY_ROW_CSS}</style>
+      {study && <StudyPopout deck={deck} start={study} onClose={function(){ setStudy(null); }}/>}
     </div>
   );
 }

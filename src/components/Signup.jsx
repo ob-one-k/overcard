@@ -1,7 +1,9 @@
+import { SESS_COLOR } from "../lib/constants";
 import { useState, useEffect } from "react";
 import { apiGet, apiPost, setStoredToken } from "../lib/api";
 import { solidBtn, labelSt, inputSt } from "../lib/styles";
 import { useDesktop } from "../lib/useDesktop";
+import { BrandingFields } from "./BrandingFields";
 
 // ─── SIGNUP SCREEN ────────────────────────────────────────────────────────────
 // Two paths:
@@ -36,7 +38,7 @@ function formatCode(v) {
 }
 
 var EMPTY_PERSON = { firstName:"", lastName:"", email:"", phone:"", password:"", confirm:"" };
-var EMPTY_ORG    = { name:"", industry:"", website:"", phone:"", address:"" };
+var EMPTY_ORG    = { name:"", industry:"", website:"", phone:"", address:"", logo:null, accentColor:null };
 
 export function SignupScreen({ initialCode, onLogin, onBack }) {
   var desktop = useDesktop();
@@ -89,7 +91,8 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
       if (pErr) { setErr(pErr); return; }
       path = "/auth/create-org";
       body.masterCode = master;
-      body.org = { name: org.name.trim(), industry: org.industry.trim(), website: org.website.trim(), phone: org.phone.trim(), address: org.address.trim() };
+      body.org = { name: org.name.trim(), industry: org.industry.trim(), website: org.website.trim(), phone: org.phone.trim(), address: org.address.trim(),
+        logo: org.logo || null, accentColor: org.accentColor || null };
     }
     setBusy(true);
     apiPost(path, body)
@@ -203,6 +206,10 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
                   {field("Company phone", org.phone, function(v){ setO("phone", v); }, { optional:true, type:"tel" })}
                   {field("Address", org.address, function(v){ setO("address", v); }, { optional:true })}
                 </div>
+                <div style={{marginTop:14}}>
+                  <BrandingFields logo={org.logo} accent={org.accentColor} size={wide ? "lg" : undefined} orgName={org.name}
+                    onChange={function(patch){ setOrg(function(p){ return Object.assign({}, p, patch); }); }}/>
+                </div>
               </div>
             </>
           )}
@@ -213,7 +220,7 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
           </div>
 
           <button type="submit" disabled={busy}
-            style={Object.assign({}, solidBtn("#A8FF3E"), {marginTop:4,width:"100%"})}>
+            style={Object.assign({}, solidBtn(SESS_COLOR), {marginTop:4,width:"100%"})}>
             {busy ? "Creating account…" : mode === "join" ? "Join organization" : "Create organization"}
           </button>
           <div style={{fontSize:13,color:"rgba(255,255,255,.4)",textAlign:"center"}}>

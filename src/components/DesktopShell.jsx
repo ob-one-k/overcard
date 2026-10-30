@@ -1,9 +1,10 @@
 import { useState, useEffect, useContext } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
 import DesktopCtx from "../lib/DesktopCtx";
-import { isAdminRole, roleMeta } from "../lib/constants";
+import { isAdminRole, roleMeta, SESS_COLOR, accentA } from "../lib/constants";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
+import { NotificationBell } from "./NotificationBell";
 
 // ─── DESKTOP SHELL ────────────────────────────────────────────────────────────
 // Root layout wrapper for desktop. Renders the sidebar + top bar + content area.
@@ -19,6 +20,7 @@ export function DesktopShell({
   serverOk,
   onOpenDeckSwitcher, onOpenProfile,
   onOpenCommandPalette,
+  onOpenSession,
   tabContextData,
   children
 }) {
@@ -78,8 +80,8 @@ export function DesktopShell({
       if (sessionActive && d.sessionName) {
         return (
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:8,height:8,borderRadius:"50%",background:"#A8FF3E",animation:"savePulse 1.2s ease infinite",flexShrink:0}}/>
-            <span style={{fontSize:compact?14:15,fontWeight:700,color:"#A8FF3E",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:compact?260:420}}>{d.sessionName}</span>
+            <div style={{width:8,height:8,borderRadius:"50%",background:SESS_COLOR,animation:"savePulse 1.2s ease infinite",flexShrink:0}}/>
+            <span style={{fontSize:compact?14:15,fontWeight:700,color:SESS_COLOR,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:compact?260:420}}>{d.sessionName}</span>
             {d.startTs && <ElapsedTimer startTs={d.startTs}/>}
           </div>
         );
@@ -262,6 +264,8 @@ export function DesktopShell({
             <span style={{fontSize:compact?12:13,color:"rgba(255,255,255,.55)"}}>{saveLabel}</span>
           </div>
 
+          <NotificationBell onOpenSession={onOpenSession} size={compact ? "lg" : undefined}/>
+
           {/* Profile avatar */}
           <button
             onClick={onOpenProfile}
@@ -303,7 +307,7 @@ function ElapsedTimer({ startTs }) {
   var ss = elapsed % 60;
   var str = mm + ":" + (ss < 10 ? "0" : "") + ss;
   return (
-    <span style={{fontSize:13,fontWeight:600,color:"rgba(168,255,62,.85)",fontFeatureSettings:'"tnum"',letterSpacing:.5,background:"rgba(168,255,62,.1)",borderRadius:99,padding:"2px 9px",flexShrink:0}}>
+    <span style={{fontSize:13,fontWeight:600,color:accentA(.85),fontFeatureSettings:'"tnum"',letterSpacing:.5,background:accentA(.1),borderRadius:99,padding:"2px 9px",flexShrink:0}}>
       {str}
     </span>
   );

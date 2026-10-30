@@ -1,3 +1,4 @@
+import { SESS_COLOR, accentA } from "../lib/constants";
 import { useState, useEffect, useRef } from "react";
 import { ghostSm, inputSt } from "../lib/styles";
 
@@ -9,7 +10,7 @@ function LevelBar({ level, height, color }) {
   var pct = Math.round(Math.min(1, level || 0) * 100);
   return (
     <div style={{flex:1,height:height||6,background:"rgba(255,255,255,.1)",borderRadius:99,overflow:"hidden"}} aria-hidden="true">
-      <div style={{width:pct+"%",height:"100%",background:pct>85?"#FFB300":(color||"#A8FF3E"),borderRadius:99,transition:"width .1s linear"}}/>
+      <div style={{width:pct+"%",height:"100%",background:pct>85?"#FFB300":(color||SESS_COLOR),borderRadius:99,transition:"width .1s linear"}}/>
     </div>
   );
 }
@@ -48,13 +49,13 @@ export function RecordingSetup({ rec, enabled, setEnabled, size }) {
   var granted = rec.permission === "granted";
   var toggle = (
     <button type="button" role="switch" aria-checked={!!enabled} aria-label="Record audio" onClick={function(){ setEnabled(!enabled); }}
-      style={{width:lg?42:38,height:lg?24:22,borderRadius:99,border:"none",cursor:"pointer",background:enabled?"#A8FF3E":"rgba(255,255,255,.18)",transition:"background .15s",position:"relative",flexShrink:0}}>
+      style={{width:lg?42:38,height:lg?24:22,borderRadius:99,border:"none",cursor:"pointer",background:enabled?SESS_COLOR:"rgba(255,255,255,.18)",transition:"background .15s",position:"relative",flexShrink:0}}>
       <div style={{position:"absolute",top:3,left:enabled?(lg?21:18):3,width:lg?18:16,height:lg?18:16,borderRadius:"50%",background:enabled?"#000":"rgba(255,255,255,.8)",transition:"left .15s"}}/>
     </button>
   );
 
   return (
-    <div style={{background:"rgba(168,255,62,.05)",border:"1px solid rgba(168,255,62,.18)",borderRadius:12,padding:lg?"12px 14px":"11px 14px"}}>
+    <div style={{background:accentA(.05),border:("1px solid "+accentA(.18)),borderRadius:12,padding:lg?"12px 14px":"11px 14px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
         <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
           <span style={{fontSize:lg?18:14}}>🎙️</span>
@@ -77,7 +78,7 @@ export function RecordingSetup({ rec, enabled, setEnabled, size }) {
               </div>
               {rec.permission !== "denied" && (
                 <button type="button" onClick={rec.requestPermission}
-                  style={ghostSm({fontSize:fs.body,color:"#A8FF3E",borderColor:"rgba(168,255,62,.4)"})}>
+                  style={ghostSm({fontSize:fs.body,color:SESS_COLOR,borderColor:accentA(.4)})}>
                   Allow microphone
                 </button>
               )}
@@ -110,7 +111,7 @@ export function RecordingSetup({ rec, enabled, setEnabled, size }) {
           {rec.callAudioSupported && (
             <label style={{display:"flex",alignItems:"flex-start",gap:9,cursor:"pointer",fontSize:fs.body,color:"rgba(255,255,255,.75)"}}>
               <input type="checkbox" checked={rec.includeCallAudio} onChange={function(e){ rec.setIncludeCallAudio(e.target.checked); }}
-                style={{marginTop:2,width:16,height:16,accentColor:"#A8FF3E",flexShrink:0}}/>
+                style={{marginTop:2,width:16,height:16,accentColor:SESS_COLOR,flexShrink:0}}/>
               <span>
                 <strong style={{color:"#fff"}}>Also record call audio</strong>
                 <span style={{display:"block",color:"rgba(255,255,255,.45)",fontSize:fs.small,marginTop:2,lineHeight:1.5}}>

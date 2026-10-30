@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta } from "../lib/constants";
+import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
+import { BrandingFields } from "./BrandingFields";
+import { useDesktop } from "../lib/useDesktop";
 
 // ─── DECK SWITCHER SHEET ──────────────────────────────────────────────────────
 export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, onEditDeck, orgUsers, orgTeams }) {
@@ -65,7 +67,7 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
                   var icon = v==="public" ? "🌐" : "🔒";
                   return (
                     <button key={v} onClick={function(){setNf(function(p){return Object.assign({},p,{visibility:v});});}}
-                      style={{flex:1,background:on?"rgba(168,255,62,.1)":"rgba(255,255,255,.07)",border:"1.5px solid "+(on?"rgba(168,255,62,.35)":"rgba(255,255,255,.1)"),borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>
+                      style={{flex:1,background:on?accentA(.1):"rgba(255,255,255,.07)",border:"1.5px solid "+(on?accentA(.35):"rgba(255,255,255,.1)"),borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>
                       <div style={{fontSize:14}}>{icon}</div>
                       <div style={{fontSize:9,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400,marginTop:2}}>{v==="public"?"Public":"Private"}</div>
                     </button>
@@ -133,7 +135,7 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
                         var icon = v==="public" ? "🌐" : "🔒";
                         return (
                           <button key={v} onClick={function(){setEf(function(p){return Object.assign({},p,{visibility:v});});}}
-                            style={{flex:1,background:on?"rgba(168,255,62,.1)":"rgba(255,255,255,.07)",border:"1.5px solid "+(on?"rgba(168,255,62,.35)":"rgba(255,255,255,.1)"),borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>
+                            style={{flex:1,background:on?accentA(.1):"rgba(255,255,255,.07)",border:"1.5px solid "+(on?accentA(.35):"rgba(255,255,255,.1)"),borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>
                             <div style={{fontSize:14}}>{icon}</div>
                             <div style={{fontSize:9,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400,marginTop:2}}>{v==="public"?"Public":"Private"}</div>
                           </button>
@@ -272,6 +274,8 @@ var DEV_ORGS = [
 ];
 
 export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
+  // Rendered before MainApp provides DesktopCtx, so read the layout directly
+  var lay = useDesktop();
   var [email,   setEmail]   = useState("");
   var [pass,    setPass]    = useState("");
   var [err,     setErr]     = useState("");
@@ -323,8 +327,176 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
 
   var accentColor = "#00B4FF"; // always on-theme; org colors only identify org tiles
 
+  // Desktop / tablet get a larger sign-in; wide screens split into brand panel + form
+  var big   = lay.isDesktop || lay.isTablet;
+  var split = lay.isDesktop || (lay.isTablet && window.innerWidth >= 960);
+  var F = big
+    ? { label:12, input:16, inPad:"14px 16px", title:26, small:14, tileName:15, tileIcon:44, btnPad:"15px 20px", btn:16, pick:14, pickName:14, pickMail:12 }
+    : { label:9,  input:14, inPad:"11px 14px", title:14, small:13, tileName:11, tileIcon:34, btnPad:"12px 20px", btn:14, pick:12, pickName:12, pickMail:10 };
+  var lbl = big ? Object.assign({}, labelSt(), { fontSize:12, marginBottom:8 }) : labelSt();
+  var inp = inputSt({ marginBottom:0, fontSize:F.input, padding:F.inPad, borderRadius:big ? 14 : 12 });
+
+  var brand = (
+    <div style={{textAlign:split ? "left" : "center",marginBottom:split ? 0 : 16}}>
+      <div style={{display:"inline-block",marginBottom:split ? 18 : 2}}>
+        <img src="/icon.png" alt="OverCard"
+          style={{width:split ? 340 : big ? 260 : 330,height:split ? 230 : big ? 170 : 220,objectFit:"contain",marginLeft:split ? -70 : 0,filter:"drop-shadow(0 6px 24px rgba(0,180,255,.4))"}}/>
+      </div>
+      <div style={{fontSize:split ? 52 : big ? 34 : 22,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",marginBottom:split ? 10 : 4,lineHeight:1.1}}>OverCard</div>
+      <div style={{fontSize:split ? 20 : big ? 15 : 11,color:split ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.35)",letterSpacing:split ? 0 : .5}}>
+        {split ? "Run every sales call like your best rep." : "Sales Deck Platform"}
+      </div>
+      {split && (
+        <div style={{display:"flex",flexDirection:"column",gap:18,marginTop:36}}>
+          {[
+            ["🃏", "Guided call decks", "Branching scripts, objection stacks and delivery cues — live, in the call."],
+            ["🎙️", "Recorded calls", "Full call audio plus a clip for every card, reviewable from any device."],
+            ["📊", "Coaching that sticks", "Team leaderboards, path analytics and feedback on every session."],
+          ].map(function(f) {
+            return (
+              <div key={f[1]} style={{display:"flex",gap:16,alignItems:"flex-start"}}>
+                <div style={{width:48,height:48,borderRadius:14,background:"rgba(0,180,255,.1)",border:"1px solid rgba(0,180,255,.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{f[0]}</div>
+                <div>
+                  <div style={{fontSize:17,fontWeight:700,color:"#fff"}}>{f[1]}</div>
+                  <div style={{fontSize:15,color:"rgba(255,255,255,.55)",marginTop:3,lineHeight:1.5,maxWidth:420}}>{f[2]}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  var orgPicker = (
+    <div style={{marginBottom:big ? 18 : 14}}>
+      <div style={{fontSize:F.label,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1.4,textTransform:"uppercase",marginBottom:big ? 10 : 8}}>Demo organizations</div>
+      <div style={{display:"flex",gap:big ? 12 : 8}}>
+        {DEV_ORGS.map(function(org) {
+          var active = selOrg && selOrg.id === org.id;
+          return (
+            <button key={org.id} onClick={function(){ pickOrg(org); }}
+              style={{flex:1,display:"flex",flexDirection:big ? "row" : "column",alignItems:"center",justifyContent:big ? "flex-start" : "center",gap:big ? 12 : 5,padding:big ? "14px 16px" : "12px 10px",background:active?"rgba(0,180,255,.08)":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?"rgba(0,180,255,.4)":"rgba(255,255,255,.09)"),borderRadius:big ? 16 : 14,cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}}>
+              <div style={{width:F.tileIcon,height:F.tileIcon,borderRadius:big ? 12 : 10,background:active?"rgba(0,180,255,.15)":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?"rgba(0,180,255,.35)":"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:big ? 20 : 16,fontWeight:700,color:active?"#00B4FF":"rgba(255,255,255,.5)",flexShrink:0}}>
+                {org.name[0]}
+              </div>
+              <div style={{fontSize:F.tileName,fontWeight:700,color:active?"#fff":"rgba(255,255,255,.6)",textAlign:big ? "left" : "center",lineHeight:1.3}}>{org.name}</div>
+              {active && <div style={{width:6,height:6,borderRadius:"50%",background:"#00B4FF",marginLeft:big ? "auto" : 0}}/>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  var userPicker = selOrg && (
+    <div style={{marginBottom:big ? 18 : 14,position:"relative"}}>
+      <button onClick={function(){ setShowPicker(function(p){ return !p; }); }}
+        style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:accentColor+"0f",border:"1px solid "+accentColor+"33",borderRadius:12,padding:big ? "13px 16px" : "10px 14px",cursor:"pointer",fontFamily:"inherit",color:"rgba(255,255,255,.75)",fontSize:F.pick,transition:"all .15s"}}>
+        <span style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:F.pick + 1}}>⚡</span>
+          <span>{email ? email : "Quick select a user"}</span>
+        </span>
+        <span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{showPicker ? "▲" : "▼"}</span>
+      </button>
+      {showPicker && (
+        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"#081428",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden",zIndex:20,animation:"dropIn .15s ease both",maxHeight:big ? 380 : 300,overflowY:"auto",boxShadow:"0 16px 48px rgba(0,0,0,.8)"}}>
+          <div style={{padding:"8px 14px 5px",fontSize:F.label,fontWeight:700,color:SESS_COLOR+"99",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid rgba(255,255,255,.05)"}}>Admins</div>
+          {selOrg.admins.map(function(u) {
+            return (
+              <button key={u.email} onClick={function(){ pickUser(u); }}
+                style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",padding:big ? "12px 16px" : "10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                <div>
+                  <div style={{fontSize:F.pickName,fontWeight:700,color:"#fff"}}>{u.label}</div>
+                  <div style={{fontSize:F.pickMail,color:"rgba(255,255,255,.35)",marginTop:1}}>{u.email}</div>
+                </div>
+                <span style={{fontSize:big ? 11 : 9,fontWeight:700,padding:"2px 8px",borderRadius:99,background:roleMeta(u.role||"admin").bg,color:roleMeta(u.role||"admin").color,border:"1px solid "+roleMeta(u.role||"admin").border,flexShrink:0}}>{u.role||"admin"}</span>
+              </button>
+            );
+          })}
+          {selOrg.teams.map(function(team) {
+            return (
+              <div key={team.name}>
+                <div style={{padding:"8px 14px 5px",fontSize:F.label,fontWeight:700,color:"rgba(0,180,255,.55)",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid rgba(255,255,255,.04)",borderTop:"1px solid rgba(255,255,255,.05)"}}>{team.name}</div>
+                {team.users.map(function(u) {
+                  return (
+                    <button key={u.email} onClick={function(){ pickUser(u); }}
+                      style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",padding:big ? "12px 16px" : "10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                      <div>
+                        <div style={{fontSize:F.pickName,fontWeight:700,color:"#fff"}}>{u.label}</div>
+                        <div style={{fontSize:F.pickMail,color:"rgba(255,255,255,.35)",marginTop:1}}>{u.email}</div>
+                      </div>
+                      <span style={{fontSize:big ? 11 : 9,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"rgba(0,180,255,.1)",color:"#00B4FF",border:"1px solid rgba(0,180,255,.2)",flexShrink:0}}>user</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  var form = (
+    <form onSubmit={submit} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.09)",borderRadius:big ? 22 : 18,padding:big ? "32px 32px" : "24px 24px",display:"flex",flexDirection:"column",gap:big ? 18 : 14,boxShadow:big ? "0 24px 60px rgba(0,0,0,.35)" : "none"}}>
+      <div>
+        <div style={{fontSize:F.title,fontWeight:700,color:"#fff",fontFamily:big ? "'Lora',serif" : "inherit"}}>{big ? "Welcome back" : "Sign in"}</div>
+        {big && <div style={{fontSize:F.small,color:"rgba(255,255,255,.45)",marginTop:4}}>Sign in to your organization's workspace.</div>}
+      </div>
+      {kickReason === "replaced" && (
+        <div style={{background:"rgba(239,83,80,.10)",border:"1px solid rgba(239,83,80,.28)",borderRadius:12,padding:"10px 14px",fontSize:F.small - 1,color:"#EF8070",lineHeight:1.5}}>
+          You were signed out because this account was accessed on another device.
+        </div>
+      )}
+      {err && <div role="alert" style={{background:"rgba(239,83,80,.12)",border:"1px solid rgba(239,83,80,.3)",borderRadius:10,padding:"10px 12px",fontSize:F.small - 1,color:"#EF5350"}}>{err}</div>}
+      {alreadyLoggedIn && (
+        <div style={{background:"rgba(255,165,0,.10)",border:"1px solid rgba(255,165,0,.3)",borderRadius:10,padding:"12px 14px",fontSize:F.small - 1,color:"#FFA040",display:"flex",flexDirection:"column",gap:10}}>
+          <div>This account is already active on another device.</div>
+          <div style={{display:"flex",gap:8}}>
+            <button type="button" disabled={busy} onClick={handleForceLogin}
+              style={Object.assign({},solidBtn("#FFA040"),{flex:1,fontSize:F.small - 1,padding:big ? "10px 12px" : "7px 12px",opacity:busy?0.6:1})}>
+              {busy ? "Signing in…" : "Log in anyway"}
+            </button>
+            <button type="button" onClick={function(){ setAlreadyLoggedIn(false); setErr(""); }}
+              style={Object.assign({},ghostBtn(),{flex:1,fontSize:F.small - 1,padding:big ? "10px 12px" : "7px 12px"})}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      <div>
+        <label style={lbl}>Email</label>
+        <input type="email" value={email} onChange={function(e){setEmail(e.target.value);}} placeholder="you@company.com"
+          style={inp} autoFocus autoComplete="email"/>
+      </div>
+      <div>
+        <label style={lbl}>Password</label>
+        <input type="password" value={pass} onChange={function(e){setPass(e.target.value);}} placeholder="••••••••"
+          style={inp} autoComplete="current-password"/>
+      </div>
+      <button type="submit" disabled={busy || alreadyLoggedIn}
+        style={Object.assign({},solidBtn(SESS_COLOR),{marginTop:2,fontSize:F.btn,padding:F.btnPad,borderRadius:big ? 14 : 14,opacity:(busy||alreadyLoggedIn)?0.6:1})}>
+        {busy ? "Signing in…" : "Sign In"}
+      </button>
+      {onShowSignup && (
+        <div style={{fontSize:F.small,color:"rgba(255,255,255,.45)",textAlign:"center"}}>
+          New to OverCard?{" "}
+          <button type="button" onClick={onShowSignup}
+            style={{background:"none",border:"none",color:"#00B4FF",cursor:"pointer",fontFamily:"inherit",fontSize:F.small,fontWeight:600,padding:0}}>
+            Create an account
+          </button>
+        </div>
+      )}
+    </form>
+  );
+
+  var footer = (
+    <div style={{textAlign:"center",marginTop:16,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>OverCard v2 · dev build</div>
+  );
+
   return (
-    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:24,overflowY:"auto"}}>
+    <div style={{width:"100%",minHeight:"100vh",height:split ? "100vh" : undefined,display:"flex",alignItems:split ? "stretch" : "center",justifyContent:"center",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:split ? 0 : big ? 32 : 24,overflowY:"auto",boxSizing:"border-box"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,700;1,400&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -334,148 +506,35 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
         @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
         @keyframes dropIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
         button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
-        button:not(:disabled):active{transform:scale(0.92)!important;filter:brightness(0.80);}
-        button:not(:disabled):hover{filter:brightness(1.12);}
+        button:not(:disabled):active{transform:scale(0.95)!important;filter:brightness(0.85);}
+        @media (hover:hover){button:not(:disabled):hover{filter:brightness(1.12);}}
         button:disabled{opacity:0.45!important;cursor:not-allowed;}
       `}</style>
-      <div style={{width:"100%",maxWidth:380,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both",paddingBottom:24}}>
-
-        {/* Logo */}
-        <div style={{textAlign:"center",marginBottom:16}}>
-          <div style={{display:"inline-block",marginBottom:2}}>
-            <img src="/icon.png" alt="OverCard"
-              style={{width:330,height:220,objectFit:"contain",filter:"drop-shadow(0 6px 24px rgba(0,180,255,.4))"}}/>
+      {split ? (
+        <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.1fr) minmax(440px,1fr)",width:"100%",minHeight:"100%"}}>
+          {/* Brand panel */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 56px",background:"radial-gradient(ellipse at 30% 40%, rgba(0,180,255,.14), transparent 60%), radial-gradient(ellipse at 80% 90%, rgba(168,255,62,.06), transparent 50%)",borderRight:"1px solid rgba(255,255,255,.06)"}}>
+            <div style={{maxWidth:520,animation:"fadeIn .5s cubic-bezier(.22,1,.36,1) both"}}>{brand}</div>
           </div>
-          <div style={{fontSize:22,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",marginBottom:4}}>OverCard</div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,.3)",letterSpacing:.5}}>Sales Deck Platform</div>
-        </div>
-
-        {/* ── Step 1: Org selector ── */}
-        <div style={{marginBottom:14}}>
-          <div style={{fontSize:9,fontWeight:700,color:"rgba(255,255,255,.3)",letterSpacing:1.4,textTransform:"uppercase",marginBottom:8}}>Select organization</div>
-          <div style={{display:"flex",gap:8}}>
-            {DEV_ORGS.map(function(org) {
-              var active = selOrg && selOrg.id === org.id;
-              return (
-                <button key={org.id} onClick={function(){ pickOrg(org); }}
-                  style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5,padding:"12px 10px",background:active?"rgba(0,180,255,.08)":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?"rgba(0,180,255,.4)":"rgba(255,255,255,.09)"),borderRadius:14,cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}}>
-                  <div style={{width:34,height:34,borderRadius:10,background:active?"rgba(0,180,255,.15)":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?"rgba(0,180,255,.35)":"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:700,color:active?"#00B4FF":"rgba(255,255,255,.5)"}}>
-                    {org.name[0]}
-                  </div>
-                  <div style={{fontSize:11,fontWeight:700,color:active?"#fff":"rgba(255,255,255,.55)",textAlign:"center",lineHeight:1.3}}>{org.name}</div>
-                  {active && <div style={{width:6,height:6,borderRadius:"50%",background:"#00B4FF"}}/>}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* ── Step 2: User picker (only when org selected) ── */}
-        {selOrg && (
-          <div style={{marginBottom:14,position:"relative"}}>
-            <button onClick={function(){ setShowPicker(function(p){ return !p; }); }}
-              style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:accentColor+"0f",border:"1px solid "+accentColor+"33",borderRadius:12,padding:"10px 14px",cursor:"pointer",fontFamily:"inherit",color:"rgba(255,255,255,.7)",fontSize:12,transition:"all .15s"}}>
-              <span style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:13}}>⚡</span>
-                <span>{email ? email : "Quick select a user"}</span>
-              </span>
-              <span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{showPicker ? "▲" : "▼"}</span>
-            </button>
-            {showPicker && (
-              <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"#081428",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden",zIndex:20,animation:"dropIn .15s ease both",maxHeight:300,overflowY:"auto",boxShadow:"0 16px 48px rgba(0,0,0,.8)"}}>
-                {/* Admins */}
-                <div style={{padding:"7px 12px 4px",fontSize:9,fontWeight:700,color:SESS_COLOR+"99",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid rgba(255,255,255,.05)"}}>Admins</div>
-                {selOrg.admins.map(function(u) {
-                  return (
-                    <button key={u.email} onClick={function(){ pickUser(u); }}
-                      style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",padding:"10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                      <div>
-                        <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{u.label}</div>
-                        <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:1}}>{u.email}</div>
-                      </div>
-                      <span style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:99,background:roleMeta(u.role||"admin").bg,color:roleMeta(u.role||"admin").color,border:"1px solid "+roleMeta(u.role||"admin").border,flexShrink:0}}>{u.role||"admin"}</span>
-                    </button>
-                  );
-                })}
-                {/* Teams */}
-                {selOrg.teams.map(function(team) {
-                  return (
-                    <div key={team.name}>
-                      <div style={{padding:"7px 12px 4px",fontSize:9,fontWeight:700,color:"rgba(0,180,255,.55)",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid rgba(255,255,255,.04)",borderTop:"1px solid rgba(255,255,255,.05)"}}>{team.name}</div>
-                      {team.users.map(function(u) {
-                        return (
-                          <button key={u.email} onClick={function(){ pickUser(u); }}
-                            style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",padding:"10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                            <div>
-                              <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{u.label}</div>
-                              <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:1}}>{u.email}</div>
-                            </div>
-                            <span style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"rgba(0,180,255,.1)",color:"#00B4FF",border:"1px solid rgba(0,180,255,.2)",flexShrink:0}}>user</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Kicked-out banner ── */}
-        {kickReason === "replaced" && (
-          <div style={{background:"rgba(239,83,80,.10)",border:"1px solid rgba(239,83,80,.28)",borderRadius:12,padding:"10px 14px",fontSize:12,color:"#EF8070",marginBottom:12,lineHeight:1.5}}>
-            You were signed out because this account was accessed on another device.
-          </div>
-        )}
-
-        {/* ── Form ── */}
-        <form onSubmit={submit} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.09)",borderRadius:18,padding:"24px 24px",display:"flex",flexDirection:"column",gap:14}}>
-          <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:2}}>Sign in</div>
-          {err && <div style={{background:"rgba(239,83,80,.12)",border:"1px solid rgba(239,83,80,.3)",borderRadius:9,padding:"9px 12px",fontSize:12,color:"#EF5350"}}>{err}</div>}
-          {alreadyLoggedIn && (
-            <div style={{background:"rgba(255,165,0,.10)",border:"1px solid rgba(255,165,0,.3)",borderRadius:9,padding:"12px 14px",fontSize:12,color:"#FFA040",display:"flex",flexDirection:"column",gap:10}}>
-              <div>This account is already active on another device.</div>
-              <div style={{display:"flex",gap:8}}>
-                <button type="button" disabled={busy} onClick={handleForceLogin}
-                  style={Object.assign({},solidBtn("#FFA040"),{flex:1,fontSize:12,padding:"7px 12px",opacity:busy?0.6:1})}>
-                  {busy ? "Signing in…" : "Log in anyway"}
-                </button>
-                <button type="button" onClick={function(){ setAlreadyLoggedIn(false); setErr(""); }}
-                  style={Object.assign({},ghostBtn(),{flex:1,fontSize:12,padding:"7px 12px"})}>
-                  Cancel
-                </button>
-              </div>
+          {/* Sign-in column */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 40px",overflowY:"auto"}}>
+            <div style={{width:"100%",maxWidth:480,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) .05s both"}}>
+              {orgPicker}
+              {userPicker}
+              {form}
+              {footer}
             </div>
-          )}
-          <div>
-            <label style={labelSt()}>Email</label>
-            <input type="email" value={email} onChange={function(e){setEmail(e.target.value);}} placeholder="you@company.com"
-              style={inputSt({marginBottom:0})} autoFocus autoComplete="email"/>
           </div>
-          <div>
-            <label style={labelSt()}>Password</label>
-            <input type="password" value={pass} onChange={function(e){setPass(e.target.value);}} placeholder="••••••••"
-              style={inputSt({marginBottom:0})} autoComplete="current-password"/>
-          </div>
-          <button type="submit" disabled={busy || alreadyLoggedIn}
-            style={Object.assign({},solidBtn("#A8FF3E"),{marginTop:2,opacity:(busy||alreadyLoggedIn)?0.6:1})}>
-            {busy ? "Signing in…" : "Sign In"}
-          </button>
-          {onShowSignup && (
-            <div style={{fontSize:13,color:"rgba(255,255,255,.4)",textAlign:"center"}}>
-              New to OverCard?{" "}
-              <button type="button" onClick={onShowSignup}
-                style={{background:"none",border:"none",color:"#00B4FF",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:600,padding:0}}>
-                Create an account
-              </button>
-            </div>
-          )}
-        </form>
-        <div style={{textAlign:"center",marginTop:16,fontSize:10,color:"rgba(255,255,255,.18)"}}>
-          OverCard v2 · dev build
         </div>
-      </div>
+      ) : (
+        <div style={{width:"100%",maxWidth:big ? 520 : 380,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both",paddingBottom:24}}>
+          {brand}
+          {orgPicker}
+          {userPicker}
+          {form}
+          {footer}
+        </div>
+      )}
     </div>
   );
 }
@@ -681,7 +740,7 @@ function ShareCodesPanel({ isDesktop }) {
           var link = window.location.origin + "/?join=" + inv.code;
           var isFresh = inv.id === fresh;
           return (
-            <div key={inv.id} style={{background:isFresh?"rgba(168,255,62,.07)":"rgba(255,255,255,.04)",border:"1px solid "+(isFresh?"rgba(168,255,62,.35)":"rgba(255,255,255,.08)"),borderRadius:12,padding:isDesktop?"14px 16px":"12px",opacity:st.active?1:.6}}>
+            <div key={inv.id} style={{background:isFresh?accentA(.07):"rgba(255,255,255,.04)",border:"1px solid "+(isFresh?accentA(.35):"rgba(255,255,255,.08)"),borderRadius:12,padding:isDesktop?"14px 16px":"12px",opacity:st.active?1:.6}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:6}}>
                 <span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:fs.code,fontWeight:700,letterSpacing:2,color:"#fff"}}>{prettyCode(inv.code)}</span>
                 <span style={{fontSize:fs.small - 1,fontWeight:700,color:st.color}}>● {st.label}</span>
@@ -732,7 +791,7 @@ var ORG_FORM_FIELDS = [
   { key:"address",  label:"Address",      placeholder:"Street, city", full:true },
 ];
 
-function OrgPanel({ authUser, orgUsers, isDesktop }) {
+function OrgPanel({ authUser, orgUsers, isDesktop, onOrgUpdated }) {
   var isOwner = authUser.role === "owner";
   var [org,  setOrg]  = useState(null);
   var [form, setForm] = useState(null);
@@ -744,6 +803,8 @@ function OrgPanel({ authUser, orgUsers, isDesktop }) {
   function toForm(o) {
     var f = {};
     ORG_FORM_FIELDS.forEach(function(d){ f[d.key] = o[d.key] || ""; });
+    f.logo = o.logo || null;
+    f.accentColor = o.accentColor || null;
     return f;
   }
   useEffect(function() {
@@ -755,7 +816,7 @@ function OrgPanel({ authUser, orgUsers, isDesktop }) {
     if (!form.name.trim()) { flash("Company name is required", true); return; }
     setBusy(true);
     apiPut("/org", form)
-      .then(function(o){ setBusy(false); setOrg(o); setForm(toForm(o)); flash("Organization updated"); })
+      .then(function(o){ setBusy(false); setOrg(o); setForm(toForm(o)); flash("Organization updated"); if (onOrgUpdated) onOrgUpdated(o); })
       .catch(function(e){ setBusy(false); flash(e.message || "Couldn't save", true); });
   }
 
@@ -771,7 +832,9 @@ function OrgPanel({ authUser, orgUsers, isDesktop }) {
   }
 
   var fs = isDesktop ? { base:14, small:13, title:17 } : { base:12, small:11, title:14 };
-  var dirty = org && form && ORG_FORM_FIELDS.some(function(d){ return (org[d.key] || "") !== form[d.key]; });
+  var dirty = org && form && (ORG_FORM_FIELDS.some(function(d){ return (org[d.key] || "") !== form[d.key]; })
+    || (org.logo || null) !== form.logo || (org.accentColor || null) !== form.accentColor);
+  var badAccent = form && form.accentColor && !/^#[0-9A-F]{6}$/i.test(form.accentColor);
   var candidates = (orgUsers || []).filter(function(u){ return u.id !== authUser.id; })
     .sort(function(a, b){ return (isAdminRole(b.role) ? 1 : 0) - (isAdminRole(a.role) ? 1 : 0) || a.displayName.localeCompare(b.displayName); });
   var cardSt = {background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderRadius:14,padding:isDesktop?"18px 20px":"14px"};
@@ -798,10 +861,17 @@ function OrgPanel({ authUser, orgUsers, isDesktop }) {
           );
         })}
       </div>
+      {/* Branding — logo + accent theme the whole app for everyone in the org */}
+      <div style={{marginTop:18,paddingTop:16,borderTop:"1px solid rgba(255,255,255,.08)"}}>
+        <div style={{fontSize:fs.title - 1,fontWeight:700,color:"#fff",marginBottom:4}}>Branding</div>
+        <div style={{fontSize:fs.small,color:"rgba(255,255,255,.45)",marginBottom:12}}>Shown in place of the OverCard logo, and used as the accent colour across the app for everyone in your organization.</div>
+        <BrandingFields logo={form.logo} accent={form.accentColor} disabled={!isOwner} size={isDesktop ? "lg" : undefined} orgName={form.name}
+          onChange={function(patch){ setForm(function(p){ return Object.assign({}, p, patch); }); }}/>
+      </div>
       {isOwner && (
         <div style={{display:"flex",gap:8,marginTop:16}}>
           <button onClick={function(){ setForm(toForm(org)); }} disabled={!dirty || busy} style={Object.assign({}, ghostBtn(), {flex:1,padding:"10px",fontSize:fs.base})}>Discard</button>
-          <button onClick={save} disabled={!dirty || busy} style={Object.assign({}, solidBtn(SESS_COLOR), {flex:2,padding:"10px",fontSize:fs.base})}>{busy ? "Saving…" : "Save changes"}</button>
+          <button onClick={save} disabled={!dirty || busy || badAccent} style={Object.assign({}, solidBtn(SESS_COLOR), {flex:2,padding:"10px",fontSize:fs.base})}>{busy ? "Saving…" : "Save changes"}</button>
         </div>
       )}
     </div>
@@ -855,7 +925,7 @@ function OrgPanel({ authUser, orgUsers, isDesktop }) {
 
 var EMPTY_UF = { email:"", firstName:"", lastName:"", phone:"", role:"user", teamId:"", password:"" };
 
-export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRefreshTeams }) {
+export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRefreshTeams, onOrgUpdated }) {
   var desktop = useContext(DesktopCtx);
   var [sub, setSub]           = useState("users");
   var [editUser, setEditUser] = useState(null);    // null | "new" | user obj
@@ -1056,7 +1126,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
             </div>
           )}
           {!roleLocked && !isNew && target.role === "user" && uf.role === "admin" && (
-            <div style={{fontSize:fs.small,color:"#A8FF3E",marginTop:6}}>Promoting to admin — they'll be able to edit decks and manage users.</div>
+            <div style={{fontSize:fs.small,color:SESS_COLOR,marginTop:6}}>Promoting to admin — they'll be able to edit decks and manage users.</div>
           )}
           {!roleLocked && !isNew && target.role === "admin" && uf.role === "user" && (
             <div style={{fontSize:fs.small,color:"#FFA040",marginTop:6}}>Demoting to user — they'll lose admin access and team-admin assignments.</div>
@@ -1106,7 +1176,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
             {admins.map(function(a){
               var on = tf.adminIds.includes(a.id);
               return <button key={a.id} onClick={function(){toggleAdminId(a.id);}}
-                style={{background:on?"rgba(168,255,62,.15)":"rgba(255,255,255,.05)",border:"1px solid "+(on?"rgba(168,255,62,.4)":"rgba(255,255,255,.1)"),borderRadius:8,padding:D?"7px 14px":"5px 11px",cursor:"pointer",fontFamily:"inherit",fontSize:D?13:11,color:on?SESS_COLOR:"rgba(255,255,255,.45)",fontWeight:on?700:400}}>{a.displayName}</button>;
+                style={{background:on?accentA(.15):"rgba(255,255,255,.05)",border:"1px solid "+(on?accentA(.4):"rgba(255,255,255,.1)"),borderRadius:8,padding:D?"7px 14px":"5px 11px",cursor:"pointer",fontFamily:"inherit",fontSize:D?13:11,color:on?SESS_COLOR:"rgba(255,255,255,.45)",fontWeight:on?700:400}}>{a.displayName}</button>;
             })}
           </div>
         </div>
@@ -1134,7 +1204,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
                 {available.map(function(u){ return <option key={u.id} value={u.id}>{u.displayName} ({u.role})</option>; })}
               </select>
               <button onClick={function(){ if (!addMemberSel) return; toggleMemberId(addMemberSel); setAddMemberSel(""); }}
-                style={ghostSm({color:SESS_COLOR,borderColor:"rgba(168,255,62,.3)",fontSize:D?13:12,padding:"7px 12px"})}>+ Add</button>
+                style={ghostSm({color:SESS_COLOR,borderColor:accentA(.3),fontSize:D?13:12,padding:"7px 12px"})}>+ Add</button>
             </div>
           )}
           {tf.memberIds.length === 0 && (
@@ -1170,7 +1240,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       listPane = (
         <div>
           <button onClick={function(){resetUf();setEditUser("new");}}
-            style={{display:"block",width:"100%",background:"rgba(168,255,62,.06)",border:"1px dashed rgba(168,255,62,.25)",borderRadius:10,padding:"10px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:"rgba(168,255,62,.8)",fontFamily:"inherit",marginBottom:10,textAlign:"center",fontWeight:600}}>
+            style={{display:"block",width:"100%",background:accentA(.06),border:("1px dashed "+accentA(.25)),borderRadius:10,padding:"10px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:accentA(.8),fontFamily:"inherit",marginBottom:10,textAlign:"center",fontWeight:600}}>
             + New User
           </button>
           {sortedUsers.map(function(u) {
@@ -1220,7 +1290,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       listPane = (
         <div>
           <button onClick={function(){resetTf();setEditTeam("new");}}
-            style={{display:"block",width:"100%",background:"rgba(168,255,62,.06)",border:"1px dashed rgba(168,255,62,.25)",borderRadius:10,padding:"10px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:"rgba(168,255,62,.8)",fontFamily:"inherit",marginBottom:10,textAlign:"center",fontWeight:600}}>
+            style={{display:"block",width:"100%",background:accentA(.06),border:("1px dashed "+accentA(.25)),borderRadius:10,padding:"10px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:accentA(.8),fontFamily:"inherit",marginBottom:10,textAlign:"center",fontWeight:600}}>
             + New Team
           </button>
           {(orgTeams||[]).map(function(team) {
@@ -1276,7 +1346,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
         </div>
         {msgBanner}
         {sub === "codes" && <ShareCodesPanel isDesktop={true}/>}
-        {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={true}/>}
+        {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={true} onOrgUpdated={onOrgUpdated}/>}
         {(sub === "users" || sub === "teams") && (
           <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
             {showListA && (
@@ -1316,7 +1386,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       {msgBanner}
 
       {sub === "codes" && <ShareCodesPanel isDesktop={false}/>}
-      {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={false}/>}
+      {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={false} onOrgUpdated={onOrgUpdated}/>}
 
       {(sub === "users" || sub === "teams") && (
       <div style={{flex:1,overflowY:"auto",padding:"12px 14px 0"}}>
@@ -1403,7 +1473,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
                     <div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>{memberCount} member{memberCount!==1?"s":""}</div>
                     <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:6}}>
                       {teamAdmins.map(function(a){
-                        return <span key={a.id} style={{fontSize:9,padding:"2px 8px",borderRadius:99,background:"rgba(168,255,62,.1)",color:SESS_COLOR,border:"1px solid rgba(168,255,62,.25)"}}>{a.displayName}</span>;
+                        return <span key={a.id} style={{fontSize:9,padding:"2px 8px",borderRadius:99,background:accentA(.1),color:SESS_COLOR,border:("1px solid "+accentA(.25))}}>{a.displayName}</span>;
                       })}
                     </div>
                   </div>

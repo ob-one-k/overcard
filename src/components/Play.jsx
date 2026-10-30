@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid } from "../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA } from "../lib/constants";
 import { apiPost, apiPostWithRetry } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge as IntendedBadgeComp } from "./ui";
@@ -10,6 +10,8 @@ import { PlayDesktop } from "./desktop/PlayDesktop";
 import { useRecorder, buildAudioSegments } from "../lib/useRecorder";
 import { uploadSessionAudio } from "../lib/audioUpload";
 import { RecordingSetup, RecIndicator } from "./RecordingSetup";
+import { StudyPopout, intendedOutline } from "./StudyCard";
+import { ReferencePicker, ReferencePanel } from "./ReferenceSession";
 
 // ─── OBJECTION PICKER (in-session sheet) ──────────────────────────────────────
 export function ObjPicker({ stacks, onSelect, onClose, deckCards }) {
@@ -283,7 +285,7 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
       </div>
       {/* Quick note input */}
       {showNote && sessionMode && (
-        <div style={{margin:"10px 16px 0",background:"rgba(168,255,62,.08)",border:"1px solid rgba(168,255,62,.22)",borderRadius:14,padding:"12px 14px",animation:"fadeIn .15s ease both"}}>
+        <div style={{margin:"10px 16px 0",background:accentA(.08),border:("1px solid "+accentA(.22)),borderRadius:14,padding:"12px 14px",animation:"fadeIn .15s ease both"}}>
           <div style={{fontSize:10,fontWeight:700,color:SESS_COLOR,letterSpacing:.7,textTransform:"uppercase",marginBottom:7}}>📝 Note on: {card.title}</div>
           <textarea value={noteText} onChange={function(e){setNoteText(e.target.value);}}
             placeholder="Type your note…" rows={2}
@@ -359,6 +361,9 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [nameError, setNameError]       = useState(false);
   var [navDepth,  setNavDepth]        = useState(1);
   var [navInObj,  setNavInObj]        = useState(false);
+  var [navCardId, setNavCardId]       = useState(null);   // card on screen — syncs the reference strip
+  var [study,     setStudy]           = useState(null);   // null | { kind:"path", index } | { kind:"stack", stackId }
+  var [refSel,    setRefSel]          = useState(null);   // chosen reference-session option (live only)
   // Audio recording — shared recorder hook (device list, level meter, releases the mic on unmount)
   var [recordAudio, setRecordAudio] = useState(false);
   var rec = useRecorder();
@@ -383,6 +388,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
       setPlayView("home");
       setNewName(""); setNewDesc(""); setNameError(false);
     }
+    setStudy(null);
   }, [deck.id]);
 
   function startSession() {
@@ -397,11 +403,14 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
       status: "active", outcome: "in_progress",
       sold: false, soldCardId: null, soldCardTitle: null,
       events: [],
+      referenceSessionId: pendingType === "live" && refSel ? refSel.id : null,
     };
     // Start microphone recording if opted in (called from the Start tap, so permission prompts work)
     if (recordAudio) rec.start(s.id);
     setNavDepth(1);
     setNavInObj(false);
+    setNavCardId(deck.rootCard || null);
+    setStudy(null);
     setActiveSession(s);
     setSessionEvents([]);
     setPlayView("active");
@@ -439,7 +448,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
           setActiveSession(null);
           setSessionEvents([]);
           setPlayView("home");
-          setNewName(""); setNewDesc(""); setNameError(false);
+          setNewName(""); setNewDesc(""); setNameError(false); setRefSel(null);
           onPortalToReview(finished.id);
         })
         .catch(function() {
@@ -483,8 +492,11 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
             </button>
           </div>
         </div>
+        {activeSession.referenceSessionId && (
+          <ReferencePanel refId={activeSession.referenceSessionId} currentCardId={navCardId} variant="strip"/>
+        )}
         <Navigator deck={deck} sessionMode={true} onEvent={handleEvent}
-          onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); }}
+          onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); setNavCardId(info.currentCard ? info.currentCard.id : null); }}
           getAudioOffset={rec.offsetMs} flushRef={flushVisitRef}/>
       </div>
     );
@@ -492,6 +504,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
 
   // Home dashboard
   var st2 = STYPE[pendingType] || STYPE.live;
+  var outline = intendedOutline(deck);
 
   return (
     <div style={{flex:1,overflowY:"auto"}}>
@@ -550,6 +563,12 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
               placeholder={pendingType==="live"?"Prospect info, context, goals…":"What you're working on, focus areas…"}
               rows={2}
               style={Object.assign({},inputSt({resize:"none",fontSize:13,lineHeight:1.5}),{marginBottom:12,minHeight:58})}/>
+            {/* Reference session — live calls can follow a past session */}
+            {pendingType === "live" && (
+              <div style={{marginBottom:12}}>
+                <ReferencePicker deckId={deck.id} value={refSel} onChange={setRefSel}/>
+              </div>
+            )}
             {/* Audio recording — device picker, level meter, test */}
             <div style={{marginBottom:12}}>
               <RecordingSetup rec={rec} enabled={recordAudio} setEnabled={setRecordAudio}/>
@@ -564,8 +583,51 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
           </div>
         )}
 
+        {/* Study — browse the intended path and objection stacks as flash cards */}
+        {(outline.length > 0 || deck.objStacks.length > 0) && (
+          <div style={{marginTop:6}}>
+            <SectionHdr>Study</SectionHdr>
+            {outline.length > 0 && (
+              <div style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.07)",borderRadius:14,padding:"6px 6px",marginBottom:10}}>
+                <div style={{fontSize:10,fontWeight:700,color:"rgba(102,187,106,.8)",letterSpacing:.8,textTransform:"uppercase",padding:"6px 8px 4px"}}>★ Intended path · {outline.length} step{outline.length!==1?"s":""}</div>
+                {outline.map(function(oc, i) {
+                  var om = TM[oc.type] || TM.pitch;
+                  return (
+                    <button key={oc.id} onClick={function(){ setStudy({ kind:"path", index:i }); }}
+                      style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",background:"transparent",border:"none",borderRadius:10,padding:"8px 8px",minHeight:44,cursor:"pointer",fontFamily:"inherit"}}>
+                      <span style={{width:22,height:22,borderRadius:"50%",border:"1.5px solid "+om.color,color:om.color,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i + 1}</span>
+                      <span style={{flex:1,minWidth:0,fontSize:13,fontWeight:600,color:"rgba(255,255,255,.88)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{oc.title}</span>
+                      <span style={{fontSize:9,fontWeight:700,color:om.color,textTransform:"uppercase",letterSpacing:.5,flexShrink:0}}>{om.label}</span>
+                      <span aria-hidden="true" style={{color:"rgba(255,255,255,.3)",fontSize:15,flexShrink:0}}>›</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {deck.objStacks.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {deck.objStacks.map(function(stack) {
+                  var n = Object.keys(stack.cards).length;
+                  return (
+                    <button key={stack.id} onClick={function(){ setStudy({ kind:"stack", stackId:stack.id }); }} disabled={n === 0}
+                      style={{display:"flex",alignItems:"center",gap:11,width:"100%",textAlign:"left",background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.16)",borderRadius:12,padding:"9px 12px",minHeight:48,cursor:n>0?"pointer":"default",fontFamily:"inherit",opacity:n>0?1:.5}}>
+                      <span style={{fontSize:18,flexShrink:0}}>{stack.icon}</span>
+                      <span style={{flex:1,minWidth:0}}>
+                        <span style={{display:"block",fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stack.label}</span>
+                        <span style={{display:"block",fontSize:10,color:"rgba(255,255,255,.35)",marginTop:1}}>{n} card{n!==1?"s":""}</span>
+                      </span>
+                      <span aria-hidden="true" style={{color:"rgba(239,83,80,.6)",fontSize:15,flexShrink:0}}>›</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{height:20}}/>
       </div>
+      {study && <StudyPopout deck={deck} start={study} onClose={function(){ setStudy(null); }}/>}
     </div>
   );
 }

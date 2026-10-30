@@ -190,6 +190,9 @@ async function initSchema() {
     await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS phone       TEXT`);
     await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS address     TEXT`);
     await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS "updatedAt" BIGINT`);
+    // Branding: logo as a small data: URL (client downsizes to ≤256px) + accent colour (#rrggbb)
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logo          TEXT`);
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS "accentColor" TEXT`);
 
     // Share codes — admins hand these to employees so they can sign up into the org
     await client.query(`CREATE TABLE IF NOT EXISTS org_invites (
@@ -217,6 +220,25 @@ async function initSchema() {
     )`);
     await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "hasAudio"        BOOLEAN NOT NULL DEFAULT false`);
     await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "audioDurationMs" BIGINT`);
+    // Per-card chapter markers stored with the recording itself (copy of the session's segments)
+    await client.query(`ALTER TABLE session_audio ADD COLUMN IF NOT EXISTS chapters JSONB`);
+    // A live session can name another completed session as its reference
+    await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "referenceSessionId" TEXT`);
+
+    // In-app notifications (currently: feedback left on one of your sessions)
+    await client.query(`CREATE TABLE IF NOT EXISTS notifications (
+      id          TEXT PRIMARY KEY,
+      "userId"    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "orgId"     TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      "sessionId" TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+      "actorId"   TEXT,
+      "actorName" TEXT,
+      text        TEXT,
+      "createdAt" BIGINT NOT NULL,
+      "readAt"    BIGINT
+    )`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications("userId", "createdAt" DESC)`);
 
     // Seed manifest — tracks which records were seeded and their last-seeded content hash
     // Enables smart re-seeding: refresh unmodified seed records, preserve user edits
@@ -419,14 +441,15 @@ async function findOrgById(id) {
   return rows[0] || null;
 }
 
-var ORG_FIELDS = ["name", "industry", "website", "phone", "address"];
+var ORG_FIELDS = ["name", "industry", "website", "phone", "address", "logo", "accentColor"];
 
 async function createOrg(fields, db) {
   const oid = fields.id || uid("org_");
   const now = Date.now();
   await (db || pool).query(
-    'INSERT INTO orgs (id,name,industry,website,phone,address,"createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$7)',
-    [oid, fields.name, fields.industry || null, fields.website || null, fields.phone || null, fields.address || null, now]
+    'INSERT INTO orgs (id,name,industry,website,phone,address,logo,"accentColor","createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)',
+    [oid, fields.name, fields.industry || null, fields.website || null, fields.phone || null, fields.address || null,
+     fields.logo || null, fields.accentColor || null, now]
   );
   const { rows } = await (db || pool).query("SELECT * FROM orgs WHERE id = $1", [oid]);
   return rows[0];
@@ -437,7 +460,7 @@ async function updateOrg(id, fields) {
   var p = 1;
   ORG_FIELDS.forEach(function(k) {
     if (fields[k] !== undefined) {
-      sets.push(k + " = $" + p);
+      sets.push('"' + k + '" = $' + p);   // k comes from the fixed ORG_FIELDS list
       vals.push(fields[k]);
       p++;
     }
@@ -845,14 +868,15 @@ async function upsertSession(session, userId, orgId) {
   const { rows } = await pool.query(`
     INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
       name,account,contact,mode,status,outcome,"startTs","endTs",sold,"soldCardId","soldCardTitle",
-      events,notes,metrics,"audioSegments","audioDurationMs")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+      events,notes,metrics,"audioSegments","audioDurationMs","referenceSessionId")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
     ON CONFLICT (id) DO UPDATE SET
       "deckId"=$4,"deckName"=$5,"deckColor"=$6,"deckIcon"=$7,
       name=$8,account=$9,contact=$10,mode=$11,status=$12,outcome=$13,
       "startTs"=$14,"endTs"=$15,sold=$16,"soldCardId"=$17,"soldCardTitle"=$18,
       events=$19,notes=$20,metrics=$21,"audioSegments"=$22,
-      "audioDurationMs"=COALESCE($23, sessions."audioDurationMs")
+      "audioDurationMs"=COALESCE($23, sessions."audioDurationMs"),
+      "referenceSessionId"=COALESCE($24, sessions."referenceSessionId")
     WHERE sessions."userId"=$3
     RETURNING *
   `, [
@@ -865,6 +889,7 @@ async function upsertSession(session, userId, orgId) {
     JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
     JSON.stringify(session.audioSegments || null),
     Number.isFinite(session.audioDurationMs) ? Math.round(session.audioDurationMs) : null,
+    typeof session.referenceSessionId === "string" && session.referenceSessionId ? session.referenceSessionId : null,
   ]);
   return rows[0] ? parseSession(rows[0]) : null;
 }
@@ -881,12 +906,17 @@ async function saveSessionAudio(sessionId, orgId, mimeType, durationMs, buf) {
       'UPDATE sessions SET "hasAudio" = true, "audioDurationMs" = COALESCE($2, "audioDurationMs") WHERE id = $1',
       [sessionId, durationMs]
     );
+    // Stamp the recording with its per-card chapter markers so the audio carries its own index
+    await client.query(
+      'UPDATE session_audio a SET chapters = s."audioSegments" FROM sessions s WHERE a."sessionId" = $1 AND s.id = $1',
+      [sessionId]
+    );
   });
 }
 
 async function getSessionAudioMeta(sessionId) {
   const { rows } = await pool.query(
-    'SELECT "mimeType","durationMs","sizeBytes" FROM session_audio WHERE "sessionId" = $1', [sessionId]
+    'SELECT "mimeType","durationMs","sizeBytes",chapters FROM session_audio WHERE "sessionId" = $1', [sessionId]
   );
   return rows[0] || null;
 }
@@ -898,6 +928,53 @@ async function getSessionAudioRange(sessionId, start, length) {
     [sessionId, start + 1, length]
   );
   return rows[0] ? rows[0].chunk : null;
+}
+
+// ─── REFERENCE SESSIONS ───────────────────────────────────────────────────────
+// Completed sessions any org member may pick as a reference for a live call
+async function getReferenceOptions(orgId, deckId, q) {
+  const vals = [orgId];
+  var where = 's."orgId" = $1 AND s.status = \'completed\' AND s."endTs" IS NOT NULL';
+  if (deckId) { vals.push(deckId); where += ' AND s."deckId" = $' + vals.length; }
+  if (q) {
+    vals.push("%" + String(q).toLowerCase().slice(0, 100) + "%");
+    where += ' AND (lower(s.name) LIKE $' + vals.length + ' OR lower(u."displayName") LIKE $' + vals.length + ')';
+  }
+  const { rows } = await pool.query(
+    'SELECT s.id, s.name, s."userId", u."displayName" AS "userName", s.mode, s.outcome, s.sold, s."startTs", s."endTs", s."deckId", s."deckName"' +
+    ' FROM sessions s LEFT JOIN users u ON u.id = s."userId" WHERE ' + where + ' ORDER BY s."startTs" DESC LIMIT 50',
+    vals
+  );
+  return rows.map(function(r) { return Object.assign({}, r, { sold: !!r.sold }); });
+}
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+async function createNotification(n) {
+  await pool.query(
+    'INSERT INTO notifications (id,"userId","orgId",type,"sessionId","actorId","actorName",text,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    [uid("ntf_"), n.userId, n.orgId, n.type, n.sessionId || null, n.actorId || null, n.actorName || null, n.text || null, Date.now()]
+  );
+}
+
+async function getNotifications(userId, limit) {
+  const { rows } = await pool.query(
+    'SELECT n.*, s.name AS "sessionName", s."deckId" AS "deckId" FROM notifications n LEFT JOIN sessions s ON s.id = n."sessionId"' +
+    ' WHERE n."userId" = $1 ORDER BY n."createdAt" DESC LIMIT $2',
+    [userId, limit || 30]
+  );
+  const unread = await pool.query('SELECT COUNT(*) AS n FROM notifications WHERE "userId" = $1 AND "readAt" IS NULL', [userId]);
+  return { items: rows, unreadCount: parseInt(unread.rows[0].n, 10) };
+}
+
+// ids = array → mark those; otherwise mark everything (optionally only one session's)
+async function markNotificationsRead(userId, ids, sessionId) {
+  if (Array.isArray(ids) && ids.length) {
+    await pool.query('UPDATE notifications SET "readAt" = $1 WHERE "userId" = $2 AND id = ANY($3::text[]) AND "readAt" IS NULL', [Date.now(), userId, ids.map(String)]);
+  } else if (sessionId) {
+    await pool.query('UPDATE notifications SET "readAt" = $1 WHERE "userId" = $2 AND "sessionId" = $3 AND "readAt" IS NULL', [Date.now(), userId, sessionId]);
+  } else {
+    await pool.query('UPDATE notifications SET "readAt" = $1 WHERE "userId" = $2 AND "readAt" IS NULL', [Date.now(), userId]);
+  }
 }
 
 async function deleteSession(id, userId) {
@@ -1018,7 +1095,9 @@ module.exports = {
   getDeckAccess, setDeckAccess,
   // sessions
   getSessions, getSessionById, upsertSession, deleteSession, insertSession,
-  saveSessionAudio, getSessionAudioMeta, getSessionAudioRange,
+  saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
+  // notifications
+  createNotification, getNotifications, markNotificationsRead,
   // feedback
   getFeedback, createFeedback, updateFeedback, deleteFeedback, getFeedbackById,
   // shares

@@ -12,6 +12,7 @@ const deckRoutes    = require("./routes/deckRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
 const adminRoutes   = require("./routes/adminRoutes");
 const orgRoutes     = require("./routes/orgRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -45,6 +46,7 @@ app.use("/api/decks",    deckRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/admin",    adminRoutes);
 app.use("/api/org",      orgRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.get("/api/health", async function(req, res, next) {
   try {
