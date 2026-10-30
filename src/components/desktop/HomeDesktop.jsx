@@ -631,8 +631,10 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
       {/* ── Panels ── */}
       <div style={{flex:1,minHeight:0,overflowY:wide?"hidden":"auto",padding:compact?"0 "+padX+"px "+padX+"px":"0 24px 24px",display:"grid",gridTemplateColumns:cols,gridAutoRows:wide?"minmax(0,1fr)":"auto",gap:compact?12:16}}>
         {isTeamTab ? renderLeaderboard() : renderRecent(false)}
-        {isTeamTab ? renderRecent(true) : renderDecks()}
-        {renderInsights()}
+        {isTeamTab ? renderRecent(true) : wide ? renderInsights() : renderDecks()}
+        {/* Personal view: decks sit in the right-hand column on wide screens; narrower layouts
+            keep decks beside sessions and give insights the full-width row underneath */}
+        {isTeamTab ? renderInsights() : wide ? renderDecks() : renderInsights()}
       </div>
     </div>
   );
