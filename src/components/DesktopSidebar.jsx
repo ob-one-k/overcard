@@ -70,6 +70,8 @@ export function DesktopSidebar({
           {/* Logo row (tablet rail/drawer: ☰ / ✕ toggle) */}
           <div style={{display:"flex",alignItems:"center",gap:isCollapsed?0:11,marginBottom:isRail?12:16,justifyContent:isCollapsed?"center":"flex-start"}}>
             {isRail ? (
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+              <OrgMark authUser={authUser} size={32}/>
               <button
                 onClick={function(){ setDrawerOpen(true); }}
                 aria-label="Open navigation menu"
@@ -77,6 +79,7 @@ export function DesktopSidebar({
                 style={{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",color:"#fff",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
                 <span aria-hidden="true">☰</span>
               </button>
+              </div>
             ) : (
               <>
                 <OrgMark authUser={authUser} size={36}/>

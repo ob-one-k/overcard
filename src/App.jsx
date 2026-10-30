@@ -13,6 +13,7 @@ import { DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel } from "./comp
 import { SignupScreen } from "./components/Signup";
 import { NotificationBell } from "./components/NotificationBell";
 import { OrgMark } from "./components/OrgMark";
+import { getBrand, syncBrand, setBrand, cachedLogoVer } from "./lib/brand";
 import { HomeTab } from "./components/Home";
 import { HomeDesktop } from "./components/desktop/HomeDesktop";
 import { CommandPalette } from "./components/CommandPalette";
@@ -61,7 +62,7 @@ export default function App() {
   var [showSignup, setShowSignup] = useState(!!joinCode);
 
   function handleLogin(u) {
-    setKickReason(null); setShowSignup(false); setAuthUser(u);
+    setKickReason(null); setShowSignup(false); setAuthUser(syncBrand(u));
     // Drop ?join= so a reload doesn't reopen signup
     if (joinCode) { try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {} }
   }
@@ -73,9 +74,10 @@ export default function App() {
     var storedToken = getStoredToken();
     var headers = storedToken ? { "Authorization": "Bearer " + storedToken } : {};
     var slowTimer = setTimeout(function() { if (!cancelled) setSlowServer(true); }, 5000);
-    fetchWithTimeout(API_BASE + "/auth/me", { credentials:"include", headers: headers }, 75000)
+    var logoVer = cachedLogoVer();
+    fetchWithTimeout(API_BASE + "/auth/me" + (logoVer ? "?logoVer=" + encodeURIComponent(logoVer) : ""), { credentials:"include", headers: headers }, 75000)
       .then(function(r) {
-        if (r.ok) return r.json().then(function(u) { if (!cancelled) setAuthUser(u); });
+        if (r.ok) return r.json().then(function(u) { if (!cancelled) setAuthUser(syncBrand(u)); });
         if (r.status === 401 || r.status === 403) { if (!cancelled) setAuthUser(false); return; }
         throw new Error("API " + r.status);
       })
@@ -116,14 +118,14 @@ export default function App() {
 
   if (!authChecked) return (
     <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
-      <div style={{width:48,height:48,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#fff"}}>O</div>
-      <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading OverCard…</div>
+      <BootMark/>
+      <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {(getBrand() && getBrand().orgName) || "OverCard"}…</div>
       {slowServer && <div style={{color:"rgba(255,255,255,.35)",fontSize:12,maxWidth:280,textAlign:"center",lineHeight:1.5}}>Waking up the server — this can take up to a minute.</div>}
     </div>
   );
   if (serverDown) return (
     <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
-      <div style={{width:48,height:48,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#fff"}}>O</div>
+      <BootMark/>
       <div style={{color:"#fff",fontSize:15,fontWeight:700}}>Can't reach the OverCard server</div>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,maxWidth:300,textAlign:"center",lineHeight:1.5}}>The server didn't respond. Check your connection and try again.</div>
       <button onClick={retryAuth} style={solidBtn("#1565C0")}>Retry</button>
@@ -146,11 +148,25 @@ export default function App() {
       onShowSignup={function(){ setShowSignup(true); }}
     />
   );
-  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setAuthUser(false); }}
+  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setBrand(null); setAuthUser(false); }}
     onOrgUpdated={function(org){
       // Owner edited branding/name — refresh the signed-in user's org fields so the shell re-themes
+      setBrand({ orgName: org.name, orgLogo: org.logo || null, orgAccent: org.accentColor || null, orgLogoVer: null });
       setAuthUser(function(u){ return u ? Object.assign({}, u, { orgName: org.name, orgLogo: org.logo || null, orgAccent: org.accentColor || null }) : u; });
     }}/>;
+}
+
+// Boot / server-down screens: the cached org mark (tinted with the cached accent)
+// when this device has signed in before, otherwise the OverCard "O"
+function BootMark() {
+  var b = getBrand();
+  var w = typeof window !== "undefined" ? window.innerWidth : 1024;
+  var size = w >= 1024 ? 64 : w >= 768 ? 56 : 48;
+  if (b && (b.orgLogo || b.orgName)) {
+    setAccentColor(b.orgAccent);
+    return <OrgMark authUser={b} size={size}/>;
+  }
+  return <div style={{width:size,height:size,borderRadius:14,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.round(size*0.54),fontWeight:900,color:"#fff"}}>O</div>;
 }
 
 // ─── APP ────────────────────────────────────────────────────────────────────
@@ -422,6 +438,9 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     />
   );
 
+  // Org mark size on full-screen states: desktop 64 · tablet 56 · phone 48
+  var screenMark = layout.layout === "desktop" ? 64 : layout.layout === "tablet" ? 56 : 48;
+
   // ── Loading / error states ────────────────────────────────────────────────────
   var saveLabel = saveStatus==="saving" ? "Saving…" : saveStatus==="error" ? "⚠ Save failed" : "Saved";
   var saveColor = saveStatus==="saving" ? "rgba(255,255,255,.2)" : saveStatus==="error" ? "#EF5350" : "rgba(102,187,106,.6)";
@@ -429,7 +448,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   if (saveStatus === "idle") {
     return (
       <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
-        <OrgMark authUser={authUser} size={48}/>
+        <OrgMark authUser={authUser} size={screenMark}/>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {authUser.orgName || ""}…</div>
       </div>
     );
@@ -437,7 +456,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   if (!deck && decksError) {
     return (
       <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
-        <div style={{fontSize:48}}>⚠️</div>
+        <OrgMark authUser={authUser} size={screenMark}/>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,textAlign:"center",lineHeight:1.7}}>
           Couldn't load your decks.<br/>The server may be unavailable.
         </div>
@@ -449,7 +468,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     var canCreate = isAdminRole(authUser.role);
     return (
       <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"'Inter',sans-serif",padding:24,color:"#fff"}}>
-        <div style={{fontSize:48}}>{canCreate ? "🃏" : "⚠️"}</div>
+        <OrgMark authUser={authUser} size={screenMark}/>
         {canCreate ? (
           <form onSubmit={function(e){
               e.preventDefault();

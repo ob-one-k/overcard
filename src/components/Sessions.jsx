@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { OrgMark } from "./OrgMark";
 import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV } from "../lib/styles";
@@ -366,6 +367,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",borderLeft:"3px solid "+st.color,display:"flex",alignItems:"center",gap:9,flexShrink:0}}>
         <button onClick={onBack} aria-label="Back" style={Object.assign({},iconBtn(),{padding:"5px 8px",minWidth:touchMin,minHeight:touchMin})}>←</button>
+        <OrgMark size={desktop.isDesktop ? (desktop.compact ? 24 : 28) : 22}/>
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginBottom:1}}>
             <span style={{fontSize:fz(13),fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.name}</span>

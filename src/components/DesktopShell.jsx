@@ -5,6 +5,7 @@ import { isAdminRole, roleMeta, SESS_COLOR, accentA } from "../lib/constants";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 import { NotificationBell } from "./NotificationBell";
+import { OrgMark } from "./OrgMark";
 
 // ─── DESKTOP SHELL ────────────────────────────────────────────────────────────
 // Root layout wrapper for desktop. Renders the sidebar + top bar + content area.
@@ -186,6 +187,8 @@ export function DesktopShell({
           padding:compact?"0 12px 0 14px":"0 20px 0 22px",
           gap:compact?10:14
         }}>
+          {/* Collapsed desktop sidebar hides the org name — keep the mark beside the title */}
+          {collapsed && !compact && <OrgMark authUser={authUser} size={24}/>}
           {/* Tab accent bar */}
           <div style={{width:4,height:compact?22:26,borderRadius:99,background:tabAccent,flexShrink:0}}/>
 

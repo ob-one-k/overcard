@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA } from "../../lib/constants";
 import { apiGet, apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
@@ -370,6 +371,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
             <button onClick={function(){ setDrawer(drawer === "path" ? null : "path"); }} aria-label="Call path and objections" aria-expanded={drawer === "path"}
               style={{width:44,height:44,borderRadius:10,border:"1px solid rgba(255,255,255,.15)",background:drawer==="path"?"rgba(255,255,255,.14)":"rgba(255,255,255,.06)",color:"#fff",fontSize:17,cursor:"pointer",flexShrink:0}}>☰</button>
           )}
+          <OrgMark size={22}/>
           <div style={{display:"flex",alignItems:"center",gap:8,background:st.bg,border:"1px solid "+st.border,borderRadius:99,padding:"5px 13px",flexShrink:0}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:st.color,boxShadow:"0 0 7px "+st.color,animation:"pulse 1.8s ease-in-out infinite"}}/>
             <span style={{fontSize:13,color:st.color,fontWeight:700,letterSpacing:.6,textTransform:"uppercase"}}>{st.label} session</span>
@@ -714,6 +716,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
                 {rootCard ? "Opens with “" + rootCard.title + "”" : "No entry card set — add cards to start"}
               </div>
             </div>
+            <OrgMark wide size={compact ? 44 : 56}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginTop:18}}>
             {[

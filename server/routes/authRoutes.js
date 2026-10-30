@@ -47,7 +47,13 @@ async function startSession(res, user) {
   return Object.assign(await buildUserResponse(user), { _token: token });
 }
 
-async function buildUserResponse(user) {
+// Short fingerprint of the logo data URL — lets /auth/me skip re-sending an unchanged logo
+function logoVersion(logo) {
+  return logo ? createHash("sha1").update(logo).digest("hex").slice(0, 16) : null;
+}
+
+// opts.logoVer — the client's cached logo version; when it matches, orgLogo is omitted
+async function buildUserResponse(user, opts) {
   const team    = user.teamId ? await getTeamById(user.teamId) : null;
   const teamIds = await getUserTeams(user.id);
   // For admin users: also include teams they administer so sub-tabs are immediate
@@ -61,7 +67,7 @@ async function buildUserResponse(user) {
     teamIds.map(function(tid) { return getTeamById(tid); })
   )).filter(Boolean).map(function(t) { return { id: t.id, name: t.name }; });
   const org = await findOrgById(user.orgId);
-  return {
+  const body = {
     id:          user.id,
     email:       user.email,
     displayName: user.displayName,
@@ -70,6 +76,7 @@ async function buildUserResponse(user) {
     phone:       user.phone     || null,
     orgName:     org ? org.name : null,
     orgLogo:     org ? org.logo || null : null,
+    orgLogoVer:  org ? logoVersion(org.logo) : null,
     orgAccent:   org ? org.accentColor || null : null,
     role:        user.role,
     orgId:       user.orgId,
@@ -77,6 +84,11 @@ async function buildUserResponse(user) {
     teamName:    team ? team.name : null,
     teams:       teams,
   };
+  if (opts && opts.logoVer && body.orgLogoVer && opts.logoVer === body.orgLogoVer) {
+    body.orgLogo = null;
+    body.orgLogoCached = true;
+  }
+  return body;
 }
 
 // POST /api/auth/login
@@ -199,7 +211,8 @@ router.get("/me", requireAuth, async function(req, res, next) {
   try {
     const user = await findUserById(req.user.id);
     if (!user) return res.status(401).json({ error: "User not found" });
-    res.json(await buildUserResponse(user));
+    var logoVer = typeof req.query.logoVer === "string" ? req.query.logoVer.slice(0, 32) : null;
+    res.json(await buildUserResponse(user, { logoVer: logoVer }));
   } catch (err) { next(err); }
 });
 

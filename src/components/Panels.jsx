@@ -614,7 +614,7 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
         <span style={{fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:99,background:roleMeta(authUser.role).bg,color:roleMeta(authUser.role).color,border:"1px solid "+roleMeta(authUser.role).border,textTransform:"uppercase",letterSpacing:.6}}>
           {roleMeta(authUser.role).label}
         </span>
-        {authUser.orgName && <span style={{fontSize:10,padding:"3px 10px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.55)",border:"1px solid rgba(255,255,255,.1)"}}>🏢 {authUser.orgName}</span>}
+        {authUser.orgName && <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:10,padding:"2px 10px 2px 3px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.55)",border:"1px solid rgba(255,255,255,.1)"}}><OrgMark authUser={authUser} size={18}/>{authUser.orgName}</span>}
         {teamName && <span style={{fontSize:10,padding:"3px 10px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.45)",border:"1px solid rgba(255,255,255,.1)"}}>{teamName}</span>}
       </div>
       <button onClick={logout} disabled={busy}
@@ -974,6 +974,11 @@ function OrgPanel({ authUser, orgUsers, orgTeams, isDesktop, onOrgUpdated, compa
         <div style={{fontSize:fs.small,color:"rgba(255,255,255,.45)",marginBottom:12}}>Shown in place of the OverCard logo, and used as the accent colour across the app for everyone in your organization.</div>
         <BrandingFields logo={form.logo} accent={form.accentColor} disabled={!isOwner} size={isDesktop ? "lg" : undefined} orgName={form.name}
           onChange={function(patch){ setForm(function(p){ return Object.assign({}, p, patch); }); }}/>
+        {/* Live preview of how the mark appears in the app header */}
+        <div style={{marginTop:14,display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12}}>
+          <OrgMark authUser={{ orgName:form.name, orgLogo:form.logo }} size={34} withName nameSize={15}/>
+          <span style={{marginLeft:"auto",fontSize:fs.small,color:"rgba(255,255,255,.35)"}}>Preview</span>
+        </div>
       </div>
       {isOwner && (
         <div style={{display:"flex",gap:8,marginTop:16}}>

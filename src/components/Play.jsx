@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { OrgMark } from "./OrgMark";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA } from "../lib/constants";
 import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
@@ -518,9 +519,10 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
         <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+deck.color,borderRadius:"0 14px 14px 0",padding:"14px 16px",marginBottom:16}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
             <div style={{width:36,height:36,borderRadius:10,background:deck.color+"22",border:"1.5px solid "+deck.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>{deck.icon}</div>
-            <div>
+            <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>{deck.name}</div>
             </div>
+            <OrgMark wide size={36}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
             <div style={{background:"rgba(0,0,0,.3)",borderRadius:10,padding:"9px 11px"}}>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { OrgMark } from "./OrgMark";
 import DesktopCtx from "../lib/DesktopCtx";
 import { apiGet } from "../lib/api";
 import { inputSt } from "../lib/styles";
@@ -118,6 +119,7 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
       }}>
         {/* Search input */}
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 20px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
+          <OrgMark size={20}/>
           <span aria-hidden="true" style={{fontSize:20,color:"rgba(255,255,255,.45)",flexShrink:0}}>⌕</span>
           <input
             ref={inputRef}

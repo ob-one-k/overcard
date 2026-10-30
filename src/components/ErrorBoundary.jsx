@@ -1,4 +1,6 @@
 import { Component } from "react";
+import { getBrand } from "../lib/brand";
+import { OrgMark } from "./OrgMark";
 
 // ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
 // Catches render-time exceptions so a single component failure shows a recovery
@@ -18,7 +20,7 @@ export class ErrorBoundary extends Component {
     if (!this.state.error) return this.props.children;
     return (
       <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
-        <div style={{fontSize:40}}>⚠️</div>
+        {getBrand() ? <OrgMark size={typeof window !== "undefined" && window.innerWidth < 768 ? 40 : 48}/> : <div style={{fontSize:40}}>⚠️</div>}
         <div style={{color:"#fff",fontSize:15,fontWeight:700}}>Something went wrong</div>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,maxWidth:300,textAlign:"center",lineHeight:1.5}}>OverCard hit an unexpected error. Reloading usually fixes it.</div>
         <button

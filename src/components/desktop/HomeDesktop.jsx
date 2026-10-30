@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../../lib/constants";
 import { apiGet } from "../../lib/api";
@@ -569,8 +570,9 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
 
-      {/* ── Header: scope switcher ── */}
+      {/* ── Header: org mark + scope switcher ── */}
       <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:compact?12:20,padding:compact?"14px "+padX+"px 0":"18px 24px 0",flexWrap:"wrap"}}>
+        <OrgMark wide withName size={compact ? 36 : 44} nameSize={compact ? 17 : 20}/>
         {(myTeams.length > 0 || isAdmin) && (
           <div role="tablist" aria-label="Dashboard scope" style={{display:"flex",alignItems:"center",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderRadius:12,padding:4,gap:2,flexWrap:"wrap"}}>
             {isAdmin && (
