@@ -4,6 +4,7 @@ import { solidBtn, ghostSm } from "../lib/styles";
 import { apiGetBlob } from "../lib/api";
 import { getAudioBlob } from "../lib/audioStore";
 import { useUploadStatus, retrySessionAudio } from "../lib/audioUpload";
+import { createNoiseReduction, playbackNoiseReduction, setPlaybackNoiseReduction } from "../lib/noiseReduction";
 
 // ─── SESSION AUDIO PLAYBACK ───────────────────────────────────────────────────
 // useSessionAudio(session) owns ONE <audio> element per session review, so every tab
@@ -45,6 +46,19 @@ export function wallClockToAudioMs(ts, segments) {
   return null;
 }
 
+// ─── PLAYBACK NOISE REDUCTION ────────────────────────────────────────────────
+// Every recording (old ones too) plays through the standard noise reduction. One shared
+// AudioContext for all players; each <audio> element gets a MediaElementSource the first
+// time it plays (inside the click, so the context may start).
+var playCtx = null;
+function getPlayCtx() {
+  if (playCtx) return playCtx;
+  var Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  try { playCtx = new Ctx(); } catch (_) { playCtx = null; }
+  return playCtx;
+}
+
 export function useSessionAudio(session) {
   var [url,       setUrl]       = useState(null);
   var [state,     setState]     = useState("loading");   // loading | ready | none | error
@@ -63,6 +77,42 @@ export function useSessionAudio(session) {
   var rafRef   = useRef(null);
   var fixDurRef = useRef(false);
   var upload   = useUploadStatus(session.id);
+  var [nrOn, setNrOn] = useState(playbackNoiseReduction);
+  var nrOnRef = useRef(nrOn);
+  nrOnRef.current = nrOn;
+  var graphRef = useRef(null);    // { el, source, nr }
+
+  // Route the <audio> element through noise reduction (once per element). Until the chain
+  // has loaded the element plays straight to the speakers, so the first play is never silent.
+  function ensureGraph() {
+    var a = audioRef.current;
+    if (!a) return;
+    var ctx = getPlayCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume().catch(function() {});
+    var g = graphRef.current;
+    if (g && g.el === a) return;
+    var source;
+    try { source = ctx.createMediaElementSource(a); } catch (_) { return; }   // already bound / unsupported
+    source.connect(ctx.destination);
+    var graph = { el: a, source: source, nr: null };
+    graphRef.current = graph;
+    createNoiseReduction(ctx, { enabled: nrOnRef.current }).then(function(nr) {
+      if (graphRef.current !== graph) { nr.disconnect(); return; }
+      graph.nr = nr;
+      source.disconnect();
+      source.connect(nr.input);
+      nr.output.connect(ctx.destination);
+    }).catch(function() {});
+  }
+  // A new recording (new element) or leaving the review: release this element's nodes
+  useEffect(function() {
+    return function() {
+      var g = graphRef.current;
+      graphRef.current = null;
+      if (g) { try { g.source.disconnect(); } catch (_) {} if (g.nr) g.nr.disconnect(); }
+    };
+  }, [url]);
 
   var segments = normalizeSegments(session);
   var lastSegEnd = segments.length ? segments[segments.length - 1].endMs : 0;
@@ -141,6 +191,7 @@ export function useSessionAudio(session) {
   function playAt(ms) {
     var a = audioRef.current;
     if (!a) return;
+    ensureGraph();
     a.currentTime = Math.max(0, ms) / 1000;
     a.play().catch(function() {});
   }
@@ -168,7 +219,7 @@ export function useSessionAudio(session) {
     },
     queued: queueRef.current.length,
     // Leave clip mode and keep listening from the current position
-    continueFull: function() { setClipSeg(null); var a = audioRef.current; if (a) a.play().catch(function() {}); },
+    continueFull: function() { setClipSeg(null); var a = audioRef.current; if (a) { ensureGraph(); a.play().catch(function() {}); } },
     toggle: function() {
       var a = audioRef.current;
       if (!a) return;
@@ -176,6 +227,7 @@ export function useSessionAudio(session) {
       var c = clipRef.current;
       // Replaying a finished clip starts it over
       if (c && a.currentTime * 1000 >= c.endMs - 50) a.currentTime = c.startMs / 1000;
+      ensureGraph();
       a.play().catch(function() {});
       if (c) watchClip();
     },
@@ -189,6 +241,13 @@ export function useSessionAudio(session) {
     },
     skip: function(delta) { ctl.seek((audioRef.current ? audioRef.current.currentTime * 1000 : 0) + delta); },
     setRate: function(r) { setRateSt(r); if (audioRef.current) audioRef.current.playbackRate = r; },
+    // Noise reduction on playback (remembered on this device; downloads stay the original file)
+    noiseReduction: nrOn,
+    setNoiseReduction: function(on) {
+      setNrOn(on); setPlaybackNoiseReduction(on);
+      var g = graphRef.current;
+      if (g && g.nr) g.nr.setEnabled(on);
+    },
     retryUpload: function() { return retrySessionAudio(session.id); },
     reload: function() { setReloadKey(function(k) { return k + 1; }); },
   };
@@ -243,6 +302,18 @@ function scale(size) {
 }
 
 var RATES = [1, 1.25, 1.5, 2];
+
+// Noise reduction on/off. Shown everywhere a player is, so a listener can compare.
+function NoiseToggle({ ctl, f, compact }) {
+  var on = ctl.noiseReduction;
+  return (
+    <button onClick={function(){ ctl.setNoiseReduction(!on); }} aria-pressed={on}
+      title={on ? "Noise reduction is on — background noise, hum and hiss are reduced. Click to hear the original." : "Noise reduction is off — click to reduce background noise"}
+      style={ghostSm({fontSize:f.xs,padding:"4px 9px",color:on?SESS_COLOR:"rgba(255,255,255,.45)",borderColor:on?accentA(.4):"rgba(255,255,255,.12)",flexShrink:0,whiteSpace:"nowrap"})}>
+      {compact ? (on ? "NR on" : "NR off") : (on ? "✓ Noise reduction" : "Noise reduction off")}
+    </button>
+  );
+}
 
 // Click/drag-free progress track with segment blocks coloured by card type
 function SegmentTrack({ ctl, height, onHoverSeg }) {
@@ -396,6 +467,7 @@ export function AudioMiniBar({ ctl, size }) {
         style={ghostSm({fontSize:f.xs,padding:"4px 8px",color:ctl.rate !== 1 ? SESS_COLOR : "rgba(255,255,255,.7)",minWidth:lg?44:36})}>
         {ctl.rate}×
       </button>
+      {lg && <NoiseToggle ctl={ctl} f={f} compact/>}
     </div>
   );
 }
@@ -529,6 +601,7 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
           return <button key={r} onClick={function(){ ctl.setRate(r); }}
             style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:on?SESS_COLOR:"rgba(255,255,255,.45)",borderColor:on?accentA(.4):"rgba(255,255,255,.12)"})}>{r}×</button>;
         })}
+        <NoiseToggle ctl={ctl} f={f}/>
         {ctl.clip && <button onClick={ctl.continueFull} style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:SESS_COLOR,borderColor:accentA(.35)})}>Continue full call ▸</button>}
         {canDownload && (
           <a href={ctl.url} download={(sessionName || "session").replace(/[\\/:*?"<>|]+/g, "-") + ctl.fileExt}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createNoiseReduction } from "./noiseReduction";
 import { lsGet, lsSet } from "./api";
 
 // ─── SESSION AUDIO RECORDER ───────────────────────────────────────────────────
@@ -195,7 +196,9 @@ export function useRecorder() {
 
     // Kick off the screen-share prompt first, synchronously inside the click
     var displayP = (includeCallAudio && callAudioSupported())
-      ? navigator.mediaDevices.getDisplayMedia({ audio: true, video: true }).catch(function() { return null; })
+      // Call audio gets the browser's noise suppression too (no echo cancellation/AGC: it is
+      // the other party's voice, not our mic)
+      ? navigator.mediaDevices.getDisplayMedia({ audio: { noiseSuppression: true, echoCancellation: false, autoGainControl: false }, video: true }).catch(function() { return null; })
       : Promise.resolve(null);
     var micP = navigator.mediaDevices.getUserMedia(micConstraints(deviceId));
 
@@ -211,43 +214,53 @@ export function useRecorder() {
       }
       if (disp) disp.getVideoTracks().forEach(function(t) { t.stop(); });
 
-      // Mix every audio source into one stream and meter it
+      // Clean up and mix every audio source into one stream, and meter what is recorded.
+      // Each source goes through the standard noise reduction (lib/noiseReduction.js).
       var recordStream = mic;
       var Ctx = window.AudioContext || window.webkitAudioContext;
+      var mixed = Promise.resolve(mic);
       if (Ctx) {
-        try {
-          var ctx = new Ctx();
+        mixed = (function() {
+          var ctx;
+          try { ctx = new Ctx(); } catch (_) { return Promise.resolve(mic); }
           ctxRef.current = ctx;
+          if (ctx.state === "suspended") ctx.resume().catch(function() {});
           var dest = ctx.createMediaStreamDestination();
           var an = ctx.createAnalyser(); an.fftSize = 512;
-          [mic, disp].forEach(function(s) {
-            if (!s || !s.getAudioTracks().length) return;
-            var src = ctx.createMediaStreamSource(s);
-            src.connect(dest); src.connect(an);
-          });
-          if (ctx.state === "suspended") ctx.resume().catch(function() {});
-          recordStream = dest.stream;
-          var buf = new Uint8Array(an.fftSize);
-          meterRef.current = setInterval(function() { if (mountedRef.current) setLevel(readLevel(an, buf)); }, 120);
-        } catch (_) { recordStream = mic; }
+          var sources = [mic, disp].filter(function(st) { return st && st.getAudioTracks().length; });
+          return Promise.all(sources.map(function(st) {
+            var src = ctx.createMediaStreamSource(st);
+            return createNoiseReduction(ctx).then(function(nr) {
+              src.connect(nr.input); nr.output.connect(dest); nr.output.connect(an);
+            }, function() { src.connect(dest); src.connect(an); });
+          })).then(function() {
+            var buf = new Uint8Array(an.fftSize);
+            meterRef.current = setInterval(function() { if (mountedRef.current) setLevel(readLevel(an, buf)); }, 120);
+            return dest.stream;
+          }).catch(function() { return mic; });
+        })();
       }
 
-      var mime = pickMimeType();
-      var opts = { audioBitsPerSecond: BITRATE };
-      if (mime) opts.mimeType = mime;
-      var rec;
-      try { rec = new MediaRecorder(recordStream, opts); }
-      catch (_) { rec = new MediaRecorder(recordStream); }   // some browsers reject the bitrate/mime pair
-      rec.ondataavailable = function(e) { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
-      rec.onerror = function(e) { setError("Recording stopped unexpectedly" + (e && e.error ? ": " + e.error.message : "")); };
-      rec.onstart = function() { startedRef.current = Date.now(); };
-      // If the mic disappears mid-call (unplugged headset) keep what we have and tell the rep
-      mic.getAudioTracks().forEach(function(t) { t.onended = function() { if (forRef.current) setError("The microphone was disconnected — audio stopped at this point."); }; });
-      recRef.current = rec;
-      rec.start(1000);
-      if (startedRef.current === null) startedRef.current = Date.now();
-      setStatus("recording");
-      return true;
+      return mixed.then(function(stream) {
+        if (forRef.current !== sessionId) { teardown(); return false; }
+        recordStream = stream;
+        var mime = pickMimeType();
+        var opts = { audioBitsPerSecond: BITRATE };
+        if (mime) opts.mimeType = mime;
+        var rec;
+        try { rec = new MediaRecorder(recordStream, opts); }
+        catch (_) { rec = new MediaRecorder(recordStream); }   // some browsers reject the bitrate/mime pair
+        rec.ondataavailable = function(e) { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+        rec.onerror = function(e) { setError("Recording stopped unexpectedly" + (e && e.error ? ": " + e.error.message : "")); };
+        rec.onstart = function() { startedRef.current = Date.now(); };
+        // If the mic disappears mid-call (unplugged headset) keep what we have and tell the rep
+        mic.getAudioTracks().forEach(function(t) { t.onended = function() { if (forRef.current) setError("The microphone was disconnected — audio stopped at this point."); }; });
+        recRef.current = rec;
+        rec.start(1000);
+        if (startedRef.current === null) startedRef.current = Date.now();
+        setStatus("recording");
+        return true;
+      });
     }).catch(function(err) {
       if (forRef.current === sessionId) { setError(describeError(err)); setStatus("idle"); }
       teardown();
@@ -298,14 +311,30 @@ export function useRecorder() {
     return navigator.mediaDevices.getUserMedia(micConstraints(deviceId)).then(function(stream) {
       setPermission("granted");
       refreshDevices();
-      return new Promise(function(resolve) {
-        var mime = pickMimeType();
-        var r = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-        var parts = [];
-        r.ondataavailable = function(e) { if (e.data && e.data.size) parts.push(e.data); };
-        r.onstop = function() { stopStream(stream); resolve(URL.createObjectURL(new Blob(parts, { type: r.mimeType || mime }))); };
-        r.start();
-        setTimeout(function() { try { r.stop(); } catch (_) { stopStream(stream); resolve(null); } }, ms || 3000);
+      // Same noise reduction as a real recording, so the test sounds like the call will
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      var ctx = null;
+      var cleaned = Promise.resolve(stream);
+      if (Ctx) {
+        try {
+          ctx = new Ctx();
+          var dest = ctx.createMediaStreamDestination();
+          var src = ctx.createMediaStreamSource(stream);
+          cleaned = createNoiseReduction(ctx).then(function(nr) { src.connect(nr.input); nr.output.connect(dest); return dest.stream; },
+            function() { return stream; });
+        } catch (_) { ctx = null; }
+      }
+      function done() { stopStream(stream); if (ctx) ctx.close().catch(function() {}); }
+      return cleaned.then(function(recStream) {
+        return new Promise(function(resolve) {
+          var mime = pickMimeType();
+          var r = mime ? new MediaRecorder(recStream, { mimeType: mime }) : new MediaRecorder(recStream);
+          var parts = [];
+          r.ondataavailable = function(e) { if (e.data && e.data.size) parts.push(e.data); };
+          r.onstop = function() { done(); resolve(URL.createObjectURL(new Blob(parts, { type: r.mimeType || mime }))); };
+          r.start();
+          setTimeout(function() { try { r.stop(); } catch (_) { done(); resolve(null); } }, ms || 3000);
+        });
       });
     }).catch(function(err) { setError(describeError(err)); throw err; });
   }
