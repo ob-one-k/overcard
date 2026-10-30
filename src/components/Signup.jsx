@@ -139,7 +139,6 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
   return (
     <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:wide?"center":"flex-start",justifyContent:"center",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:wide?32:"24px 16px",overflowY:"auto",boxSizing:"border-box"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,700;1,400&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
         body{background:#060d1a;color:#fff;}
         input::placeholder{color:rgba(255,255,255,.22);}

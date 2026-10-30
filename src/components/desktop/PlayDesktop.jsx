@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { cachedGet, peek } from "../../lib/dataCache";
 import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA } from "../../lib/constants";
-import { apiGet, apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
+import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
 import { useRecorder, buildAudioSegments } from "../../lib/useRecorder";
@@ -148,13 +149,19 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   useEffect(function() {
     if (isActiveView) return;
     var cancelled = false;
-    setRecent(null);
-    apiGet("/sessions?deckId=" + encodeURIComponent(deck.id))
+    var mineUrl = "/sessions?deckId=" + encodeURIComponent(deck.id);
+    var orgUrl  = "/sessions?scope=org&deckId=" + encodeURIComponent(deck.id);
+    // Show cached runs immediately (revisits / deck switches back), then refresh
+    var cMine = peek(mineUrl), cOrg = peek(orgUrl);
+    if (cMine && cMine.length) { setRecentScope("self"); setRecent(cMine); }
+    else if (cMine && cOrg) { setRecentScope("org"); setRecent(cOrg); }
+    else setRecent(null);
+    cachedGet(mineUrl)
       .then(function(data) {
         var mine = Array.isArray(data) ? data : [];
         if (cancelled) return;
         if (mine.length > 0) { setRecentScope("self"); setRecent(mine); return; }
-        return apiGet("/sessions?scope=org&deckId=" + encodeURIComponent(deck.id))
+        return cachedGet(orgUrl)
           .then(function(org) { if (!cancelled) { setRecentScope("org"); setRecent(Array.isArray(org) ? org : []); } })
           .catch(function() { if (!cancelled) { setRecentScope("self"); setRecent([]); } });
       })

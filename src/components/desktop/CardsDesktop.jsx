@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useContext } from "react";
+import { useState, useRef, useEffect, useContext, useMemo } from "react";
+import { cachedGet, peek } from "../../lib/dataCache";
 import { TM, uid, aid } from "../../lib/constants";
-import { lsGet, lsSet, apiGet } from "../../lib/api";
+import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, inputSt, resizeHandle } from "../../lib/styles";
 import { CardEditorSheet } from "../Editor";
 import { TreeView } from "../Viewer";
@@ -172,9 +173,12 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
   var [perfPath, setPerfPath] = useState(false);     // card performance: intended-path cards only
   useEffect(function() {
     var cancelled = false;
-    setPerfSessions(null);
-    apiGet("/sessions?deckId=" + encodeURIComponent(deck.id) + (perfScope === "org" ? "&scope=org" : ""))
-      .then(function(list) { if (!cancelled) setPerfSessions(Array.isArray(list) ? list.filter(function(x){ return !x._shared; }) : []); })
+    var url = "/sessions?deckId=" + encodeURIComponent(deck.id) + (perfScope === "org" ? "&scope=org" : "");
+    function own(list) { return Array.isArray(list) ? list.filter(function(x){ return !x._shared; }) : []; }
+    var cached = peek(url);
+    setPerfSessions(cached !== undefined ? own(cached) : null);
+    cachedGet(url)
+      .then(function(list) { if (!cancelled) setPerfSessions(own(list)); })
       .catch(function() { if (!cancelled) setPerfSessions([]); });
     return function() { cancelled = true; };
   }, [deck.id, perfScope]);
@@ -297,7 +301,8 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
   // reach = share of sessions that visited the card · endedHere = sessions whose last
   // main-deck card was this one · closeAfter = sold rate of live sessions that visited it ·
   // objAfter = how often an objection stack was opened while on this card
-  var perf = (function() {
+  // Memoised: dragging the pane divider or hovering re-renders constantly
+  var perf = useMemo(function() {
     var list = (perfSessions || []).filter(function(x) {
       return perfMode === "all" || (x.mode || "live") === perfMode;
     });
@@ -327,7 +332,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
       avgMs: durN ? durSum / durN : 0,
       closeRate: live ? Math.round(sold / live * 100) : null,
       adherence: pathVisits ? Math.round(onPath / pathVisits * 100) : null };
-  })();
+  }, [perfSessions, perfMode, deck.cards]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Deck health: share of cards that are reachable, scripted and fully linked
   var health = (function() {

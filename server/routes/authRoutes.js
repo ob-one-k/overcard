@@ -3,7 +3,7 @@ const rateLimit = require("express-rate-limit");
 const { randomUUID, createHash, timingSafeEqual } = require("crypto");
 const router    = express.Router();
 const {
-  findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams, getAdminTeamIds,
+  findUserByEmail, updateLastLogin, findUserById, getTeamNames, getUserTeams, getAdminTeamIds,
   setActiveToken, clearActiveTokenIfMatches, findOrgById,
   findUsableInvite, signupWithInvite, createOrgWithOwner,
 } = require("../db");
@@ -54,19 +54,20 @@ function logoVersion(logo) {
 
 // opts.logoVer — the client's cached logo version; when it matches, orgLogo is omitted
 async function buildUserResponse(user, opts) {
-  const team    = user.teamId ? await getTeamById(user.teamId) : null;
-  const teamIds = await getUserTeams(user.id);
+  // Independent lookups run in parallel; team names come from one query
+  const [teamIds, adminTeamIds, org] = await Promise.all([
+    getUserTeams(user.id),
+    isAdminRole(user.role) ? getAdminTeamIds(user.id) : Promise.resolve([]),
+    findOrgById(user.orgId),
+  ]);
   // For admin users: also include teams they administer so sub-tabs are immediate
-  if (isAdminRole(user.role)) {
-    const adminTeamIds = await getAdminTeamIds(user.id);
-    adminTeamIds.forEach(function(tid) {
-      if (teamIds.indexOf(tid) === -1) teamIds.push(tid);
-    });
-  }
-  const teams   = (await Promise.all(
-    teamIds.map(function(tid) { return getTeamById(tid); })
-  )).filter(Boolean).map(function(t) { return { id: t.id, name: t.name }; });
-  const org = await findOrgById(user.orgId);
+  adminTeamIds.forEach(function(tid) {
+    if (teamIds.indexOf(tid) === -1) teamIds.push(tid);
+  });
+  const lookupIds = user.teamId && teamIds.indexOf(user.teamId) === -1 ? teamIds.concat([user.teamId]) : teamIds;
+  const named = await getTeamNames(lookupIds);
+  const team  = user.teamId ? named.find(function(t) { return t.id === user.teamId; }) || null : null;
+  const teams = named.filter(function(t) { return teamIds.indexOf(t.id) !== -1; });
   const body = {
     id:          user.id,
     email:       user.email,

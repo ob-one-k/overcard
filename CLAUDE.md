@@ -66,7 +66,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `team_admins` | Team admin assignments | "teamId", "userId" |
 | `user_teams` | User-to-team membership (many-to-many) | "userId", "teamId" |
 | `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", "firstName", "lastName", phone, role (owner/admin/user) |
-| `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility |
+| `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility, "archivedAt" (null = active) |
 | `deck_access` | Deck visibility controls for private decks | "deckId", "entityType" (team/user), "entityId" |
 | `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", "deckColor", "deckIcon", mode, status, outcome, sold, "soldCardId", "soldCardTitle", events (JSONB), notes (JSONB), metrics (JSONB) |
 | `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
@@ -93,6 +93,8 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 - `rootCard` — ID of the entry card
 - `objStacks[]` — Objection stacks, each with: `id`, `label`, `icon`, `rootCard`, `cards{}` (own card sub-tree), `targetCard` (optional — card ID to navigate to after resolution instead of returning)
 - `visibility` — "public" (all org users) or "private" (specific teams/users via deck_access)
+- `archivedAt` — set when an admin archives the deck. Archived decks are hidden from users (server-side) and from every admin view except the deck switcher's "Archived" section. Objection stacks archive the same way via an `archivedAt` field inside the stack JSON; Play/Study only ever see `liveStacks(deck)`.
+- New decks start from `newDeckTemplate()` (Opening → Discovery → Close, all on the intended path).
 
 **Session** — A live or practice run through a deck:
 - `mode` — "live" or "practice"
@@ -133,7 +135,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/Viewer.jsx` | `TreeView` (collapsible tree navigator), `SwimlaneView` (horizontal type-lane layout) |
 | `src/components/Sessions.jsx` | `ShareModal`, `SessionReview`, `SessionsTab`, `SessionAnalytics` |
 | `src/components/Cards.jsx` | `CardsTab`, `ObjStackEditor`, `ObjectionsTab` |
-| `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` (Users / Teams / Share Codes / Organization sub-tabs) |
+| `src/components/Panels.jsx` | `DeckSwitcherSheet` (switch, create, duplicate, archive/restore, owner delete), `LoginScreen`, `ProfileSheet` |
 | `src/components/CardStage.jsx` | `CardStage`, `PaneRail` |
 | `src/components/StudyCard.jsx` | `StudyPopout` (Play tab study popout for intended-path steps and objection stacks; horizontal on desktop, vertical on tablet/phone), `intendedOutline`, `stackOrder` |
 | `src/components/ReferenceSession.jsx` | `ReferencePicker` (live-session start form), `ReferencePanel` (in-call reference: rail on desktop/tablet, strip on phone) |
@@ -144,6 +146,12 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/RecordingSetup.jsx` | `RecordingSetup` (mic picker, level, test, call audio), `RecIndicator` |
 | `src/lib/useRecorder.js` | `useRecorder`, `buildAudioSegments`, `pickMimeType`, `recorderSupported`, `callAudioSupported` |
 | `src/lib/audioUpload.js` | `uploadSessionAudio`, `retrySessionAudio`, `useUploadStatus` |
+| `src/lib/deckOps.js` | `newDeckTemplate`, `collectBranch`, `cloneCards`, `cloneStack`, `duplicateDeck`, `activeDecks`, `liveStacks`, `archivedStacks`, `upsertStackCard`, `deleteStackCard`, `confirmStackDelete` |
+| `src/lib/dataCache.js` | `cachedGet`, `useCachedGet`, `peek`, `invalidate`, `clearCache` — stale-while-revalidate GET cache |
+| `src/lib/useViewport.js` | `startViewportTracking`, `useKeyboardOpen`, `keyboardIsOpen`, `revealOnFocus`, `revealField`, `resetStrayScroll`, `isCoarsePointer` |
+| `src/lib/brand.js` | `getBrand`, `syncBrand`, `setBrand`, `cachedLogoVer` — org name/logo/accent store + device cache |
+| `src/components/ImportPicker.jsx` | `ImportPicker` (copy cards — optionally with their downstream branch — or objection stacks from another org deck) |
+| `src/components/AdminPanel.jsx` | `AdminPanel` (Users / Teams / Share Codes / Organization; split from Panels.jsx, lazy-loaded) |
 
 ## API Endpoints
 
@@ -153,7 +161,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | POST | `/api/auth/login` | No | Email/password login, sets JWT cookie |
 | POST | `/api/auth/logout` | No | Clears auth cookie |
 | POST | `/api/auth/refresh` | Yes | Issues fresh JWT |
-| GET | `/api/auth/me` | Yes | Returns current user profile with team info, name parts, phone, orgName |
+| GET | `/api/auth/me` | Yes | Returns current user profile with team info, name parts, phone, orgName, `orgLogoVer`. `?logoVer=` matching the current logo omits `orgLogo` (`orgLogoCached:true`) |
 | GET | `/api/auth/invite/:code` | No | Preview the org a share code joins (rate limited) |
 | POST | `/api/auth/signup` | No | `{code, firstName, lastName, email, phone, password}` → new `user` in the code's org, logged in |
 | POST | `/api/auth/create-org` | No | `{masterCode, org:{name, industry, website, phone, address}, firstName, lastName, email, phone, password}` → new org + `owner`, logged in. 503 if `MASTER_CODE` unset |
@@ -168,16 +176,18 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | Method | Path | Auth | Admin | Description |
 |--------|------|------|-------|-------------|
 | GET | `/api/decks` | Yes | No | List decks (filtered by visibility for non-admins) |
-| POST | `/api/decks` | Yes | Yes | Create new deck |
-| PUT | `/api/decks/:id` | Yes | Yes | Update deck fields + access list |
+| POST | `/api/decks` | Yes | Yes | Create new deck — accepts starting `cards`, `rootCard`, `objStacks` (template / duplicate) |
+| PUT | `/api/decks/:id` | Yes | Yes | Update deck fields + access list. Non-owners get 403 if the payload drops an existing objection stack (admins archive instead) |
+| POST | `/api/decks/:id/archive` | Yes | Yes | Archive (sets `archivedAt`) |
+| POST | `/api/decks/:id/restore` | Yes | Yes | Restore an archived deck |
 | GET | `/api/decks/:id/access` | Yes | Yes | Get deck access list |
 | PUT | `/api/decks/:id/access` | Yes | Yes | Set deck access list |
-| DELETE | `/api/decks/:id` | Yes | Yes | Delete deck |
+| DELETE | `/api/decks/:id` | Yes | Owner | Permanently delete deck (sessions keep their snapshot) |
 
 ### Sessions
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/sessions` | Yes | List sessions (supports `?scope=`, `?deckId=`, `?mode=`, `?outcome=`, `?from=`, `?to=`) |
+| GET | `/api/sessions` | Yes | List sessions (supports `?scope=`, `?deckId=`, `?mode=`, `?outcome=`, `?from=`, `?to=`, `?limit=`). One query: feedback/share counts are LATERAL joins |
 | POST | `/api/sessions` | Yes | Upsert session (requires `id` in body) |
 | DELETE | `/api/sessions/:id` | Yes | Delete session (owner or org admin) |
 | GET | `/api/sessions/org-users` | Yes | List all users in the caller's org (used by sharing UI) |
@@ -263,6 +273,14 @@ Stripped back to plain text by `stripMarkup()`.
 Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking issues with `position:fixed`.
 
 ## Key Patterns
+
+- **Archive vs delete:** admins archive decks/stacks (restorable); only the owner permanently deletes. The server enforces both (`DELETE /decks` owner-only; `PUT /decks` rejects stack removal by non-owners). `server/seed.js` restores *deleted* demo decks on boot; archiving survives.
+- **Copying cards/stacks:** `ImportPicker` + `deckOps.cloneCards/cloneStack` give every copied card/answer/stack a fresh id and rewrite `next` links through an old→new map; links to cards that weren't copied become `null`, copied cards join off the intended path, and a copied stack's `targetCard` is cleared. `duplicateDeck` keeps intended flags and remaps stack targets.
+- **Objections desktop/tablet:** `ObjectionsDesktop` mirrors CardsDesktop — stack switcher, List (path-ordered card list + CardStage) / Tree (docked editor + TreeView), and an "After resolving" strip. Stack edits save immediately via `onUpdateDeck` (no Save Stack step); phones still use the buffered `ObjStackEditor`. `CardStage` takes `endLabel` to say where a stack returns.
+- **On-screen keyboard:** `startViewportTracking()` (main.jsx) publishes `--vvh/--vvt/--kb/--sheet-gap`. The desktop/tablet shell and every mobile sheet (`overlayFill()`, `SHEET_MAX_H`) size to the visible viewport. Containers with `overflow:hidden` that browsers might scroll to reveal a field carry `data-noscroll` and are snapped back on blur. Editor backdrops dismiss the keyboard first and confirm before discarding edits. Rich-text toolbar buttons use the `tap()` helper in Editor.jsx (no focus/selection loss on touch). Never use `100vh/dvh` for a sheet that contains inputs.
+- **Data cache:** read session/admin/org data through `cachedGet`/`useCachedGet` (`src/lib/dataCache.js`), not `apiGet`, so tab revisits render instantly. Every successful `apiPut/Post/Del/PutBlob` invalidates cached URLs under the same first path segment; `clearCache()` runs on login/logout. Home derives admin team views from one `scope=org` list using `orgTeams[].memberIds`.
+- **Code splitting:** App lazy-loads Home, Sessions, Cards/Objections, AdminPanel, Signup and the command palette (each in its own `Suspense`; Play stays eager and outside them) and prefetches the chunks on idle.
+- **Org mark:** `OrgMark` reads `authUser` or the brand store (`src/lib/brand.js`); use `wide`/`withName` for headers. Sizes: full-screen states 64/56/48 (desktop/tablet/phone), headers 22–44.
 
 - **Startup resilience:** `App` checks `/auth/me` with a 75s timeout (shows "Waking up the server" after 5s). Only 401/403 route to login; network errors/timeouts/5xx show a "Can't reach the server" retry screen. Deck load failures show a retry screen too.
 - **Org branding & theme:** orgs have `logo` (raster `data:` URL ≤ ~300 KB, client-resized to 256px by `BrandingFields`; SVG rejected server-side) and `"accentColor"` (#RRGGBB), edited by the owner (Admin → Organization) or at org creation. `/auth/me` returns `orgName`, `orgLogo`, `orgAccent`. `App` calls `setAccentColor(authUser.orgAccent)` before rendering; `SESS_COLOR` in `constants.js` is a live binding that becomes the org accent, and `accentA(alpha)` replaces hard-coded `rgba(168,255,62,…)`. Never hard-code the lime accent again — use `SESS_COLOR` / `accentA()`; `solidBtn` picks black/white text by luminance (`inkOn`). Semantic colours (card types, Live/Practice `STYPE`, outcomes) are intentionally not themed. `OrgMark` shows the org logo (or initial) wherever the OverCard "O" used to be inside the app.

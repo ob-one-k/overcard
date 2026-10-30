@@ -63,6 +63,11 @@ async function apiError(r) {
   var e = new Error(msg); e.status = r.status; throw e;
 }
 
+// Called after every successful write so read caches (lib/dataCache.js) can drop stale entries
+var _onWrite = null;
+export function setWriteHook(fn) { _onWrite = fn; }
+function wrote(path) { if (_onWrite) { try { _onWrite(path); } catch (_) {} } }
+
 export async function apiGet(path) {
   const r = await fetchWithTimeout(API_BASE + path, { credentials:"include", headers: authHeaders() });
   if (r.status === 401) return handle401(r);
@@ -76,6 +81,7 @@ export async function apiPut(path, body) {
   });
   if (r.status === 401) return handle401(r);
   if (!r.ok) return apiError(r);
+  wrote(path);
   return r.json();
 }
 export async function apiPost(path, body) {
@@ -85,6 +91,7 @@ export async function apiPost(path, body) {
   });
   if (r.status === 401) return handle401(r);
   if (!r.ok) return apiError(r);
+  wrote(path);
   return r.json();
 }
 export async function apiDel(path) {
@@ -93,6 +100,7 @@ export async function apiDel(path) {
   });
   if (r.status === 401) return handle401(r);
   if (!r.ok) return apiError(r);
+  wrote(path);
   return r.json();
 }
 
@@ -134,7 +142,7 @@ export function apiPutBlob(path, blob, onProgress) {
     xhr.onload = function() {
       var body = null;
       try { body = JSON.parse(xhr.responseText); } catch (_) {}
-      if (xhr.status >= 200 && xhr.status < 300) return resolve(body);
+      if (xhr.status >= 200 && xhr.status < 300) { wrote(path); return resolve(body); }
       if (xhr.status === 401 && _onUnauth) _onUnauth();
       var e = new Error((body && body.error) || ("API " + xhr.status)); e.status = xhr.status; reject(e);
     };

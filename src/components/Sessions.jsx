@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { cachedGet, peek } from "../lib/dataCache";
 import { OrgMark } from "./OrgMark";
 import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
@@ -13,8 +14,18 @@ import { DesktopModal } from "./DesktopModal";
 import { SessionsDesktop } from "./desktop/SessionsDesktop";
 
 // ─── SESSION STATS HELPERS ────────────────────────────────────────────────────
-export function sessionVisits(s) { return (s.events||[]).filter(function(e){return e.type==="visit";}); }
-export function sessionNotes(s)  { return (s.events||[]).filter(function(e){return e.type==="note";}); }
+// Analytics call these for every session on every render — cache per events array
+// (session objects are replaced, never mutated, so the array identity is a safe key)
+var visitsMemo = new WeakMap(), notesMemo = new WeakMap();
+var NO_EVENTS = [];
+function eventsOf(s, type, memo) {
+  var ev = s.events || NO_EVENTS;
+  var hit = memo.get(ev);
+  if (!hit) { hit = ev.filter(function(e){ return e.type === type; }); memo.set(ev, hit); }
+  return hit;
+}
+export function sessionVisits(s) { return eventsOf(s, "visit", visitsMemo); }
+export function sessionNotes(s)  { return eventsOf(s, "note", notesMemo); }
 export function sessionDurSec(s) { return s.endTs ? Math.round((s.endTs-s.startTs)/1000) : null; }
 export function fmtSec(s) { if(!s||s<=0)return"0s"; if(s<60)return s+"s"; return Math.floor(s/60)+"m "+(s%60?s%60+"s":""); }
 export function fmtMs(ms) { if(!ms||ms<1000)return"<1s"; if(ms<60000)return(ms/1000).toFixed(1)+"s"; return Math.floor(ms/60000)+"m"+(Math.round(ms/1000)%60)+"s"; }
@@ -308,17 +319,19 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   var isSharedRecipient = !!(session._shared);
   var canWriteFeedback = isAdmin || isSharedRecipient;
 
-  // Fetch feedback and poll every 5s while on feedback tab
+  // Fetch feedback once per session (for the tab badge); poll only while the Feedback
+  // tab is open and the page is visible — each poll costs several DB queries
+  function loadFeedback() {
+    apiGet("/sessions/" + session.id + "/feedback")
+      .then(function(data) { setFeedback(data); })
+      .catch(function() {});
+  }
+  useEffect(loadFeedback, [session.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(function() {
-    function loadFeedback() {
-      apiGet("/sessions/" + session.id + "/feedback")
-        .then(function(data) { setFeedback(data); })
-        .catch(function() {});
-    }
-    loadFeedback();
-    var timer = setInterval(loadFeedback, 5000);
+    if (tab !== "feedback") return;
+    var timer = setInterval(function() { if (document.visibilityState === "visible") loadFeedback(); }, 8000);
     return function() { clearInterval(timer); };
-  }, [session.id]);
+  }, [session.id, tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   var hasFeedback = feedback && feedback.length > 0;
   var showFbBadge = hasFeedback && !feedbackSeenOnce;
@@ -874,8 +887,11 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     // Ignore responses from a superseded request (deck/scope changed mid-flight)
     var cancelled = false;
     if (view === "list" || view === "analytics" || view === "shared" || (view === "review" && sessions === null)) {
-      apiGet(buildSessionUrl())
-        .then(function(data) { if (!cancelled) setSessions(data.sort(function(a,b){return b.startTs-a.startTs;})); })
+      var url = buildSessionUrl();
+      var sorted = function(data) { return (Array.isArray(data) ? data : []).slice().sort(function(a,b){return b.startTs-a.startTs;}); };
+      if (peek(url) !== undefined) setSessions(sorted(peek(url)));
+      cachedGet(url)
+        .then(function(data) { if (!cancelled) setSessions(sorted(data)); })
         .catch(function() { if (!cancelled) setSessions([]); });
     }
     return function() { cancelled = true; };

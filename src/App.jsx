@@ -1,22 +1,48 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor } from "./lib/constants";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, apiDel, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
-import { CardEditorSheet } from "./components/Editor";
-import { TreeView } from "./components/Viewer";
 import { PlayTab } from "./components/Play";
-import { SessionReview, SessionsTab, SessionAnalytics } from "./components/Sessions";
-import { CardsTab, ObjectionsTab } from "./components/Cards";
-import { DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel } from "./components/Panels";
-import { SignupScreen } from "./components/Signup";
+import { DeckSwitcherSheet, LoginScreen, ProfileSheet } from "./components/Panels";
 import { NotificationBell } from "./components/NotificationBell";
 import { OrgMark } from "./components/OrgMark";
 import { getBrand, syncBrand, setBrand, cachedLogoVer } from "./lib/brand";
-import { HomeTab } from "./components/Home";
-import { HomeDesktop } from "./components/desktop/HomeDesktop";
-import { CommandPalette } from "./components/CommandPalette";
+import { clearCache } from "./lib/dataCache";
+
+// ─── CODE SPLITTING ─────────────────────────────────────────────────────────
+// Play stays in the main bundle (it is always mounted). Every other tab, the admin
+// panel, signup and the command palette load on demand, and are prefetched while
+// the browser is idle so switching tabs never waits on the network.
+var loaders = {
+  home:     function() { return import("./components/Home"); },
+  homeDesk: function() { return import("./components/desktop/HomeDesktop"); },
+  sessions: function() { return import("./components/Sessions"); },
+  cards:    function() { return import("./components/Cards"); },
+  admin:    function() { return import("./components/AdminPanel"); },
+  signup:   function() { return import("./components/Signup"); },
+  palette:  function() { return import("./components/CommandPalette"); },
+};
+function lazyNamed(key, name) {
+  return lazy(function() { return loaders[key]().then(function(m) { return { default: m[name] }; }); });
+}
+var HomeTab        = lazyNamed("home", "HomeTab");
+var HomeDesktop    = lazyNamed("homeDesk", "HomeDesktop");
+var SessionsTab    = lazyNamed("sessions", "SessionsTab");
+var CardsTab       = lazyNamed("cards", "CardsTab");
+var ObjectionsTab  = lazyNamed("cards", "ObjectionsTab");
+var AdminPanel     = lazyNamed("admin", "AdminPanel");
+var SignupScreen   = lazyNamed("signup", "SignupScreen");
+var CommandPalette = lazyNamed("palette", "CommandPalette");
+function prefetchChunks(isAdmin, isDesktop) {
+  var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home"].concat(isAdmin ? ["admin"] : []).concat(isDesktop ? ["palette"] : []);
+  var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 1200); };
+  keys.forEach(function(k, i) { idle(function() { loaders[k]().catch(function() {}); }, { timeout: 4000 + i * 500 }); });
+}
+function TabFallback() {
+  return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,.35)",fontSize:13,letterSpacing:.5}}>Loading…</div>;
+}
 import { useDesktop } from "./lib/useDesktop";
 import { newDeckTemplate, duplicateDeck as duplicateDeckData, activeDecks, liveStacks } from "./lib/deckOps";
 import DesktopCtx from "./lib/DesktopCtx";
@@ -62,7 +88,7 @@ export default function App() {
   var [showSignup, setShowSignup] = useState(!!joinCode);
 
   function handleLogin(u) {
-    setKickReason(null); setShowSignup(false); setAuthUser(syncBrand(u));
+    clearCache(); setKickReason(null); setShowSignup(false); setAuthUser(syncBrand(u));
     // Drop ?join= so a reload doesn't reopen signup
     if (joinCode) { try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {} }
   }
@@ -91,8 +117,8 @@ export default function App() {
 
   // Register 401 handler so api helpers can clear auth state
   useEffect(function() {
-    setUnauthHandler(function(){ setStoredToken(null); setAuthUser(false); });
-    setSessionReplacedHandler(function(){ setStoredToken(null); setKickReason("replaced"); setAuthUser(false); });
+    setUnauthHandler(function(){ setStoredToken(null); clearCache(); setAuthUser(false); });
+    setSessionReplacedHandler(function(){ setStoredToken(null); clearCache(); setKickReason("replaced"); setAuthUser(false); });
     return function(){ setUnauthHandler(null); setSessionReplacedHandler(null); };
   }, []);
 
@@ -135,11 +161,13 @@ export default function App() {
   setAccentColor(authUser ? authUser.orgAccent : null);
 
   if (!authUser && showSignup) return (
+    <Suspense fallback={<div style={{minHeight:"100vh",background:"#060d1a"}}/>}>
     <SignupScreen
       initialCode={joinCode}
       onLogin={handleLogin}
       onBack={function(){ setShowSignup(false); }}
     />
+    </Suspense>
   );
   if (!authUser) return (
     <LoginScreen
@@ -148,7 +176,7 @@ export default function App() {
       onShowSignup={function(){ setShowSignup(true); }}
     />
   );
-  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setBrand(null); setAuthUser(false); }}
+  return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setBrand(null); clearCache(); setAuthUser(false); }}
     onOrgUpdated={function(org){
       // Owner edited branding/name — refresh the signed-in user's org fields so the shell re-themes
       setBrand({ orgName: org.name, orgLogo: org.logo || null, orgAccent: org.accentColor || null, orgLogoVer: null });
@@ -240,6 +268,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         setServerOk(false); setDecksError(true); setSaveStatus("error");
       });
   }
+  useEffect(function() { prefetchChunks(isAdminRole(authUser.role), layout.isDesktop || layout.layout === "tablet"); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(function() {
     loadDecks();
     refreshOrgUsers();
@@ -416,7 +445,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     apiPost("/auth/logout", {}).catch(function(){});
     onLogout();
   }
-  var tipCtxVal = { activeTip, setActiveTip };
+  // Stable context value — a fresh object every render re-rendered every tooltip consumer
+  var tipCtxVal = useMemo(function() { return { activeTip:activeTip, setActiveTip:setActiveTip }; }, [activeTip]);
   function handleAppClick() { setActiveTip(null); }
 
   var deckSwitcher = (
@@ -503,10 +533,14 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   // Shared tab content — rendered in both mobile and desktop layouts
   var tabContent = (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      {/* Each lazy tab has its own Suspense boundary so a loading chunk never touches
+          the always-mounted Play tab (a live call keeps running underneath) */}
       {tab==="home" && (
-        desktop.isDesktop
+        <Suspense fallback={<TabFallback/>}>
+        {desktop.isDesktop
           ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
-          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
+          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>}
+        </Suspense>
       )}
       <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
         <PlayTab
@@ -523,6 +557,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         />
       </div>
       {tab==="sessions" && (
+        <Suspense fallback={<TabFallback/>}>
         <SessionsTab
           key={deck.id+"-sessions"}
           deckId={deck.id}
@@ -536,8 +571,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           orgUsers={orgUsers}
           orgTeams={orgTeams}
         />
+        </Suspense>
       )}
       {tab==="cards" && (
+        <Suspense fallback={<TabFallback/>}>
         <CardsTab
           key={deck.id+"-cards"}
           deck={deck}
@@ -547,8 +584,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           onUpdateDeck={updateDeck}
           readOnly={!isAdminRole(authUser.role)}
         />
+        </Suspense>
       )}
       {tab==="objections" && (
+        <Suspense fallback={<TabFallback/>}>
         <ObjectionsTab
           key={deck.id+"-obj"}
           deck={deck}
@@ -557,8 +596,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           readOnly={!isAdminRole(authUser.role)}
           isOwner={authUser.role === "owner"}
         />
+        </Suspense>
       )}
       {tab==="admin" && isAdminRole(authUser.role) && (
+        <Suspense fallback={<TabFallback/>}>
         <AdminPanel
           authUser={authUser}
           orgUsers={orgUsers}
@@ -567,6 +608,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           onRefreshTeams={refreshOrgTeams}
           onOrgUpdated={onOrgUpdated}
         />
+        </Suspense>
       )}
     </div>
   );
@@ -577,7 +619,6 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
       <GlobalInflTooltip/>
       <div onClick={handleAppClick}>
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,700;1,400&display=swap');
           *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
           html,body,#root{height:100%;width:100%;}
           body{background:#060d1a;font-family:'Inter',sans-serif;color:#fff;overscroll-behavior:none;}
@@ -711,6 +752,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           />
         )}
         {desktop.isDesktop && showCmdPalette && (
+          <Suspense fallback={null}>
           <CommandPalette
             tabs={TABS}
             decks={liveDecks}
@@ -718,6 +760,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
             onSwitchDeck={switchDeck}
             onClose={function(){ setShowCmdPalette(false); }}
           />
+          </Suspense>
         )}
       </div>
     </TipCtx.Provider>

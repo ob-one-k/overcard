@@ -151,6 +151,10 @@ async function initSchema() {
     await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`);
     // Migration: archived decks are hidden from users but kept (with their sessions) until the owner deletes them
     await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS "archivedAt" BIGINT`);
+    // Session lists filter by org/user (and often deck) and always sort newest first
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_org_start      ON sessions("orgId", "startTs" DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_org_deck_start ON sessions("orgId", "deckId", "startTs" DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_user_start     ON sessions("userId", "startTs" DESC)`);
     // Migration: add activeToken for single-session enforcement
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "activeToken" TEXT`);
     // Migration: add audioSegments for per-card audio recording metadata
@@ -614,17 +618,20 @@ async function setTeamAdmins(teamId, adminIds) {
   });
 }
 
+// One query for the whole org: member and admin ids are aggregated per team
 async function getOrgTeams(orgId) {
-  const { rows } = await pool.query('SELECT * FROM teams WHERE "orgId" = $1 ORDER BY name', [orgId]);
-  var result = [];
-  for (var i = 0; i < rows.length; i++) {
-    var t = rows[i];
-    var memberRows = await pool.query('SELECT "userId" FROM user_teams WHERE "teamId" = $1', [t.id]);
-    var memberIds  = memberRows.rows.map(function(r) { return r.userId; });
-    var adminIds   = await getTeamAdmins(t.id);
-    result.push(Object.assign({}, t, { adminIds: adminIds, memberIds: memberIds }));
-  }
-  return result;
+  const { rows } = await pool.query(
+    'SELECT t.*,' +
+    ' COALESCE((SELECT array_agg(ut."userId") FROM user_teams ut WHERE ut."teamId" = t.id), \'{}\') AS "memberIds",' +
+    ' COALESCE((SELECT array_agg(ta."userId") FROM team_admins ta WHERE ta."teamId" = t.id), \'{}\') AS "adminIds"' +
+    ' FROM teams t WHERE t."orgId" = $1 ORDER BY t.name', [orgId]);
+  return rows;
+}
+// Just {id, name} for a set of team ids (auth responses don't need membership)
+async function getTeamNames(ids) {
+  if (!ids || !ids.length) return [];
+  const { rows } = await pool.query('SELECT id, name FROM teams WHERE id = ANY($1) ORDER BY name', [ids]);
+  return rows;
 }
 
 async function getTeamById(id) {
@@ -662,6 +669,17 @@ async function deleteTeam(id, orgId) {
 }
 
 // ─── DECKS ────────────────────────────────────────────────────────────────────
+// Access lists for many decks in one query → { deckId: [{entityType, entityId}] }
+async function getDeckAccessMap(deckIds) {
+  var map = {};
+  deckIds.forEach(function(id) { map[id] = []; });
+  if (!deckIds.length) return map;
+  const { rows } = await pool.query(
+    'SELECT "deckId","entityType","entityId" FROM deck_access WHERE "deckId" = ANY($1)', [deckIds]
+  );
+  rows.forEach(function(r) { map[r.deckId].push({ entityType:r.entityType, entityId:r.entityId }); });
+  return map;
+}
 async function getDeckAccess(deckId) {
   const { rows } = await pool.query(
     'SELECT "entityType","entityId" FROM deck_access WHERE "deckId" = $1', [deckId]
@@ -684,12 +702,8 @@ async function setDeckAccess(deckId, accessList) {
 
 async function getOrgDecks(orgId, userId, userTeamIds) {
   const { rows } = await pool.query('SELECT * FROM decks WHERE "orgId" = $1 ORDER BY name', [orgId]);
-  var decks = [];
-  for (var i = 0; i < rows.length; i++) {
-    var deck = parseDeck(rows[i]);
-    deck.accessList = await getDeckAccess(rows[i].id);
-    decks.push(deck);
-  }
+  var access = await getDeckAccessMap(rows.map(function(r) { return r.id; }));
+  var decks = rows.map(function(r) { var deck = parseDeck(r); deck.accessList = access[r.id]; return deck; });
   // Admins (no userId filter) see all decks, archived included
   if (!userId) return decks;
   return decks.filter(function(d) {
@@ -787,85 +801,81 @@ function buildSessionWhere(scope, orgId, userId, filters) {
   return { where: conds.length ? " WHERE " + conds.join(" AND ") : "", vals };
 }
 
+// Feedback/share counts are joined per row (indexed on "sessionId") so a list is one query
+function sessionCountsSql(tbl) {
+  return ' LEFT JOIN LATERAL (SELECT COUNT(*) AS "feedbackCount", MAX(f."updatedAt") AS "latestFeedbackAt"' +
+    ' FROM session_feedback f WHERE f."sessionId" = ' + tbl + '.id) fb ON true';
+}
+
 async function getSessions(scope, orgId, userId, filters) {
-  const { where, vals } = buildSessionWhere(scope, orgId, userId, filters || {});
-  const { rows } = await pool.query(
-    'SELECT *, (SELECT "displayName" FROM users WHERE users.id = sessions."userId") AS "userName"' +
-    ' FROM sessions' + where + ' ORDER BY "startTs" DESC', vals
+  const f = filters || {};
+  // sessions stays unaliased: buildSessionWhere's bare column names resolve to it
+  // (the lateral joins only expose their count columns)
+  const { where, vals } = buildSessionWhere(scope, orgId, userId, f);
+  var limit = parseInt(f.limit, 10);
+  var limitSql = limit > 0 ? " LIMIT " + Math.min(limit, 1000) : "";
+  const ownQuery = pool.query(
+    'SELECT sessions.*, (SELECT "displayName" FROM users WHERE users.id = sessions."userId") AS "userName",' +
+    ' fb."feedbackCount", fb."latestFeedbackAt", sh."shareCount"' +
+    ' FROM sessions' + sessionCountsSql("sessions") +
+    ' LEFT JOIN LATERAL (SELECT COUNT(*) AS "shareCount" FROM session_shares x WHERE x."sessionId" = sessions.id) sh ON true' +
+    where + ' ORDER BY sessions."startTs" DESC' + limitSql, vals
   );
-  const result = rows.map(parseSession);
+  const sharedQuery = (!scope || scope === "self") ? getSharedWithUser(userId, f, limitSql) : Promise.resolve([]);
+  const [ownRes, sharedRows] = await Promise.all([ownQuery, sharedQuery]);
+  const result = ownRes.rows.map(function(row) {
+    var sess = parseSession(row);
+    sess.feedbackCount = row.feedbackCount || 0;
+    sess.shareCount    = row.shareCount || 0;
+    return sess;
+  });
 
   // For self-scope, also include sessions shared with this user
-  if (!scope || scope === "self") {
-    const f = filters || {};
-    const sharedConds = ['ss."toUserId" = $1'];
-    const sharedVals  = [userId];
-    var sp = 2;
-    function spush(val) { sharedVals.push(val); return "$" + (sp++); }
-    if (f.deckId)  { sharedConds.push('s."deckId" = '  + spush(f.deckId)); }
-    if (f.mode)    { sharedConds.push('s.mode = '      + spush(f.mode)); }
-    if (f.outcome) { sharedConds.push('s.outcome = '   + spush(f.outcome)); }
-    if (f.from) {
-      const d = new Date(f.from); d.setHours(0, 0, 0, 0);
-      if (!isNaN(d.getTime())) sharedConds.push('s."startTs" >= ' + spush(d.getTime()));
-    }
-    if (f.to) {
-      const d = new Date(f.to); d.setHours(23, 59, 59, 999);
-      if (!isNaN(d.getTime())) sharedConds.push('s."startTs" <= ' + spush(d.getTime()));
-    }
-    const sharedSql =
-      'SELECT s.*, ss.context AS "_shareContext", ss."fromUserId" AS "_shareFromUserId",' +
-      ' (SELECT "displayName" FROM users WHERE id = ss."fromUserId") AS "_shareFromName",' +
-      ' (SELECT "displayName" FROM users WHERE id = s."userId") AS "userName"' +
-      ' FROM sessions s JOIN session_shares ss ON ss."sessionId" = s.id' +
-      ' WHERE ' + sharedConds.join(" AND ");
-    const { rows: sharedRows } = await pool.query(sharedSql, sharedVals);
+  if (sharedRows.length) {
     const ownIds = new Set(result.map(function(s) { return s.id; }));
     sharedRows.forEach(function(row) {
-      if (!ownIds.has(row.id)) {
-        const parsed = parseSession(row);
-        parsed._shared          = true;
-        parsed._shareContext     = row._shareContext     || null;
-        parsed._shareFromUserId  = row._shareFromUserId  || null;
-        parsed._shareFromName    = row._shareFromName    || null;
-        result.push(parsed);
-      }
+      if (ownIds.has(row.id)) return;
+      const parsed = parseSession(row);
+      parsed.feedbackCount     = row.feedbackCount || 0;
+      delete parsed.shareCount;
+      parsed._shared           = true;
+      parsed._shareContext     = row._shareContext     || null;
+      parsed._shareFromUserId  = row._shareFromUserId  || null;
+      parsed._shareFromName    = row._shareFromName    || null;
+      result.push(parsed);
     });
     result.sort(function(a, b) { return b.startTs - a.startTs; });
+    if (limit > 0 && result.length > limit) result.length = limit;
   }
-
-  if (result.length > 0) {
-    var fbIds = result.map(function(s) { return s.id; });
-    var fbPh  = fbIds.map(function(_, i) { return "$" + (i + 1); }).join(",");
-    var { rows: fbRows } = await pool.query(
-      'SELECT "sessionId", COUNT(*) AS "feedbackCount", MAX("updatedAt") AS "latestFeedbackAt"' +
-      ' FROM session_feedback WHERE "sessionId" IN (' + fbPh + ') GROUP BY "sessionId"',
-      fbIds
-    );
-    var fbMap = {};
-    fbRows.forEach(function(r) { fbMap[r.sessionId] = r; });
-    result.forEach(function(s) {
-      s.feedbackCount    = fbMap[s.id] ? parseInt(fbMap[s.id].feedbackCount, 10) : 0;
-      s.latestFeedbackAt = fbMap[s.id] ? fbMap[s.id].latestFeedbackAt : null;
-    });
-
-    // Attach shareCount to owned sessions only
-    var ownedIds = result.filter(function(s) { return !s._shared; }).map(function(s) { return s.id; });
-    if (ownedIds.length > 0) {
-      var shrPh = ownedIds.map(function(_, i) { return "$" + (i + 1); }).join(",");
-      var { rows: shrRows } = await pool.query(
-        'SELECT "sessionId", COUNT(*) AS "shareCount" FROM session_shares WHERE "sessionId" IN (' + shrPh + ') GROUP BY "sessionId"',
-        ownedIds
-      );
-      var shrMap = {};
-      shrRows.forEach(function(r) { shrMap[r.sessionId] = r; });
-      result.forEach(function(s) {
-        if (!s._shared) s.shareCount = shrMap[s.id] ? parseInt(shrMap[s.id].shareCount, 10) : 0;
-      });
-    }
-  }
-
   return result;
+}
+
+// Sessions other users shared with userId (same filters as the caller's own list)
+async function getSharedWithUser(userId, f, limitSql) {
+  const sharedConds = ['ss."toUserId" = $1'];
+  const sharedVals  = [userId];
+  var sp = 2;
+  function spush(val) { sharedVals.push(val); return "$" + (sp++); }
+  if (f.deckId)  { sharedConds.push('s."deckId" = '  + spush(f.deckId)); }
+  if (f.mode)    { sharedConds.push('s.mode = '      + spush(f.mode)); }
+  if (f.outcome) { sharedConds.push('s.outcome = '   + spush(f.outcome)); }
+  if (f.from) {
+    const d = new Date(f.from); d.setHours(0, 0, 0, 0);
+    if (!isNaN(d.getTime())) sharedConds.push('s."startTs" >= ' + spush(d.getTime()));
+  }
+  if (f.to) {
+    const d = new Date(f.to); d.setHours(23, 59, 59, 999);
+    if (!isNaN(d.getTime())) sharedConds.push('s."startTs" <= ' + spush(d.getTime()));
+  }
+  const sharedSql =
+    'SELECT s.*, ss.context AS "_shareContext", ss."fromUserId" AS "_shareFromUserId",' +
+    ' (SELECT "displayName" FROM users WHERE id = ss."fromUserId") AS "_shareFromName",' +
+    ' (SELECT "displayName" FROM users WHERE id = s."userId") AS "userName",' +
+    ' fb."feedbackCount", fb."latestFeedbackAt"' +
+    ' FROM sessions s JOIN session_shares ss ON ss."sessionId" = s.id' + sessionCountsSql("s") +
+    ' WHERE ' + sharedConds.join(" AND ");
+  const { rows } = await pool.query(sharedSql + ' ORDER BY s."startTs" DESC' + limitSql, sharedVals);
+  return rows;
 }
 
 async function getSessionById(id) {
@@ -1100,6 +1110,7 @@ module.exports = {
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches,
   // decks
+  getTeamNames,
   getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
   // sessions

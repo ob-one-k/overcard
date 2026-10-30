@@ -1,7 +1,8 @@
 import { useState, useEffect, useContext } from "react";
+import { cachedGet, peek } from "../../lib/dataCache";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR } from "../../lib/constants";
-import { apiGet, apiDel } from "../../lib/api";
+import { apiDel } from "../../lib/api";
 import { inputSt } from "../../lib/styles";
 import { DarkDatePicker } from "../ui";
 import { SessionReview, sessionVisits, sessionNotes, sessionDurSec, fmtSec, fmtDate, fmtTime } from "../Sessions";
@@ -189,9 +190,12 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
 
   useEffect(function() {
     var cancelled = false;
-    setSessions(null);
-    apiGet(buildUrl())
-      .then(function(data) { if (!cancelled) setSessions(data.sort(function(a,b){ return b.startTs - a.startTs; })); })
+    var url = buildUrl();
+    function sorted(data) { return (Array.isArray(data) ? data : []).slice().sort(function(a,b){ return b.startTs - a.startTs; }); }
+    var cached = peek(url);
+    setSessions(cached !== undefined ? sorted(cached) : null);
+    cachedGet(url)
+      .then(function(data) { if (!cancelled) setSessions(sorted(data)); })
       .catch(function() { if (!cancelled) setSessions([]); });
     return function() { cancelled = true; };
   }, [deckId, viewScope]);

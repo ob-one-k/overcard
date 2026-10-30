@@ -10,6 +10,12 @@
     <title>OverCard</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/favicon.png" />
+    <!-- Fonts load with the HTML (not after the app renders) so text doesn't swap in late -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,700;1,400&display=swap" />
+    <!-- Base page styles needed before React mounts (boot / "waking up" screens) -->
+    <style>html,body,#root{height:100%;margin:0}body{background:#060d1a;font-family:'Inter',sans-serif}</style>
   </head>
   <body>
     <div id="root"></div>

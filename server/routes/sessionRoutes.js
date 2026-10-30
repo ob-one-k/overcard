@@ -39,8 +39,8 @@ function parseScope(scopeStr) {
 // GET /api/sessions
 router.get("/", async function(req, res, next) {
   try {
-    const { scope, deckId, mode, outcome, from, to } = req.query;
-    const filters = { deckId, mode, outcome, from, to };
+    const { scope, deckId, mode, outcome, from, to, limit } = req.query;
+    const filters = { deckId, mode, outcome, from, to, limit };
 
     let parsedScope = null;
     if (scope) {

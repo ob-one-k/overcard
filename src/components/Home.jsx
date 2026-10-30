@@ -1,11 +1,21 @@
 import { useState, useEffect } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../lib/constants";
-import { apiGet } from "../lib/api";
+import { cachedGet } from "../lib/dataCache";
 import { SectionHdr, StatBox, BarRow } from "./ui";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "./Sessions";
 
 // ─── STATS COMPUTATION ────────────────────────────────────────────────────────
+// Stats are derived from session arrays that only change when data reloads, so cache
+// per array (re-renders from hover, resize or sub-tab changes reuse the result)
+var statsMemo = new WeakMap();
 function computeStats(sessions, decks) {
+  var hit = statsMemo.get(sessions);
+  if (hit && hit.decks === decks) return hit.value;
+  var value = computeStatsRaw(sessions, decks);
+  statsMemo.set(sessions, { decks: decks, value: value });
+  return value;
+}
+function computeStatsRaw(sessions, decks) {
   var total = sessions.length;
   var live     = sessions.filter(function(s){ return (s.mode||s.sessionType||"live") === "live"; });
   var practice = sessions.filter(function(s){ return (s.mode||s.sessionType||"live") === "practice"; });
@@ -14,7 +24,7 @@ function computeStats(sessions, decks) {
 
   // Flatten all visit events across sessions
   var allVisits = [];
-  sessions.forEach(function(s){ allVisits = allVisits.concat(sessionVisits(s)); });
+  sessions.forEach(function(s){ Array.prototype.push.apply(allVisits, sessionVisits(s)); });
   var mainVisits = allVisits.filter(function(v){ return !v.isObjCard; });
   var intPct = mainVisits.length > 0
     ? Math.round(mainVisits.filter(function(v){ return v.intendedPath; }).length / mainVisits.length * 100)
@@ -168,13 +178,23 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
     myTeams = [];
   }
 
+  // Admins: one org-wide request, split into teams on the client using each team's memberIds
+  // (same rows the server's team scope returns) instead of one request per team
+  function teamFromOrg(teamId) {
+    if (!isAdminRole(authUser.role)) return null;
+    var t = (orgTeams || []).find(function(x){ return x.id === teamId; });
+    return t && t.memberIds ? t : null;
+  }
+
   useEffect(function() {
-    apiGet("/sessions")
+    cachedGet("/sessions")
       .then(function(data){ setMySessions(Array.isArray(data) ? data : []); })
       .catch(function(){ setMySessions([]); });
   }, []);
 
   useEffect(function() {
+    // Admins wait for the org's teams (with memberIds) so all team tabs come from one request
+    if (isAdminRole(authUser.role) && !(orgTeams && orgTeams.length)) return;
     myTeams.forEach(function(team) {
       loadTeamSessions(team.id);
     });
@@ -183,7 +203,13 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
   function loadTeamSessions(teamId) {
     if (teamSessions[teamId] !== undefined) return; // already loaded or loading
     setLoadingTeam(teamId);
-    apiGet("/sessions?scope=team:" + teamId)
+    var orgTeam = teamFromOrg(teamId);
+    var req = orgTeam
+      ? cachedGet("/sessions?scope=org").then(function(all){
+          return (Array.isArray(all) ? all : []).filter(function(x){ return orgTeam.memberIds.indexOf(x.userId) !== -1; });
+        })
+      : cachedGet("/sessions?scope=team:" + teamId);
+    req
       .then(function(data){
         setTeamSessions(function(prev){ return Object.assign({}, prev, { [teamId]: Array.isArray(data) ? data : [] }); });
         setLoadingTeam(null);

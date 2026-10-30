@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useContext } from "react";
+import { cachedGet } from "../lib/dataCache";
 import { OrgMark } from "./OrgMark";
 import DesktopCtx from "../lib/DesktopCtx";
-import { apiGet } from "../lib/api";
 import { inputSt } from "../lib/styles";
 
 // ─── COMMAND PALETTE ──────────────────────────────────────────────────────────
@@ -27,7 +27,8 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
 
   // Load sessions on mount (for search)
   useEffect(function() {
-    apiGet("/sessions").then(function(data){
+    // Search only needs recent sessions; cached so reopening ⌘K is instant
+    cachedGet("/sessions?limit=200").then(function(data){
       setSessions(Array.isArray(data) ? data : []);
     }).catch(function(){ setSessions([]); });
   }, []);
