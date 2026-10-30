@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor } from "./lib/constants";
-import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
+import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, apiDel, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
@@ -17,6 +17,7 @@ import { HomeTab } from "./components/Home";
 import { HomeDesktop } from "./components/desktop/HomeDesktop";
 import { CommandPalette } from "./components/CommandPalette";
 import { useDesktop } from "./lib/useDesktop";
+import { newDeckTemplate, duplicateDeck as duplicateDeckData, activeDecks, liveStacks } from "./lib/deckOps";
 import DesktopCtx from "./lib/DesktopCtx";
 import { DesktopShell } from "./components/DesktopShell";
 
@@ -208,11 +209,12 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
       .then(function(data) {
         if (Array.isArray(data) && data.length > 0) {
           setDecks(data);
+          var live = activeDecks(data);
           var lastId = lsGet("overcard_activeId");
-          if (lastId && data.find(function(d) { return d.id===lastId; })) {
+          if (lastId && live.find(function(d) { return d.id===lastId; })) {
             setActiveId(lastId);
-          } else {
-            setActiveId(data[0].id);
+          } else if (live.length) {
+            setActiveId(live[0].id);
           }
         }
         setSaveStatus("saved"); setServerOk(true);
@@ -261,7 +263,14 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     return function() { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [decks, activeId]);
 
-  var deck = decks.find(function(d) { return d.id===activeId; }) || decks[0];
+  // Archived decks stay in state (admins manage them from the deck switcher) but never drive the app
+  var liveDecks = useMemo(function() { return activeDecks(decks); }, [decks]);
+  var archivedDecks = decks.filter(function(d) { return !!d.archivedAt; });
+  var deck = liveDecks.find(function(d) { return d.id===activeId; }) || liveDecks[0];
+  // Play only ever sees live (non-archived) objection stacks
+  var playDeck = useMemo(function() {
+    return deck ? Object.assign({}, deck, { objStacks: liveStacks(deck) }) : deck;
+  }, [deck]);
 
   // ── Deck mutation helpers ─────────────────────────────────────────────────────
   function upsertCard(deckId, card) {
@@ -294,14 +303,47 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     markDirty(deckId);
     setDecks(function(ds) { return ds.map(function(d) { return d.id===deckId ? fn(d) : d; }); });
   }
-  function addDeck(newDeckData) {
-    apiPost("/decks", newDeckData)
+  // New decks start from the Opening → Discovery → Close template unless content is supplied
+  function addDeck(newDeckData, opts) {
+    var data = newDeckData.cards && Object.keys(newDeckData.cards).length
+      ? newDeckData
+      : Object.assign({}, newDeckData, newDeckTemplate());
+    return apiPost("/decks", data)
       .then(function(d) {
         setDecks(function(ds){ return ds.concat([d]); });
         switchDeck(d.id);
-        switchTab("play");
+        switchTab((opts && opts.tab) || "cards");
+        return d;
       })
-      .catch(function(err){ console.error("Failed to create deck:", err); });
+      .catch(function(err){ console.error("Failed to create deck:", err); window.alert("Couldn't create the deck: " + err.message); });
+  }
+  function duplicateDeck(deckId) {
+    var src = decks.find(function(d) { return d.id === deckId; });
+    if (src) addDeck(duplicateDeckData(src));
+  }
+  // Archive / restore only flip archivedAt — local card edits awaiting autosave are kept
+  function setDeckArchived(deckId, archived) {
+    return apiPost("/decks/" + deckId + (archived ? "/archive" : "/restore"), {})
+      .then(function(res) {
+        setDecks(function(ds) { return ds.map(function(d) { return d.id === deckId ? Object.assign({}, d, { archivedAt: res.archivedAt || null }) : d; }); });
+        if (archived && deckId === activeId) {
+          var next = liveDecks.find(function(d) { return d.id !== deckId; });
+          if (next) switchDeck(next.id);
+        }
+      })
+      .catch(function(err) { window.alert("Couldn't " + (archived ? "archive" : "restore") + " the deck: " + err.message); });
+  }
+  function deleteDeck(deckId) {
+    return apiDel("/decks/" + deckId)
+      .then(function() {
+        dirtyIds.current.delete(deckId);
+        setDecks(function(ds) { return ds.filter(function(d) { return d.id !== deckId; }); });
+        if (deckId === activeId) {
+          var next = liveDecks.find(function(d) { return d.id !== deckId; });
+          if (next) switchDeck(next.id);
+        }
+      })
+      .catch(function(err) { window.alert("Couldn't delete the deck: " + err.message); });
   }
   function switchDeck(id) {
     if (activeSession && id !== activeId) return; // navigation is locked until the session ends
@@ -361,6 +403,25 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var tipCtxVal = { activeTip, setActiveTip };
   function handleAppClick() { setActiveTip(null); }
 
+  var deckSwitcher = (
+    <DeckSwitcherSheet
+      decks={decks}
+      activeDeckId={deck ? deck.id : null}
+      onSelect={switchDeck}
+      onAddDeck={addDeck}
+      onClose={function(){setShowDS(false);}}
+      isAdmin={isAdminRole(authUser.role)}
+      isOwner={authUser.role === "owner"}
+      onEditDeck={editDeckMeta}
+      onDuplicateDeck={duplicateDeck}
+      onArchiveDeck={function(id){ return setDeckArchived(id, true); }}
+      onRestoreDeck={function(id){ return setDeckArchived(id, false); }}
+      onDeleteDeck={deleteDeck}
+      orgUsers={orgUsers}
+      orgTeams={orgTeams}
+    />
+  );
+
   // ── Loading / error states ────────────────────────────────────────────────────
   var saveLabel = saveStatus==="saving" ? "Saving…" : saveStatus==="error" ? "⚠ Save failed" : "Saved";
   var saveColor = saveStatus==="saving" ? "rgba(255,255,255,.2)" : saveStatus==="error" ? "#EF5350" : "rgba(102,187,106,.6)";
@@ -393,7 +454,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           <form onSubmit={function(e){
               e.preventDefault();
               if (!firstDeckName.trim()) return;
-              addDeck({ name:firstDeckName.trim(), icon:"💼", color:"#F5A623", visibility:"public", accessList:[], rootCard:null, cards:{}, objStacks:[] });
+              addDeck({ name:firstDeckName.trim(), icon:"💼", color:"#F5A623", visibility:"public", accessList:[], objStacks:[] });
             }}
             style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:12,textAlign:"center"}}>
             <div style={{fontSize:20,fontWeight:700,fontFamily:"'Lora',serif"}}>Welcome{authUser.orgName ? " to " + authUser.orgName : ""}</div>
@@ -401,6 +462,11 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
             <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound Pitch"
               autoFocus style={inputSt({marginBottom:0})}/>
             <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn(SESS_COLOR)}>Create deck</button>
+            {archivedDecks.length > 0 && (
+              <button type="button" onClick={function(){ setShowDS(true); }} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>
+                Restore an archived deck ({archivedDecks.length})
+              </button>
+            )}
           </form>
         ) : (
           <div style={{color:"rgba(255,255,255,.5)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
@@ -408,6 +474,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           </div>
         )}
         <button onClick={signOut} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>Sign out</button>
+        {showDS && deckSwitcher}
       </div>
     );
   }
@@ -419,12 +486,12 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {tab==="home" && (
         desktop.isDesktop
-          ? <HomeDesktop authUser={authUser} decks={decks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
-          : <HomeTab     authUser={authUser} decks={decks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
+          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
+          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
       )}
       <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
         <PlayTab
-          deck={deck}
+          deck={playDeck}
           activeId={activeId}
           onPortalToReview={handlePortalToReview}
           onSwitchDeck={switchDeck}
@@ -455,6 +522,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         <CardsTab
           key={deck.id+"-cards"}
           deck={deck}
+          decks={liveDecks}
           onUpsert={upsertCard}
           onDelete={deleteCard}
           onUpdateDeck={updateDeck}
@@ -465,8 +533,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         <ObjectionsTab
           key={deck.id+"-obj"}
           deck={deck}
+          decks={liveDecks}
           onUpdateDeck={updateDeck}
           readOnly={!isAdminRole(authUser.role)}
+          isOwner={authUser.role === "owner"}
         />
       )}
       {tab==="admin" && isAdminRole(authUser.role) && (
@@ -522,7 +592,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
             tab={tab}
             onTabClick={handleTabClick}
             deck={deck}
-            decks={decks}
+            decks={liveDecks}
             authUser={authUser}
             sessionActive={sessionActive}
             saveStatus={saveStatus}
@@ -543,8 +613,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
                 intendedCount: deck ? Object.values(deck.cards||{}).filter(function(c){ return c.intendedPath; }).length : null,
               },
               objections: {
-                stackCount:   deck ? (deck.objStacks||[]).length : null,
-                healthyCount: deck ? (deck.objStacks||[]).filter(function(s){ return !!s.rootCard && Object.keys(s.cards||{}).length > 0; }).length : null,
+                stackCount:   deck ? liveStacks(deck).length : null,
+                healthyCount: deck ? liveStacks(deck).filter(function(s){ return !!s.rootCard && Object.keys(s.cards||{}).length > 0; }).length : null,
               },
             }}
           >
@@ -573,7 +643,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
               <div style={{width:28,height:28,borderRadius:9,background:deck.color+"22",border:"1.5px solid "+deck.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{deck.icon}</div>
               <div style={{textAlign:"left"}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#fff",lineHeight:1}}>{deck.name}</div>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:1}}>{decks.length} deck{decks.length!==1?"s":""} · tap to switch</div>
+                <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:1}}>{liveDecks.length} deck{liveDecks.length!==1?"s":""} · tap to switch</div>
               </div>
               <span style={{fontSize:10,color:"rgba(255,255,255,.28)",marginLeft:2}}>⌄</span>
             </button>
@@ -609,19 +679,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         </div>
         )}
 
-        {showDS && (
-          <DeckSwitcherSheet
-            decks={decks}
-            activeDeckId={activeId}
-            onSelect={switchDeck}
-            onAddDeck={addDeck}
-            onClose={function(){setShowDS(false);}}
-            isAdmin={isAdminRole(authUser.role)}
-            onEditDeck={editDeckMeta}
-            orgUsers={orgUsers}
-            orgTeams={orgTeams}
-          />
-        )}
+        {showDS && deckSwitcher}
         {showProfile && (
           <ProfileSheet
             authUser={authUser}
@@ -636,7 +694,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         {desktop.isDesktop && showCmdPalette && (
           <CommandPalette
             tabs={TABS}
-            decks={decks}
+            decks={liveDecks}
             onNavigateTab={function(tabId){ handleTabClick(tabId); }}
             onSwitchDeck={switchDeck}
             onClose={function(){ setShowCmdPalette(false); }}

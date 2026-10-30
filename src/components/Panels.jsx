@@ -10,7 +10,17 @@ import { useDesktop } from "../lib/useDesktop";
 import { OrgMark } from "./OrgMark";
 
 // ─── DECK SWITCHER SHEET ──────────────────────────────────────────────────────
-export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, onEditDeck, orgUsers, orgTeams }) {
+export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, isOwner, onEditDeck, onDuplicateDeck, onArchiveDeck, onRestoreDeck, onDeleteDeck, orgUsers, orgTeams }) {
+  var decks    = (allDecks || []).filter(function(d) { return !d.archivedAt; });
+  var archived = isAdmin ? (allDecks || []).filter(function(d) { return !!d.archivedAt; }) : [];
+  var [showArchived, setShowArchived] = useState(false);
+  var [busyId, setBusyId] = useState(null);
+  function run(id, p) { setBusyId(id); Promise.resolve(p).then(function(){ setBusyId(null); }, function(){ setBusyId(null); }); }
+  function confirmDelete(d) {
+    if (!window.confirm("Permanently delete \"" + d.name + "\"?\n\nIts cards and objection stacks are removed for everyone. Past sessions are kept.")) return;
+    setEditingDeck(null);
+    run(d.id, onDeleteDeck(d.id));
+  }
   var desktop = useContext(DesktopCtx);
   var [showNew, setShowNew] = useState(false);
   var [nf, setNf] = useState({ name:"", icon:"💼", color:"#F5A623", visibility:"public", accessList:[] });
@@ -30,7 +40,8 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
 
   function create() {
     if (!nf.name.trim()) return;
-    onAddDeck({ name:nf.name, icon:nf.icon, color:nf.color, visibility:nf.visibility||"public", accessList:nf.accessList||[], rootCard:null, cards:{}, objStacks:[] });
+    // No cards → App fills in the starter template (Opening → Discovery → Close)
+    onAddDeck({ name:nf.name, icon:nf.icon, color:nf.color, visibility:nf.visibility||"public", accessList:nf.accessList||[], objStacks:[] });
     setShowNew(false); setNf({name:"",icon:"💼",color:"#F5A623",visibility:"public",accessList:[]}); onClose();
   }
 
@@ -44,7 +55,8 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
       )}
       {showNew && (
             <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"16px",marginBottom:14}}>
-              <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:14,fontFamily:"'Lora',serif"}}>New Pitch Deck</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:4,fontFamily:"'Lora',serif"}}>New Pitch Deck</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginBottom:14,lineHeight:1.5}}>Starts with an Opening → Discovery → Close path you can edit.</div>
               <label style={labelSt()}>Name</label>
               <input value={nf.name} onChange={function(e){setNf(function(p){return Object.assign({},p,{name:e.target.value});});}} placeholder="e.g. Enterprise Outbound" style={inputSt({marginBottom:11})}/>
               <label style={labelSt()}>Icon</label>
@@ -171,6 +183,12 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
                       <button onClick={function(){setEditingDeck(null);}} style={Object.assign({},ghostBtn(),{flex:1,padding:"8px",fontSize:12})}>Cancel</button>
                       <button onClick={function(){if(onEditDeck&&ef.name.trim())onEditDeck(editingDeck.id,ef);setEditingDeck(null);}} style={Object.assign({},solidBtn(ef.color),{flex:2,padding:"8px",fontSize:12})}>Save</button>
                     </div>
+                    {/* Deck management — duplicate/archive for admins, delete for the owner */}
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid rgba(255,255,255,.08)"}}>
+                      <button disabled={busyId===d.id} onClick={function(){ setEditingDeck(null); onClose(); onDuplicateDeck(d.id); }} style={ghostSm({flex:1,minWidth:90})}>⧉ Duplicate</button>
+                      <button disabled={busyId===d.id} onClick={function(){ setEditingDeck(null); run(d.id, onArchiveDeck(d.id)); }} style={ghostSm({flex:1,minWidth:90,color:"#FFB74D",borderColor:"rgba(255,183,77,.3)"})}>🗄 Archive</button>
+                      {isOwner && <button disabled={busyId===d.id} onClick={function(){ confirmDelete(d); }} style={ghostSm({flex:1,minWidth:90,color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>🗑 Delete</button>}
+                    </div>
                   </div>
                 );
               }
@@ -186,15 +204,40 @@ export function DeckSwitcherSheet({ decks, activeDeckId, onSelect, onAddDeck, on
                           {active && <span style={{fontSize:9,background:d.color+"22",color:d.color,padding:"1px 8px",borderRadius:99,letterSpacing:.5,textTransform:"uppercase"}}>active</span>}
                           <span style={{fontSize:10,opacity:.55}} title={d.visibility==="private"?"Private — restricted access":"Public — org-wide"}>{d.visibility==="private"?"🔒":"🌐"}</span>
                         </div>
-                        <div style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>{Object.values(d.cards).length} cards · {d.objStacks.length} obj stacks</div>
+                        <div style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>{Object.keys(d.cards||{}).length} cards · {(d.objStacks||[]).filter(function(st){ return !st.archivedAt; }).length} obj stacks</div>
                       </div>
                     </div>
                   </button>
-                  {isAdmin && <button onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[]}); setEditingDeck(d); }} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"2px 5px",color:"rgba(255,255,255,.4)",position:"absolute",right:10,top:"50%",transform:"translateY(-50%)"}}>✏</button>}
+                  {isAdmin && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[]}); setEditingDeck(d); }} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"10px 8px",color:"rgba(255,255,255,.4)",position:"absolute",right:6,top:"50%",transform:"translateY(-50%)"}}>✏</button>}
                 </div>
               );
             })}
           </div>
+          {archived.length > 0 && (
+            <div style={{marginTop:16}}>
+              <button onClick={function(){ setShowArchived(function(p){ return !p; }); }}
+                style={{background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:"6px 0",fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"rgba(255,255,255,.4)"}}>
+                {showArchived ? "▾" : "▸"} Archived ({archived.length})
+              </button>
+              {showArchived && (
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:6}}>
+                  {archived.map(function(d) {
+                    return (
+                      <div key={d.id} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,.03)",border:"1px dashed rgba(255,255,255,.12)",borderRadius:12,padding:"10px 12px",opacity:busyId===d.id?.5:1}}>
+                        <div style={{width:34,height:34,borderRadius:10,background:d.color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0,filter:"grayscale(.6)"}}>{d.icon}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,.7)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
+                          <div style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>Archived {new Date(d.archivedAt).toLocaleDateString()}</div>
+                        </div>
+                        <button disabled={busyId===d.id} onClick={function(){ run(d.id, onRestoreDeck(d.id)); }} style={ghostSm()}>Restore</button>
+                        {isOwner && <button disabled={busyId===d.id} onClick={function(){ confirmDelete(d); }} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
     </div>
   );
 

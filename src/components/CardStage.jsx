@@ -65,7 +65,9 @@ export function PaneRail({ label, onExpand, color }) {
   );
 }
 
-export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCenter, accent, lockedType, onBack, backLabel }) {
+// endLabel — optional text for responses with no destination (objection stacks pass where the
+// rep goes after resolving, e.g. "returns to current card")
+export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCenter, accent, lockedType, onBack, backLabel, endLabel }) {
   var desktop = useContext(DesktopCtx);
   var rootRef = useRef(null);
   var navRef = useRef(null);
@@ -403,7 +405,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
       );
     });
     kids.ends.forEach(function(end, i) {
-      var what = end.self ? "↻ Repeats this card" : end.missing ? "⚠ Not linked" : (lockedType === "objection" ? "■ Ends · returns to pitch" : "■ Ends here");
+      var what = end.self ? "↻ Repeats this card" : end.missing ? "⚠ Not linked" : (endLabel ? "■ Ends · " + endLabel : lockedType === "objection" ? "■ Ends · returns to pitch" : "■ Ends here");
       items.push(
         <div key={"end-" + i} className="oc-stage-anim"
           title={end.missing ? "This response points to a card that no longer exists." : "This response has no destination card."}

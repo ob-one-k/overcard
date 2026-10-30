@@ -9,6 +9,7 @@ import { stripMarkup } from "../../lib/richtext";
 import { getParents } from "../../lib/cardGraph";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { CardStage, PaneRail } from "../CardStage";
+import { ImportPicker } from "../ImportPicker";
 
 // ─── DESKTOP TYPE SCALE ───────────────────────────────────────────────────────
 // body 14–15 · meta 13 · section heading 16–18 · page title 20–24 · badges ≥11
@@ -135,7 +136,7 @@ export function CardReadView({ card, cards, rootCard, onOpen, onClose, accent, s
 //             selected card, or a deck overview (intended path, type mix,
 //             cards needing attention) when nothing is selected.
 // TREE mode — summary rail (260px) + TreeView + editor/read view side panel.
-export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }) {
   var desktop = useContext(DesktopCtx);
   var isTablet = !!desktop.isTablet;
   var [viewMode,  setViewMode]  = useState("list");
@@ -147,6 +148,7 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
   var [navDir,    setNavDir]    = useState(null);
   var [search,    setSearch]    = useState("");
   var [collapsed, setCollapsed] = useState({});
+  var [showImport, setShowImport] = useState(false);
 
   // ── Resizable left pane (list mode only) ─────────────────────────────────────
   var [leftW, setLeftW] = useState(function() {
@@ -235,6 +237,13 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
     setEditing({ id:uid(), title:"", type:"pitch", overview:[], intendedPath:false, prompt:"", answers:[{id:aid(),label:"",next:null}] });
   }
   function openCard(card) { setNavDir(null); setEditing(card); }
+  // Cards copied from another deck in the org (fresh ids, off the intended path)
+  function importCards(res) {
+    onUpdateDeck(deck.id, function(d) {
+      return Object.assign({}, d, { cards: Object.assign({}, d.cards, res.cards), rootCard: d.rootCard || res.firstId });
+    });
+    if (res.firstId && res.cards[res.firstId]) openCard(res.cards[res.firstId]);
+  }
 
   // ── Deck analysis (overview pane + tree rail) ────────────────────────────────
   var typeStats = pitchTypes.map(function(t) {
@@ -709,10 +718,16 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
         {readOnly ? (
           <span style={{fontSize:13,color:TXT2,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,padding:"5px 12px",flexShrink:0}}>View only</span>
         ) : (
-          <button onClick={startNew}
-            style={Object.assign({},solidBtn(deck.color),{height:36,padding:"0 18px",fontSize:14,borderRadius:10,flexShrink:0})}>
-            + New Card
-          </button>
+          <>
+            <button onClick={function(){ setShowImport(true); }} title="Copy cards from another deck in your organization"
+              style={{height:36,padding:"0 14px",fontSize:14,borderRadius:10,flexShrink:0,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.14)",color:TXT2,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>
+              ⇣ {isTablet ? "Copy" : "From another deck"}
+            </button>
+            <button onClick={startNew}
+              style={Object.assign({},solidBtn(deck.color),{height:36,padding:"0 18px",fontSize:14,borderRadius:10,flexShrink:0})}>
+              + New Card
+            </button>
+          </>
         )}
       </div>
 
@@ -899,6 +914,7 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
         )}
 
       </div>
+      {showImport && <ImportPicker mode="cards" decks={decks} currentDeckId={deck.id} onImport={importCards} onClose={function(){ setShowImport(false); }}/>}
     </div>
   );
 }

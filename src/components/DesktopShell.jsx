@@ -89,7 +89,7 @@ export function DesktopShell({
       if (deck) {
         return (
           <span style={metaSt}>
-            {Object.keys(deck.cards||{}).length} cards · {(deck.objStacks||[]).length} stacks
+            {Object.keys(deck.cards||{}).length} cards · {(deck.objStacks||[]).filter(function(st){ return !st.archivedAt; }).length} stacks
           </span>
         );
       }
@@ -108,7 +108,7 @@ export function DesktopShell({
     }
 
     if (tab === "objections") {
-      var sc = d.stackCount != null ? d.stackCount : (deck ? (deck.objStacks||[]).length : null);
+      var sc = d.stackCount != null ? d.stackCount : (deck ? (deck.objStacks||[]).filter(function(st){ return !st.archivedAt; }).length : null);
       var hc = d.healthyCount;
       if (sc == null) return null;
       return (

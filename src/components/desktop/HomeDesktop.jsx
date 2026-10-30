@@ -395,7 +395,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
             var dColor   = d.color || "#F5A623";
             var wr       = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
             var nCards   = Object.keys(d.cards || {}).length;
-            var nStacks  = (d.objStacks || []).length;
+            var nStacks  = (d.objStacks || []).filter(function(st){ return !st.archivedAt; }).length;
             return (
               <div key={d.id} title={d.name} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"4px solid "+dColor,borderRadius:"4px 14px 14px 4px",padding:"14px 14px",display:"flex",alignItems:"center",gap:12}}>
                 <div style={{width:40,height:40,borderRadius:12,background:dColor+"22",border:"1.5px solid "+dColor+"55",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{d.icon||"💼"}</div>

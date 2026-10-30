@@ -11,6 +11,8 @@ import DesktopCtx from "../lib/DesktopCtx";
 import { CardsDesktop } from "./desktop/CardsDesktop";
 import { ObjectionsDesktop } from "./desktop/ObjectionsDesktop";
 import { CardStage } from "./CardStage";
+import { ImportPicker } from "./ImportPicker";
+import { liveStacks, archivedStacks, confirmStackDelete } from "../lib/deckOps";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
 // Desktop and mobile layouts are separate components so switching across the
@@ -20,8 +22,14 @@ export function CardsTab(props) {
   return desktop.isDesktop ? <CardsDesktop {...props}/> : <CardsMobile {...props}/>;
 }
 
-function CardsMobile({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }) {
   var desktop = useContext(DesktopCtx);
+  var [showImport, setShowImport] = useState(false);
+  function importCards(res) {
+    onUpdateDeck(deck.id, function(d) {
+      return Object.assign({}, d, { cards: Object.assign({}, d.cards, res.cards), rootCard: d.rootCard || res.firstId });
+    });
+  }
 
   var [viewMode,        setViewMode]        = useState("list");
   var [editing,         setEditing]         = useState(null);
@@ -137,6 +145,7 @@ function CardsMobile({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
           </div>
           <div style={{flex:1,minWidth:0}}/>
           {readOnly && <span style={{fontSize:9,color:"rgba(255,255,255,.3)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"3px 9px",flexShrink:0}}>📖 View only</span>}
+          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy cards from another deck" title="Copy from another deck" style={ghostSm({height:32,padding:"0 10px",flexShrink:0})}>⇣</button>}
           {!readOnly && <button onClick={startNew} style={Object.assign({},solidBtn(deck.color),{height:32,padding:"0 14px",fontSize:13,flexShrink:0})}>+ Card</button>}
         </div>
         {viewMode==="list" && (
@@ -308,12 +317,13 @@ function CardsMobile({ deck, onUpsert, onDelete, onUpdateDeck, readOnly }) {
           onNavigateTo={function(c,dir){setNavDir(dir||null);setEditing(c);}}
           onSaveAndNavigateTo={function(saved,next,dir){safeUpsert(deck.id,saved);setNavDir(dir||null);setEditing(next);}}/>
       )}
+      {showImport && <ImportPicker mode="cards" decks={decks} currentDeckId={deck.id} onImport={importCards} onClose={function(){setShowImport(false);}}/>}
     </div>
   );
 }
 
 // ─── OBJECTIONS TAB ───────────────────────────────────────────────────────────
-export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCard, deckCards, inline }) {
+export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, initialEditCard, deckCards, inline }) {
   var [form, setForm]         = useState(Object.assign({}, stack, { cards:Object.assign({}, stack.cards || {}) }));
   var [editCard, setEditCard] = useState(initialEditCard || null);
   var [editNavDir, setEditNavDir] = useState(null);
@@ -383,7 +393,8 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
             </div>
             <div style={{display:"flex",gap:8}}>
               <button onClick={function(){setEditMeta(true);}} style={ghostSm()}>Edit</button>
-              <button onClick={function(){onDelete(form.id);}} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>
+              {onArchive && <button onClick={function(){onArchive(form.id);}} title="Hide from Play — restorable" style={ghostSm({color:"#FFB74D",borderColor:"rgba(255,183,77,.3)"})}>Archive</button>}
+              {onDelete && <button onClick={function(){if(confirmStackDelete(form))onDelete(form.id);}} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
               <button onClick={onClose} style={iconBtn()}>✕</button>
             </div>
           </div>
@@ -541,8 +552,15 @@ export function ObjectionsTab(props) {
   return desktop.isDesktop ? <ObjectionsDesktop {...props}/> : <ObjectionsMobile {...props}/>;
 }
 
-function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
+function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
   var desktop = useContext(DesktopCtx);
+  var stacks   = liveStacks(deck);
+  var archived = readOnly ? [] : archivedStacks(deck);
+  var [showArchived, setShowArchived] = useState(false);
+  var [showImport, setShowImport] = useState(false);
+  function importStacks(res) {
+    onUpdateDeck(deck.id, function(d) { return Object.assign({},d,{objStacks:d.objStacks.concat(res.stacks)}); });
+  }
 
   var [editing, setEditing]       = useState(null);
   var [pendingCard, setPendingCard] = useState(null);
@@ -560,6 +578,15 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
   }
   function deleteStack(id) {
     onUpdateDeck(deck.id, function(d) { return Object.assign({},d,{objStacks:d.objStacks.filter(function(s){return s.id!==id;})}); });
+    setEditing(null); setPendingCard(null);
+  }
+  function setStackArchived(id, archived) {
+    onUpdateDeck(deck.id, function(d) { return Object.assign({},d,{objStacks:d.objStacks.map(function(x){
+      if (x.id !== id) return x;
+      var n = Object.assign({}, x, { archivedAt: archived ? Date.now() : null });
+      if (!archived) delete n.archivedAt;
+      return n;
+    })}); });
     setEditing(null); setPendingCard(null);
   }
   function createStack() {
@@ -594,7 +621,7 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
       <div style={{padding:"10px 14px 8px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
         <div style={{display:"flex",alignItems:"center",gap:7}}>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:11,color:"rgba(255,255,255,.3)",letterSpacing:.5,textTransform:"uppercase",fontWeight:700}}>{deck.objStacks.length} Stack{deck.objStacks.length!==1?"s":""}</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.3)",letterSpacing:.5,textTransform:"uppercase",fontWeight:700}}>{stacks.length} Stack{stacks.length!==1?"s":""}</div>
           </div>
           <div style={{display:"flex",background:"rgba(255,255,255,.05)",borderRadius:10,padding:2,gap:1,flexShrink:0}}>
             {["list","tree"].map(function(v) {
@@ -606,10 +633,11 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
             })}
           </div>
           {readOnly && <span style={{fontSize:9,color:"rgba(255,255,255,.3)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"3px 9px",flexShrink:0}}>📖 View only</span>}
+          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy stacks from another deck" title="Copy from another deck" style={ghostSm({padding:"0 10px"})}>⇣</button>}
           {!readOnly && <button onClick={function(){setShowNew(true);}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)"})}>+ New</button>}
         </div>
-        {viewMode==="tree" && deck.objStacks.length > 0 && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to edit · ⬆ = set entry · ↩ = cross-link · Pinch to zoom</div>}
-        {viewMode==="tree" && deck.objStacks.length > 0 && readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to view · Pinch to zoom</div>}
+        {viewMode==="tree" && stacks.length > 0 && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to edit · ⬆ = set entry · ↩ = cross-link · Pinch to zoom</div>}
+        {viewMode==="tree" && stacks.length > 0 && readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to view · Pinch to zoom</div>}
       </div>
 
       {viewMode === "list" ? (
@@ -619,8 +647,8 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
             <div style={{fontSize:11,color:"rgba(255,255,255,.35)",lineHeight:1.6}}>Linked to <strong style={{color:"rgba(255,255,255,.6)"}}>{deck.name}</strong>. Access from Play mode — returns to your current card.</div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {deck.objStacks.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"40px 0",fontSize:14,lineHeight:1.7}}>No stacks yet.<br/>Create one to handle objections from anywhere in your pitch.</div>}
-            {deck.objStacks.map(function(stack) {
+            {stacks.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"40px 0",fontSize:14,lineHeight:1.7}}>No stacks yet.<br/>Create one to handle objections from anywhere in your pitch.</div>}
+            {stacks.map(function(stack) {
               var isExpanded = readOnly && expandedStackId === stack.id;
               var stackCards = Object.values(stack.cards || {});
               return (
@@ -672,25 +700,43 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
               );
             })}
           </div>
+          {archived.length > 0 && (
+            <div style={{marginTop:18}}>
+              <button onClick={function(){setShowArchived(function(p){return !p;});}}
+                style={{background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:"6px 0",fontSize:11,fontWeight:700,letterSpacing:.6,textTransform:"uppercase",color:"rgba(255,255,255,.4)"}}>
+                {showArchived?"▾":"▸"} Archived ({archived.length})
+              </button>
+              {showArchived && archived.map(function(st) {
+                return (
+                  <div key={st.id} style={{display:"flex",alignItems:"center",gap:10,border:"1px dashed rgba(255,255,255,.12)",borderRadius:12,padding:"10px 12px",marginTop:6}}>
+                    <span style={{fontSize:18,filter:"grayscale(.6)"}}>{st.icon}</span>
+                    <span style={{flex:1,minWidth:0,fontSize:13,color:"rgba(255,255,255,.65)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.label}</span>
+                    <button onClick={function(){setStackArchived(st.id,false);}} style={ghostSm()}>Restore</button>
+                    {isOwner && <button onClick={function(){if(confirmStackDelete(st))deleteStack(st.id);}} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div style={{height:20}}/>
         </div>
       ) : (
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-          {deck.objStacks.length===0 && (
+          {stacks.length===0 && (
             <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"40px 0",fontSize:14,lineHeight:1.7}}>
               No stacks yet.<br/>Create one to handle objections from anywhere in your pitch.
             </div>
           )}
-          {deck.objStacks.length > 0 && (function(){
-            var activeStackId = selectedStackId || deck.objStacks[0].id;
-            var activeStack = deck.objStacks.find(function(s){return s.id===activeStackId;}) || deck.objStacks[0];
+          {stacks.length > 0 && (function(){
+            var activeStackId = selectedStackId || stacks[0].id;
+            var activeStack = stacks.find(function(s){return s.id===activeStackId;}) || stacks[0];
             var cardCount = activeStack ? Object.keys(activeStack.cards).length : 0;
             return (
               <>
                 {/* Pill selector */}
                 <div style={{padding:"8px 14px 0",overflowX:"auto",flexShrink:0}}>
                   <div style={{display:"flex",gap:6,paddingBottom:6}}>
-                    {deck.objStacks.map(function(stack){
+                    {stacks.map(function(stack){
                       var on = stack.id === activeStackId;
                       return (
                         <button key={stack.id} onClick={function(){setSelectedStackId(stack.id);}}
@@ -731,6 +777,7 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
         </div>
       )}
 
+      {showImport && <ImportPicker mode="stacks" decks={decks} currentDeckId={deck.id} onImport={importStacks} onClose={function(){setShowImport(false);}}/>}
       {showNew && (
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
           <div onClick={function(){setShowNew(false);}} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
@@ -757,7 +804,8 @@ function ObjectionsMobile({ deck, onUpdateDeck, readOnly }) {
         <ObjStackEditor
           stack={editing}
           onSave={saveStack}
-          onDelete={deleteStack}
+          onDelete={isOwner ? deleteStack : null}
+          onArchive={function(id){setStackArchived(id,true);}}
           onClose={function(){setEditing(null);setPendingCard(null);}}
           initialEditCard={pendingCard}
           deckCards={deck.cards}

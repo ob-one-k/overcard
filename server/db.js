@@ -149,6 +149,8 @@ async function initSchema() {
 
     // Migration: add visibility column if it doesn't exist yet
     await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`);
+    // Migration: archived decks are hidden from users but kept (with their sessions) until the owner deletes them
+    await client.query(`ALTER TABLE decks ADD COLUMN IF NOT EXISTS "archivedAt" BIGINT`);
     // Migration: add activeToken for single-session enforcement
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "activeToken" TEXT`);
     // Migration: add audioSegments for per-card audio recording metadata
@@ -688,9 +690,10 @@ async function getOrgDecks(orgId, userId, userTeamIds) {
     deck.accessList = await getDeckAccess(rows[i].id);
     decks.push(deck);
   }
-  // Admins (no userId filter) see all decks
+  // Admins (no userId filter) see all decks, archived included
   if (!userId) return decks;
   return decks.filter(function(d) {
+    if (d.archivedAt) return false;
     if (d.visibility === "public") return true;
     return d.accessList.some(function(a) {
       if (a.entityType === "user" && a.entityId === userId) return true;
@@ -707,13 +710,19 @@ async function getDeckById(id) {
   return deck;
 }
 
-async function createDeck({ orgId, createdBy, name, color, icon, visibility }) {
+async function createDeck({ orgId, createdBy, name, color, icon, visibility, rootCard, cards, objStacks }) {
   const id  = uid("d");
   const now = Date.now();
   await pool.query(
-    "INSERT INTO decks (id,\"orgId\",\"createdBy\",name,color,icon,\"rootCard\",cards,\"objStacks\",visibility,\"updatedAt\",\"createdAt\") VALUES ($1,$2,$3,$4,$5,$6,NULL,'{}','[]',$7,$8,$9)",
-    [id, orgId, createdBy, name, color || "#F5A623", icon || "💼", visibility || "public", now, now]
+    "INSERT INTO decks (id,\"orgId\",\"createdBy\",name,color,icon,\"rootCard\",cards,\"objStacks\",visibility,\"updatedAt\",\"createdAt\") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    [id, orgId, createdBy, name, color || "#F5A623", icon || "💼", rootCard || null,
+     JSON.stringify(cards || {}), JSON.stringify(objStacks || []), visibility || "public", now, now]
   );
+  return getDeckById(id);
+}
+
+async function setDeckArchived(id, orgId, ts) {
+  await pool.query('UPDATE decks SET "archivedAt"=$1 WHERE id=$2 AND "orgId"=$3', [ts, id, orgId]);
   return getDeckById(id);
 }
 
@@ -1091,7 +1100,7 @@ module.exports = {
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches,
   // decks
-  getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck,
+  getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
   // sessions
   getSessions, getSessionById, upsertSession, deleteSession, insertSession,

@@ -1,8 +1,11 @@
 // ─── ID GENERATORS ────────────────────────────────────────────────────────────
-export function uid()  { return "c"  + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
-export function aid()  { return "a"  + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
-export function osid() { return "os" + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
-export function sid()  { return "s"  + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+// A per-load counter keeps ids unique when many are minted in the same millisecond (bulk copy)
+var idSeq = 0;
+function idTail() { idSeq = (idSeq + 1) % 1296; return Date.now().toString(36) + idSeq.toString(36) + Math.random().toString(36).slice(2,6); }
+export function uid()  { return "c"  + idTail(); }
+export function aid()  { return "a"  + idTail(); }
+export function osid() { return "os" + idTail(); }
+export function sid()  { return "s"  + idTail(); }
 
 // ─── TYPE METADATA ────────────────────────────────────────────────────────────
 export var TM = {
