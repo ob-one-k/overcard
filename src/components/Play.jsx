@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA } from "../lib/constants";
-import { apiPost, apiPostWithRetry } from "../lib/api";
+import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge as IntendedBadgeComp } from "./ui";
 import { TipCtx, RichPromptDisplay, OverviewDisplay } from "./Tooltip";
@@ -90,7 +90,11 @@ export function ObjPicker({ stacks, onSelect, onClose, deckCards }) {
 // Core card navigator — used inside active Play sessions.
 // sessionMode=true records visit events and shows the + Note button.
 // cardEnterTime tracks dwell time per card.
+// Key points (card overview) collapse state — shared by both Play layouts, expanded by default
+var OV_KEY = "overcard_play_overviewCollapsed";
+
 export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getAudioOffset, flushRef }) {
+  var [ovCollapsed, setOvCollapsed] = useState(function(){ return lsGet(OV_KEY) === "1"; });
   var [pitchHist, setPitchHist] = useState(deck.rootCard ? [deck.rootCard] : []);
   var [objMode,   setObjMode]   = useState(null);
   var [showPicker, setShowPicker] = useState(false);
@@ -275,7 +279,8 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
           <div style={{padding:"0 20px 10px"}}>
             <h2 style={{margin:0,fontSize:22,fontWeight:700,color:"#fff",lineHeight:1.25,fontFamily:"'Lora',Georgia,serif"}}>{card.title}</h2>
           </div>
-          <OverviewDisplay bullets={card.overview} color={meta.color}/>
+          <OverviewDisplay bullets={card.overview} color={meta.color} collapsed={ovCollapsed}
+            onToggle={function(){ setOvCollapsed(!ovCollapsed); lsSet(OV_KEY, !ovCollapsed ? "1" : "0"); }}/>
           <div style={{margin:"0 14px 16px",padding:"15px 17px",background:"rgba(0,0,0,.3)",borderRadius:14,borderLeft:"3px solid "+meta.color}}>
             <p style={{margin:0,fontSize:15,lineHeight:1.75,color:"rgba(255,255,255,.92)",fontFamily:"'Lora',Georgia,serif"}}>
               <RichPromptDisplay text={card.prompt} accentColor={meta.color}/>

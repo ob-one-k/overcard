@@ -73,6 +73,45 @@ function computeFilteredStats(list) {
   return { total:list.length, winRate:winRate, avgSec:avgSec, soldCount:sold.length, liveCount:live.length, practiceCount:list.length - live.length };
 }
 
+// ─── WEEKLY ACTIVITY PIE ──────────────────────────────────────────────────────
+// Live and Practice each get their own non-overlapping slices.
+var LIVE_SLICES = [
+  { key:"sold",      label:"Sold",       color:"#66BB6A", of:function(w){ return w.sold; } },
+  { key:"booked",    label:"Booked",     color:"#FFD54F", of:function(w){ return w.booked; } },
+  { key:"noContact", label:"No contact", color:"#EF5350", of:function(w){ return w.noContact; } },
+  { key:"other",     label:"Other",      color:"rgba(255,255,255,.55)", of:function(w){ return Math.max(0, w.total - w.sold - w.booked - w.noContact); } },
+];
+var PRACTICE_SLICES = [
+  { key:"reached", label:"Reached close", color:"#66BB6A", of:function(w){ return w.reached; } },
+  { key:"earlier", label:"Ended earlier", color:"#00B4FF", of:function(w){ return Math.max(0, w.total - w.reached); } },
+];
+// By-rep columns per mode: [key, label, "%"?, colour]
+var REP_COLS = {
+  live:     [["name","Rep"],["total","Calls"],["sold","Sold",null,"#66BB6A"],["booked","Booked",null,"#FFD54F"],["rate","Close rate","%"],["last","Last call"]],
+  practice: [["name","Rep"],["total","Runs"],["reach","Reached close","%","#66BB6A"],["onPath","On path","%"],["avgSec","Avg run"],["last","Last run"]],
+};
+function WeekPie({ week, slices, size, hover }) {
+  var total = week.total;
+  var r = 15.9155;                       // circumference = 100 → dash lengths are percentages
+  var offset = 25;                       // start at 12 o'clock
+  return (
+    <svg width={size} height={size} viewBox="0 0 42 42" role="img"
+      aria-label={total + " sessions: " + slices.map(function(sl){ return sl.of(week) + " " + sl.label.toLowerCase(); }).join(", ")}
+      style={{display:"block",transform:hover ? "scale(1.08)" : "none",transition:"transform .15s"}}>
+      <circle cx="21" cy="21" r={r} fill="none" stroke="rgba(255,255,255,.07)" strokeWidth="6"/>
+      {total > 0 && slices.map(function(sl) {
+        var pct = sl.of(week) / total * 100;
+        if (!pct) return null;
+        var el = <circle key={sl.key} cx="21" cy="21" r={r} fill="none" stroke={sl.color} strokeWidth="6"
+          strokeDasharray={pct + " " + (100 - pct)} strokeDashoffset={offset}/>;
+        offset -= pct;
+        return el;
+      })}
+      <text x="21" y="21" textAnchor="middle" dominantBaseline="central" fill={total ? "#fff" : "rgba(255,255,255,.3)"} fontSize="10" fontWeight="700" fontFamily="inherit">{total}</text>
+    </svg>
+  );
+}
+
 function pillBtn(on, color) {
   var c = color || ACCENT;
   return {
@@ -118,6 +157,10 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   var [repSort,  setRepSort]  = useState({ key:"total", dir:"desc" });   // By-rep table ordering
   var [repGroup, setRepGroup] = useState(false);                         // group By-rep rows by team
   var [hoverWeek, setHoverWeek] = useState(null);                        // activity chart tooltip
+  var [ovMode,   setOvMode]   = useState("live");   // overview sub-tab: live | practice (metrics never mix)
+  var [fSource,  setFSource]  = useState("all");    // my scope: all | mine | shared (sessions shared with me)
+  var [groupRep, setGroupRep] = useState(false);    // team/org scopes: group the list by rep
+  var [openGroups, setOpenGroups] = useState({});   // rep id -> expanded
 
   // Tablet (compact): smaller type, 44px targets, no hover-only controls.
   // When the window is too narrow for two panes (portrait), list and detail
@@ -129,6 +172,10 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
 
   var isAdmin      = !!(authUser && isAdminRole(authUser.role));
   var isAdminScope = !!(isAdmin && viewScope && viewScope !== "self");
+  // Scope values are shared with the mobile layout ("org" | "team:<id>" | "user:<id>").
+  // Older desktop builds stored a bare team id — normalise it so the API gets a valid scope.
+  var scopeVal = !viewScope || viewScope === "self" || viewScope === "org" || /^(team|user):/.test(viewScope) ? (viewScope || "self") : "team:" + viewScope;
+  var scopeIsPerson = /^user:/.test(scopeVal);
 
   useEffect(function() {
     if (onInitialReview) setSelectedId(onInitialReview);
@@ -136,7 +183,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
 
   function buildUrl() {
     var url = "/sessions?deckId=" + deckId;
-    if (isAdminScope) url += "&scope=" + viewScope;
+    if (isAdminScope) url += "&scope=" + encodeURIComponent(scopeVal);
     return url;
   }
 
@@ -148,6 +195,9 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
       .catch(function() { if (!cancelled) setSessions([]); });
     return function() { cancelled = true; };
   }, [deckId, viewScope]);
+
+  // Picking Live/Practice in the list filter moves the overview to the same sub-tab
+  useEffect(function() { if (fType === "live" || fType === "practice") setOvMode(fType); }, [fType]);
 
   // Reset the rep filter when the scope changes (the rep may no longer be in range)
   useEffect(function() { setFUser(""); }, [viewScope, deckId]);
@@ -186,7 +236,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   }
 
   function resetFilters() {
-    setSearch(""); setFType("all"); setFFrom(""); setFTo(""); setSortBy("date"); setFUser("");
+    setSearch(""); setFType("all"); setFFrom(""); setFTo(""); setSortBy("date"); setFUser(""); setFSource("all");
   }
 
   function getFiltered() {
@@ -194,6 +244,8 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
     var q = search.toLowerCase();
     var list = sessions.filter(function(s) {
       if (fType !== "all" && (s.mode||"live") !== fType) return false;
+      if (!isAdminScope && fSource === "mine" && s._shared) return false;
+      if (!isAdminScope && fSource === "shared" && !s._shared) return false;
       if (fUser && s.userId !== fUser) return false;
       if (q && !(s.name || "").toLowerCase().includes(q) && !ownerName(s).toLowerCase().includes(q)) return false;
       if (fFrom) { var d = new Date(fFrom); d.setHours(0,0,0,0); if (s.startTs < d.getTime()) return false; }
@@ -212,81 +264,126 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
 
   var filtered = getFiltered();
   var selectedSession = sessions ? sessions.find(function(s){ return s.id === selectedId; }) : null;
-  var filtersActive = !!(search || fType !== "all" || fFrom || fTo || sortBy !== "date" || fUser);
+  var filtersActive = !!(search || fType !== "all" || fFrom || fTo || sortBy !== "date" || fUser || fSource !== "all");
+  var sharedCount = sessions ? sessions.filter(function(x){ return x._shared; }).length : 0;
   var stats = sessions !== null && filtered.length > 0 ? computeFilteredStats(filtered) : null;
   var scopeLabel = !isAdminScope ? "My sessions"
-                 : viewScope === "org" ? "All org sessions"
-                 : (((orgTeams||[]).find(function(t){ return t.id === viewScope; }) || {}).name || "Team") + " sessions";
+                 : scopeVal === "org" ? "All org sessions"
+                 : scopeIsPerson ? ((userMap[scopeVal.slice(5)] || {}).displayName || "Rep") + "'s sessions"
+                 : (((orgTeams||[]).find(function(t){ return "team:" + t.id === scopeVal; }) || {}).name || "Team") + " sessions";
+  var canGroup = isAdminScope && !scopeIsPerson;
 
-  // ── Per-rep aggregation (overview panel + rep filter chip) ───────────────────
+  // ── Overview aggregation — one mode at a time (Live and Practice never mix) ──────
+  var ovList = filtered.filter(function(x){ return (x.mode || "live") === ovMode; });
+  var isLiveOv = ovMode === "live";
+  function reachedClose(x) { return sessionVisits(x).some(function(v){ return v.cardType === "close" && !v.isObjCard; }); }
+  function lastMainCard(x) { var v = sessionVisits(x).filter(function(e){ return !e.isObjCard; }); return v.length ? v[v.length - 1] : null; }
+  function onPathPct(list) {
+    var all = 0, on = 0;
+    list.forEach(function(x){ sessionVisits(x).forEach(function(v){ if (v.isObjCard) return; all++; if (v.intendedPath) on++; }); });
+    return all ? Math.round(on / all * 100) : null;
+  }
+  function avgSecOf(list) {
+    var d = list.map(sessionDurSec).filter(Boolean);
+    return d.length ? Math.round(d.reduce(function(t, x){ return t + x; }, 0) / d.length) : null;
+  }
+
+  // Per-rep rows (overview table + rep filter chip)
   var repRows = [];
   if (sessions) {
     var reps = {};
-    filtered.forEach(function(s) {
-      var k = s.userId || "__unknown";
-      if (!reps[k]) reps[k] = { id:s.userId, name:ownerName(s), role:ownerRole(s), total:0, live:0, sold:0, booked:0, durSum:0, durN:0, last:0 };
-      var r = reps[k];
-      r.total++;
-      if ((s.mode||"live") === "live") { r.live++; if (s.sold || s.outcome === "sold") r.sold++; if (s.outcome === "booked") r.booked++; }
-      var d = sessionDurSec(s); if (d) { r.durSum += d; r.durN++; }
-      if (s.startTs > r.last) r.last = s.startTs;
+    ovList.forEach(function(x) {
+      var k = x.userId || "__unknown";
+      if (!reps[k]) reps[k] = { id:x.userId, name:ownerName(x), role:ownerRole(x), list:[] };
+      reps[k].list.push(x);
     });
-    repRows = Object.keys(reps).map(function(k){ return reps[k]; }).sort(function(a,b){ return b.total - a.total; });
+    repRows = Object.keys(reps).map(function(k) {
+      var r = reps[k], l = r.list;
+      var sold = l.filter(function(x){ return x.sold || x.outcome === "sold"; }).length;
+      var booked = l.filter(function(x){ return x.outcome === "booked"; }).length;
+      var closeN = l.filter(reachedClose).length;
+      return { id:r.id, name:r.name, role:r.role, total:l.length, sold:sold, booked:booked,
+        rate: l.length ? Math.round(sold / l.length * 100) : null,
+        reach: l.length ? Math.round(closeN / l.length * 100) : null,
+        onPath: onPathPct(l), avgSec: avgSecOf(l),
+        last: l.reduce(function(m, x){ return Math.max(m, x.startTs || 0); }, 0) };
+    });
   }
   var fUserName = fUser ? ((userMap[fUser] && (userMap[fUser].displayName || userMap[fUser].email)) || (repRows.find(function(r){ return r.id === fUser; }) || {}).name || "Rep") : "";
 
-  // ── Outcome distribution ─────────────────────────────────────────────────────
-  var outcomeRows = [];
-  if (stats) {
+  // Mix panel: live = call outcomes · practice = how far runs got
+  var mixRows = [];
+  if (isLiveOv) {
     var oc = {};
-    filtered.forEach(function(s) { var m = outcomeMeta(s); if (!oc[m.label]) oc[m.label] = { m:m, n:0 }; oc[m.label].n++; });
-    outcomeRows = Object.keys(oc).map(function(k){ return oc[k]; }).sort(function(a,b){ return b.n - a.n; });
-  }
-  // Top closing cards
-  var closeRows = [];
-  if (stats) {
-    var cc = {};
-    filtered.forEach(function(s) {
-      if (!(s.sold || s.outcome === "sold") || !s.soldCardTitle) return;
-      cc[s.soldCardTitle] = (cc[s.soldCardTitle] || 0) + 1;
+    ovList.forEach(function(x){
+      var m = outcomeMeta(x);
+      var label = m.label === "Live" ? "Not sold" : m.label;   // a completed live call without a sale
+      if (!oc[label]) oc[label] = { label:label, color:m.color, n:0 };
+      oc[label].n++;
     });
-    closeRows = Object.keys(cc).map(function(k){ return { title:k, n:cc[k] }; }).sort(function(a,b){ return b.n - a.n; }).slice(0, 5);
+    mixRows = Object.keys(oc).map(function(k){ return oc[k]; });
+  } else {
+    var depth = { close:0, discovery:0, pitch:0 };
+    ovList.forEach(function(x) {
+      var types = sessionVisits(x).filter(function(v){ return !v.isObjCard; }).map(function(v){ return v.cardType; });
+      if (types.indexOf("close") !== -1) depth.close++;
+      else if (types.indexOf("discovery") !== -1) depth.discovery++;
+      else depth.pitch++;
+    });
+    mixRows = [
+      { label:"Reached close", color:"#66BB6A", n:depth.close },
+      { label:"Stopped in discovery", color:"#00B4FF", n:depth.discovery },
+      { label:"Stopped in pitch", color:"#F5A623", n:depth.pitch },
+    ];
   }
+  mixRows = mixRows.filter(function(r){ return r.n > 0; }).sort(function(a, b){ return b.n - a.n; });
 
-  // Objection stacks raised (visits to objection cards, counted once per session)
+  // Live: cards deals closed on · Practice: cards runs ended on
+  var endRows = [];
+  (function() {
+    var cc = {};
+    ovList.forEach(function(x) {
+      var t = isLiveOv ? ((x.sold || x.outcome === "sold") ? x.soldCardTitle : null) : (lastMainCard(x) || {}).cardTitle;
+      if (t) cc[t] = (cc[t] || 0) + 1;
+    });
+    endRows = Object.keys(cc).map(function(k){ return { title:k, n:cc[k] }; }).sort(function(a, b){ return b.n - a.n; }).slice(0, 5);
+  })();
+
+  // Objection stacks raised (once per session)
   var objRows = [];
-  if (stats) {
+  (function() {
     var ob = {};
-    filtered.forEach(function(s) {
+    ovList.forEach(function(x) {
       var seen = {};
-      sessionVisits(s).forEach(function(v) {
+      sessionVisits(x).forEach(function(v) {
         if (!v.isObjCard) return;
         var k = v.stackLabel || "Objection";
         if (seen[k]) return; seen[k] = true;
         ob[k] = (ob[k] || 0) + 1;
       });
     });
-    objRows = Object.keys(ob).map(function(k){ return { label:k, n:ob[k] }; }).sort(function(a,b){ return b.n - a.n; }).slice(0, 5);
-  }
+    objRows = Object.keys(ob).map(function(k){ return { label:k, n:ob[k] }; }).sort(function(a, b){ return b.n - a.n; }).slice(0, 5);
+  })();
+
   // Weekly activity — last 12 weeks ending at the newest session in view
   var weeks = [];
-  if (stats) {
+  if (ovList.length) {
     var WEEK = 7 * 24 * 3600 * 1000;
-    var newest = filtered.reduce(function(m, s){ return Math.max(m, s.startTs || 0); }, 0);
+    var newest = ovList.reduce(function(m, x){ return Math.max(m, x.startTs || 0); }, 0);
     var end = new Date(newest); end.setHours(23,59,59,999);
     var endTs = end.getTime();
-    for (var w = 11; w >= 0; w--) weeks.push({ start:endTs - (w + 1) * WEEK + 1, live:0, practice:0, sold:0, booked:0, durSum:0, durN:0 });
-    filtered.forEach(function(s) {
-      var idx = 11 - Math.floor((endTs - s.startTs) / WEEK);
+    for (var w = 11; w >= 0; w--) weeks.push({ start:endTs - (w + 1) * WEEK + 1, total:0, sold:0, booked:0, noContact:0, reached:0, durSum:0, durN:0, onPathAll:0, onPathOn:0 });
+    ovList.forEach(function(x) {
+      var idx = 11 - Math.floor((endTs - x.startTs) / WEEK);
       if (idx < 0 || idx > 11) return;
       var wk = weeks[idx];
-      if ((s.mode||"live") === "practice") wk.practice++;
-      else {
-        wk.live++;
-        if (s.sold || s.outcome === "sold") wk.sold++;
-        if (s.outcome === "booked") wk.booked++;
-      }
-      var d = sessionDurSec(s); if (d) { wk.durSum += d; wk.durN++; }
+      wk.total++;
+      if (x.sold || x.outcome === "sold") wk.sold++;
+      else if (x.outcome === "booked") wk.booked++;
+      else if (x.outcome === "not_contacted") wk.noContact++;
+      if (reachedClose(x)) wk.reached++;
+      sessionVisits(x).forEach(function(v){ if (v.isObjCard) return; wk.onPathAll++; if (v.intendedPath) wk.onPathOn++; });
+      var d = sessionDurSec(x); if (d) { wk.durSum += d; wk.durN++; }
     });
   }
 
@@ -377,36 +474,82 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
     if (sessions === null) {
       return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:TXT3,fontSize:15}}>Loading sessions…</div>;
     }
-    if (!stats) {
-      return (
-        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,color:TXT3,padding:24,textAlign:"center"}}>
-          <div style={{fontSize:20,fontWeight:700,color:TXT2}}>{filtersActive ? "No sessions match these filters" : "No sessions yet for " + (deckName || "this deck")}</div>
-          <div style={{fontSize:15,maxWidth:460,lineHeight:1.6}}>
-            {filtersActive ? "Try widening the date range or clearing filters." : isAdmin && !isAdminScope ? "Switch the scope to All Org Sessions to review your team's runs, or start a session from Play." : "Run the deck from the Play tab — completed sessions appear here for review."}
+    var liveN = filtered.filter(function(x){ return (x.mode || "live") === "live"; }).length;
+    var pracN = filtered.length - liveN;
+    var modeTabs = (
+      <div role="tablist" aria-label="Overview metrics" style={{display:"inline-flex",background:"rgba(255,255,255,.05)",border:"1px solid "+LINE,borderRadius:12,padding:3,gap:2}}>
+        {[["live","📞 Live calls",liveN,STYPE.live.color],["practice","🎯 Practice",pracN,STYPE.practice.color]].map(function(t) {
+          var on = ovMode === t[0];
+          return (
+            <button key={t[0]} role="tab" aria-selected={on} onClick={function(){ setOvMode(t[0]); }}
+              style={{background:on ? t[3] + "22" : "transparent",border:"1px solid "+(on ? t[3] + "66" : "transparent"),borderRadius:9,padding:compact ? "10px 16px" : "7px 16px",minHeight:compact ? 44 : undefined,
+                color:on ? t[3] : TXT2,fontSize:14,fontWeight:on ? 700 : 500,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:8}}>
+              {t[1]}<span style={{fontSize:12,color:on ? t[3] : TXT3,fontWeight:600}}>{t[2]}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+    var header = (
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:compact ? 14 : 18}}>
+        <div style={{minWidth:0}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap"}}>
+            <div style={{fontSize:compact?19:22,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{deckName || "Sessions"}</div>
+            <div style={{fontSize:14,color:TXT3}}>{scopeLabel}{fUser ? " · " + fUserName : ""}{filtersActive && !fUser ? " · filtered" : ""}</div>
           </div>
-          {filtersActive && <button onClick={resetFilters} style={Object.assign(pillBtn(true), {marginTop:6,fontSize:14,padding:"7px 16px"})}>Clear filters</button>}
-          {isAdmin && !isAdminScope && !filtersActive && <button onClick={function(){ setViewScope("org"); }} style={Object.assign(pillBtn(true), {marginTop:6,fontSize:14,padding:"7px 16px"})}>View all org sessions</button>}
+          <div style={{fontSize:compact?13:14,color:TXT3,marginTop:4}}>{stacked ? "Go back to the list and pick a session to review it." : "Select a session on the left to review its path, notes and feedback."}</div>
+        </div>
+        {modeTabs}
+      </div>
+    );
+    if (!ovList.length) {
+      return (
+        <div style={{flex:1,overflowY:"auto",padding:compact?"16px 16px 20px":"22px 26px 28px"}}>
+          {header}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,color:TXT3,padding:"60px 24px",textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:700,color:TXT2}}>{filtered.length ? "No " + (isLiveOv ? "live calls" : "practice runs") + " in this view" : filtersActive ? "No sessions match these filters" : "No sessions yet for " + (deckName || "this deck")}</div>
+            <div style={{fontSize:15,maxWidth:460,lineHeight:1.6}}>
+              {filtered.length ? "Switch to " + (isLiveOv ? "Practice" : "Live calls") + " above, or widen your filters." : filtersActive ? "Try widening the date range or clearing filters." : "Run the deck from the Play tab — completed sessions appear here for review."}
+            </div>
+            {filtersActive && <button onClick={resetFilters} style={Object.assign(pillBtn(true), {marginTop:6,fontSize:14,padding:"7px 16px"})}>Clear filters</button>}
+            {isAdmin && !isAdminScope && !filtersActive && !filtered.length && <button onClick={function(){ setViewScope("org"); }} style={Object.assign(pillBtn(true), {marginTop:6,fontSize:14,padding:"7px 16px"})}>View all org sessions</button>}
+          </div>
         </div>
       );
     }
-    var kpis = [
-      { v:stats.total,                                            l:"Sessions", sub:stats.liveCount + " live · " + stats.practiceCount + " practice", c:TXT },
-      { v:stats.soldCount,                                        l:"Sold",       c:"#66BB6A" },
-      { v:stats.winRate !== null ? stats.winRate + "%" : "—",     l:"Close rate", c:"#66BB6A" },
-      { v:stats.avgSec !== null ? fmtSec(stats.avgSec) : "—",     l:"Avg time",   c:ACCENT },
+
+    var n = ovList.length;
+    var soldN = ovList.filter(function(x){ return x.sold || x.outcome === "sold"; }).length;
+    var bookedN = ovList.filter(function(x){ return x.outcome === "booked"; }).length;
+    var contacted = ovList.filter(function(x){ return x.outcome !== "not_contacted"; }).length;
+    var reachN = ovList.filter(reachedClose).length;
+    var visitsN = ovList.reduce(function(t, x){ return t + sessionVisits(x).filter(function(v){ return !v.isObjCard; }).length; }, 0);
+    var avgSec = avgSecOf(ovList);
+    var onPath = onPathPct(ovList);
+    var kpis = isLiveOv ? [
+      { v:n, l:"Live calls", c:TXT },
+      { v:soldN, l:"Sold", c:"#66BB6A" },
+      { v:Math.round(soldN / n * 100) + "%", l:"Close rate", c:"#66BB6A" },
+      { v:bookedN, l:"Booked", c:"#FFD54F" },
+      { v:Math.round(contacted / n * 100) + "%", l:"Contact rate", c:"#00B4FF" },
+      { v:avgSec !== null ? fmtSec(avgSec) : "—", l:"Avg call", c:ACCENT },
+    ] : [
+      { v:n, l:"Practice runs", c:TXT },
+      { v:Math.round(reachN / n * 100) + "%", l:"Reached close", sub:reachN + " of " + n + " runs", c:"#66BB6A" },
+      { v:onPath !== null ? onPath + "%" : "—", l:"On intended path", c:"#4DB6AC" },
+      { v:avgSec !== null ? fmtSec(avgSec) : "—", l:"Avg run", c:ACCENT },
+      { v:(visitsN / n).toFixed(1), l:"Cards per run", c:"#00B4FF" },
     ];
-    var maxOutcome = outcomeRows.reduce(function(m, r){ return Math.max(m, r.n); }, 1);
+    var maxMix = mixRows.reduce(function(m, r){ return Math.max(m, r.n); }, 1);
+    var slices = isLiveOv ? LIVE_SLICES : PRACTICE_SLICES;
     var showReps = repRows.length > 1 || isAdminScope;
+
     return (
       <div style={{flex:1,overflowY:"auto",padding:compact?"16px 16px 20px":"22px 26px 28px"}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:12,marginBottom:4,flexWrap:"wrap"}}>
-          <div style={{fontSize:compact?19:22,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{deckName || "Sessions"}</div>
-          <div style={{fontSize:14,color:TXT3}}>{scopeLabel}{fUser ? " · " + fUserName : ""}{filtersActive && !fUser ? " · filtered" : ""}</div>
-        </div>
-        <div style={{fontSize:compact?13:14,color:TXT3,marginBottom:compact?14:18}}>{stacked ? "Go back to the list and pick a session to review its path, notes and feedback." : "Select a session on the left to review its path, notes and feedback."}</div>
+        {header}
 
         {/* KPI strip */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4, minmax(0, 1fr))",gap:12,marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(" + (compact ? 110 : 118) + "px, 1fr))",gap:12,marginBottom:16}}>
           {kpis.map(function(k) {
             return (
               <div key={k.l} style={panelSt({padding:"14px 16px"})}>
@@ -418,221 +561,194 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
           })}
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"minmax(0, 1fr)",gap:16,alignItems:"start"}}>
-          {/* Outcome mix (left) + closing cards / objections stacked (right) */}
-          <div style={{gridColumn:"1 / -1",display:"flex",flexWrap:"wrap",gap:16,alignItems:"stretch"}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:16,alignItems:"stretch",marginBottom:16}}>
           <div style={panelSt({flex:"1 1 300px"})}>
-            <PanelTitle>Outcome mix</PanelTitle>
-            {outcomeRows.map(function(r) {
-              var pct = Math.round(r.n / stats.total * 100);
+            <PanelTitle>{isLiveOv ? "Call outcomes" : "How far runs got"}</PanelTitle>
+            {mixRows.map(function(r) {
               return (
-                <div key={r.m.label} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
-                  <span style={{fontSize:14,color:r.m.color,fontWeight:600,width:100,flexShrink:0}}>{r.m.label}</span>
+                <div key={r.label} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+                  <span style={{fontSize:14,color:r.color,fontWeight:600,width:isLiveOv ? 100 : 160,flexShrink:0}}>{r.label}</span>
                   <div style={{flex:1,height:8,background:"rgba(255,255,255,.06)",borderRadius:99,overflow:"hidden"}}>
-                    <div style={{width:Math.round(r.n / maxOutcome * 100) + "%",height:"100%",background:r.m.color,borderRadius:99,opacity:.85}}/>
+                    <div style={{width:Math.round(r.n / maxMix * 100) + "%",height:"100%",background:r.color,borderRadius:99,opacity:.85}}/>
                   </div>
                   <span style={{fontSize:14,color:TXT2,fontWeight:700,width:34,textAlign:"right"}}>{r.n}</span>
-                  <span style={{fontSize:13,color:TXT3,width:40,textAlign:"right"}}>{pct}%</span>
+                  <span style={{fontSize:13,color:TXT3,width:40,textAlign:"right"}}>{Math.round(r.n / n * 100)}%</span>
                 </div>
               );
             })}
           </div>
-
           <div style={{flex:"1 1 300px",display:"flex",flexDirection:"column",gap:16,minWidth:0}}>
-          {/* Top closing cards */}
-          <div style={panelSt()}>
-            <PanelTitle>Where deals close</PanelTitle>
-            {closeRows.length === 0 && <div style={{fontSize:14,color:TXT3}}>No sold sessions in this view yet.</div>}
-            {closeRows.map(function(r, i) {
-              return (
-                <div key={r.title} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:i?"1px solid "+LINE:"none"}}>
-                  <span style={{fontSize:13,color:TXT3,width:18}}>{i+1}</span>
-                  <span style={{fontSize:14,color:TXT2,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</span>
-                  <span style={{fontSize:14,fontWeight:700,color:"#66BB6A"}}>{r.n}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Objections raised */}
-          <div style={panelSt()}>
-            <PanelTitle>Objections raised</PanelTitle>
-            {objRows.length === 0 && <div style={{fontSize:14,color:TXT3}}>No objection stacks opened in this view.</div>}
-            {objRows.map(function(r, i) {
-              var pct = Math.round(r.n / stats.total * 100);
-              return (
-                <div key={r.label} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:i?"1px solid "+LINE:"none"}}>
-                  <span style={{fontSize:14,color:TXT2,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.label}</span>
-                  <span style={{fontSize:13,color:TXT3}}>{pct}% of sessions</span>
-                  <span style={{fontSize:14,fontWeight:700,color:OBJ_COLOR,width:28,textAlign:"right"}}>{r.n}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          </div>
-          </div>
-
-          {/* Weekly activity */}
-          <div style={panelSt({gridColumn:"1 / -1"})}>
-            <PanelTitle right={
-              <span style={{display:"flex",gap:14,fontSize:13,color:TXT3}}>
-                <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:STYPE.live.color}}/>Live</span>
-                <span style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:3,background:STYPE.practice.color}}/>Practice</span>
-              </span>
-            }>Activity · last 12 weeks</PanelTitle>
-            {(function() {
-              var maxW = weeks.reduce(function(m, w){ return Math.max(m, w.live + w.practice); }, 1);
-              return (
-                <div style={{display:"grid",gridTemplateColumns:"repeat(12, minmax(0, 1fr))",gap:8,alignItems:"end"}}>
-                  {weeks.map(function(w, i) {
-                    var tot = w.live + w.practice;
-                    var hov = hoverWeek === i;
-                    var wEnd = w.start + 7 * 24 * 3600 * 1000 - 1;
-                    return (
-                      <div key={i}
-                        onMouseEnter={function(){ setHoverWeek(i); }} onMouseLeave={function(){ setHoverWeek(null); }}
-                        onClick={function(){ setHoverWeek(hov ? null : i); }}
-                        style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:6,minWidth:0,cursor:"default"}}>
-                        {hov && (
-                          <div role="tooltip" style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",transform:"translateX(" + (i < 2 ? "-20%" : i > 9 ? "-80%" : "-50%") + ")",zIndex:20,
-                            minWidth:190,background:"#0b1a34",border:"1px solid rgba(255,255,255,.16)",borderRadius:10,padding:"10px 12px",boxShadow:"0 12px 32px rgba(0,0,0,.6)",pointerEvents:"none",textAlign:"left"}}>
-                            <div style={{fontSize:12,color:TXT3,marginBottom:6,whiteSpace:"nowrap"}}>
-                              {new Date(w.start).toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(wEnd).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
-                            </div>
-                            {[
-                              ["Total sessions", tot, TXT],
-                              ["Live", w.live, STYPE.live.color],
-                              ["Practice", w.practice, STYPE.practice.color],
-                              ["Sold", w.sold, "#66BB6A"],
-                              ["Booked", w.booked, "#FFD54F"],
-                              ["Close rate (live)", w.live ? Math.round(w.sold / w.live * 100) + "%" : "—", TXT2],
-                              ["Avg duration", w.durN ? fmtSec(Math.round(w.durSum / w.durN)) : "—", TXT2],
-                            ].map(function(row) {
-                              return (
-                                <div key={row[0]} style={{display:"flex",justifyContent:"space-between",gap:16,fontSize:13,lineHeight:1.7,whiteSpace:"nowrap"}}>
-                                  <span style={{color:TXT3}}>{row[0]}</span><strong style={{color:row[2],fontVariantNumeric:"tabular-nums"}}>{row[1]}</strong>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <span style={{fontSize:12,color:tot?TXT2:"rgba(255,255,255,.25)",fontWeight:600}}>{tot}</span>
-                        <div style={{width:"100%",maxWidth:44,height:90,display:"flex",flexDirection:"column",justifyContent:"flex-end",background:hov?"rgba(255,255,255,.08)":"rgba(255,255,255,.03)",borderRadius:6,overflow:"hidden",boxShadow:hov?"0 0 0 1px rgba(255,255,255,.25)":"none",transition:"background .12s"}}>
-                          <div style={{height:Math.round(w.practice / maxW * 90),background:STYPE.practice.color,opacity:.85}}/>
-                          <div style={{height:Math.round(w.live / maxW * 90),background:STYPE.live.color,opacity:.85}}/>
-                        </div>
-                        <span style={{fontSize:12,color:TXT3,whiteSpace:"nowrap"}}>{new Date(w.start).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* By rep */}
-          {showReps && (
-            <div style={panelSt({gridColumn:"1 / -1"})}>
-              <PanelTitle right={
-                <span style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                  {(orgTeams||[]).length > 0 && (
-                    <span style={{display:"inline-flex",background:"rgba(255,255,255,.05)",borderRadius:99,padding:2}}>
-                      {[[false,"All reps"],[true,"By team"]].map(function(o) {
-                        var on = repGroup === o[0];
-                        return <button key={o[1]} onClick={function(){ setRepGroup(o[0]); }}
-                          style={{background:on?"rgba(255,255,255,.12)":"transparent",border:"none",borderRadius:99,padding:compact?"8px 14px":"4px 12px",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{o[1]}</button>;
-                      })}
-                    </span>
-                  )}
-                  {fUser ? <button onClick={function(){ setFUser(""); }} style={pillBtn(true)}>Show all reps ×</button> : <span style={{fontSize:13,color:TXT3}}>Click a rep to filter the list</span>}
-                </span>
-              }>By rep</PanelTitle>
-              {(function() {
-                // Clickable column headers: first click sorts descending (numbers) / ascending (name, last run older→newer reversed)
-                var cols = [["name","Rep","left"],["total","Sessions"],["live","Live"],["sold","Sold"],["rate","Close rate"],["last","Last run"]];
+            <div style={panelSt()}>
+              <PanelTitle>{isLiveOv ? "Where deals close" : "Where runs end"}</PanelTitle>
+              {endRows.length === 0 && <div style={{fontSize:14,color:TXT3}}>{isLiveOv ? "No sold calls in this view yet." : "No runs in this view yet."}</div>}
+              {endRows.map(function(r, i) {
                 return (
-                  <div role="row" style={{display:"grid",gridTemplateColumns:"minmax(180px,2fr) repeat(5, minmax(70px,1fr))",fontSize:13,color:TXT3,padding:"0 10px 8px",borderBottom:"1px solid "+LINE,gap:8}}>
-                    {cols.map(function(c) {
-                      var on = repSort.key === c[0];
-                      return (
-                        <button key={c[0]} role="columnheader" aria-sort={on ? (repSort.dir === "asc" ? "ascending" : "descending") : "none"}
-                          onClick={function(){ setRepSort(on ? { key:c[0], dir:repSort.dir === "asc" ? "desc" : "asc" } : { key:c[0], dir:c[0] === "name" ? "asc" : "desc" }); }}
-                          title={"Sort by " + c[1].toLowerCase()}
-                          style={{background:"none",border:"none",padding:compact?"8px 0":0,cursor:"pointer",fontFamily:"inherit",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,textAlign:c[2]||"right",display:"flex",alignItems:"center",justifyContent:c[2]==="left"?"flex-start":"flex-end",gap:4}}>
-                          {c[1]}<span style={{fontSize:10,opacity:on?1:.35}}>{on ? (repSort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
-                        </button>
-                      );
-                    })}
+                  <div key={r.title} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:i?"1px solid "+LINE:"none"}}>
+                    <span style={{fontSize:13,color:TXT3,width:18}}>{i+1}</span>
+                    <span style={{fontSize:14,color:TXT2,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:isLiveOv ? "#66BB6A" : "#00B4FF"}}>{r.n}</span>
                   </div>
                 );
-              })()}
-              {(function() {
-                function val(r) {
-                  var k = repSort.key;
-                  if (k === "name") return (r.name || "").toLowerCase();
-                  if (k === "rate") return r.live ? r.sold / r.live : -1;
-                  return r[k] || 0;
-                }
-                function cmp(a, b) {
-                  var va = val(a), vb = val(b);
-                  var d = va < vb ? -1 : va > vb ? 1 : 0;
-                  if (d === 0) d = (a.name || "").localeCompare(b.name || "");
-                  return repSort.dir === "asc" ? d : -d;
-                }
-                var sorted = repRows.slice().sort(cmp);
-                if (!repGroup) return sorted.map(renderRepRow);
-                // Group by team (a rep in several teams appears under each); reps with no team last
-                var groups = (orgTeams||[]).map(function(t) {
-                  return { id:t.id, name:t.name, rows:sorted.filter(function(r){ return (t.memberIds||[]).indexOf(r.id) !== -1; }) };
-                }).filter(function(g){ return g.rows.length; });
-                var inTeam = {};
-                groups.forEach(function(g){ g.rows.forEach(function(r){ inTeam[r.id] = true; }); });
-                var loose = sorted.filter(function(r){ return !inTeam[r.id]; });
-                if (loose.length) groups.push({ id:"__none", name:"No team", rows:loose });
-                return groups.map(function(g) {
-                  var t = g.rows.reduce(function(a, r){ a.total += r.total; a.live += r.live; a.sold += r.sold; a.last = Math.max(a.last, r.last); return a; }, { total:0, live:0, sold:0, last:0 });
-                  return (
-                    <div key={g.id} style={{marginTop:10}}>
-                      <div style={{display:"grid",gridTemplateColumns:"minmax(180px,2fr) repeat(5, minmax(70px,1fr))",gap:8,padding:"8px 10px",background:"rgba(255,255,255,.04)",borderRadius:8,fontSize:13,color:TXT2,fontWeight:700}}>
-                        <span style={{color:TXT}}>🏷️ {g.name} <span style={{fontWeight:500,color:TXT3}}>· {g.rows.length} rep{g.rows.length!==1?"s":""}</span></span>
-                        <span style={{textAlign:"right"}}>{t.total}</span>
-                        <span style={{textAlign:"right"}}>{t.live}</span>
-                        <span style={{textAlign:"right",color:"#66BB6A"}}>{t.sold}</span>
-                        <span style={{textAlign:"right"}}>{t.live ? Math.round(t.sold / t.live * 100) + "%" : "—"}</span>
-                        <span style={{textAlign:"right",fontWeight:500,color:TXT3}}>{t.last ? fmtDate(t.last) : "—"}</span>
-                      </div>
-                      {g.rows.map(renderRepRow)}
-                    </div>
-                  );
-                });
-              })()}
+              })}
             </div>
-          )}
+            <div style={panelSt()}>
+              <PanelTitle>Objections raised</PanelTitle>
+              {objRows.length === 0 && <div style={{fontSize:14,color:TXT3}}>No objections in this view.</div>}
+              {objRows.map(function(r, i) {
+                return (
+                  <div key={r.label} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderTop:i?"1px solid "+LINE:"none"}}>
+                    <span style={{fontSize:14,color:TXT2,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.label}</span>
+                    <span style={{fontSize:13,color:TXT3}}>{Math.round(r.n / n * 100)}% of {isLiveOv ? "calls" : "runs"}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:OBJ_COLOR,width:28,textAlign:"right"}}>{r.n}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </div>
-    );
-  }
-  // One By-rep table row (used flat and inside team groups)
-  function renderRepRow(r) {
+
+        {/* Weekly activity — pies split by this mode's outcomes */}
+        <div style={panelSt({marginBottom:16})}>
+          <PanelTitle right={
+            <span style={{display:"flex",gap:14,fontSize:13,color:TXT3,flexWrap:"wrap"}}>
+              {slices.map(function(sl) {
+                return <span key={sl.key} style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:10,height:10,borderRadius:"50%",background:sl.color}}/>{sl.label}</span>;
+              })}
+            </span>
+          }>Activity · last 12 weeks</PanelTitle>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(12, minmax(0, 1fr))",gap:8,alignItems:"end"}}>
+            {weeks.map(function(w, i) {
+              var hov = hoverWeek === i;
+              var wEnd = w.start + 7 * 24 * 3600 * 1000 - 1;
+              var rows = isLiveOv ? [
+                ["Live calls", w.total, TXT], ["Sold", w.sold, "#66BB6A"], ["Booked", w.booked, "#FFD54F"], ["No contact", w.noContact, "rgba(255,255,255,.6)"],
+                ["Other", w.total - w.sold - w.booked - w.noContact, "rgba(255,255,255,.75)"],
+                ["Close rate", w.total ? Math.round(w.sold / w.total * 100) + "%" : "—", TXT2], ["Avg call", w.durN ? fmtSec(Math.round(w.durSum / w.durN)) : "—", TXT2],
+              ] : [
+                ["Practice runs", w.total, TXT], ["Reached close", w.reached, "#66BB6A"], ["Ended earlier", w.total - w.reached, "#00B4FF"],
+                ["On path", w.onPathAll ? Math.round(w.onPathOn / w.onPathAll * 100) + "%" : "—", TXT2], ["Avg run", w.durN ? fmtSec(Math.round(w.durSum / w.durN)) : "—", TXT2],
+              ];
+              return (
+                <div key={i} onMouseEnter={function(){ setHoverWeek(i); }} onMouseLeave={function(){ setHoverWeek(null); }} onClick={function(){ setHoverWeek(hov ? null : i); }}
+                  style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:6,minWidth:0}}>
+                  {hov && (
+                    <div role="tooltip" style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",transform:"translateX(" + (i < 2 ? "-20%" : i > 9 ? "-80%" : "-50%") + ")",zIndex:20,
+                      minWidth:190,background:"#0b1a34",border:"1px solid rgba(255,255,255,.16)",borderRadius:10,padding:"10px 12px",boxShadow:"0 12px 32px rgba(0,0,0,.6)",pointerEvents:"none",textAlign:"left"}}>
+                      <div style={{fontSize:12,color:TXT3,marginBottom:6,whiteSpace:"nowrap"}}>
+                        {new Date(w.start).toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(wEnd).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                      </div>
+                      {rows.map(function(row) {
+                        return (
+                          <div key={row[0]} style={{display:"flex",justifyContent:"space-between",gap:16,fontSize:13,lineHeight:1.7,whiteSpace:"nowrap"}}>
+                            <span style={{color:TXT3}}>{row[0]}</span><strong style={{color:row[2],fontVariantNumeric:"tabular-nums"}}>{row[1]}</strong>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <WeekPie week={w} slices={slices} size={compact ? 54 : 64} hover={hov}/>
+                  <span style={{fontSize:12,color:TXT3,whiteSpace:"nowrap"}}>{new Date(w.start).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* By rep */}
+        {showReps && (
+          <div style={panelSt()}>
+            <PanelTitle right={
+              <span style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                {(orgTeams||[]).length > 0 && (
+                  <span style={{display:"inline-flex",background:"rgba(255,255,255,.05)",borderRadius:99,padding:2}}>
+                    {[[false,"All reps"],[true,"By team"]].map(function(o) {
+                      var on = repGroup === o[0];
+                      return <button key={o[1]} onClick={function(){ setRepGroup(o[0]); }}
+                        style={{background:on?"rgba(255,255,255,.12)":"transparent",border:"none",borderRadius:99,padding:compact?"8px 14px":"4px 12px",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{o[1]}</button>;
+                    })}
+                  </span>
+                )}
+                {fUser ? <button onClick={function(){ setFUser(""); }} style={pillBtn(true)}>Show all reps ×</button> : <span style={{fontSize:13,color:TXT3}}>Click a rep to filter the list</span>}
+              </span>
+            }>By rep · {isLiveOv ? "live calls" : "practice"}</PanelTitle>
+            {(function() {
+              var cols = REP_COLS[ovMode];
+              var gridCols = "minmax(180px,2fr) repeat(" + (cols.length - 1) + ", minmax(70px,1fr))";
+              function val(r, k) { return k === "name" ? (r.name || "").toLowerCase() : (r[k] === null || r[k] === undefined ? -1 : r[k]); }
+              var sk = cols.some(function(c){ return c[0] === repSort.key; }) ? repSort.key : "total";
+              var sorted = repRows.slice().sort(function(a, b) {
+                var va = val(a, sk), vb = val(b, sk);
+                var d = va < vb ? -1 : va > vb ? 1 : 0;
+                if (!d) d = (a.name || "").localeCompare(b.name || "");
+                return repSort.dir === "asc" ? d : -d;
+              });
+              function rowCells(r) {
+                return cols.slice(1).map(function(c) {
+                  var v = r[c[0]];
+                  var txt = c[0] === "last" ? (v ? fmtDate(v) : "—") : c[0] === "avgSec" ? (v ? fmtSec(v) : "—") : c[2] === "%" ? (v === null ? "—" : v + "%") : v;
+                  return <span key={c[0]} style={{textAlign:"right",fontWeight:c[0] === "total" ? 700 : 500,color:c[3] || TXT2,fontSize:c[0] === "last" ? 13 : 14,fontVariantNumeric:"tabular-nums"}}>{txt}</span>;
+                });
+              }
+              function repRow(r) {
                 var on = fUser && fUser === r.id;
                 var rm = r.role ? roleMeta(r.role) : null;
-                var rate = r.live ? Math.round(r.sold / r.live * 100) + "%" : "—";
                 return (
                   <button key={r.id || r.name} onClick={function(){ if (r.id) { setFUser(on ? "" : r.id); if (stacked && !on) setShowOverview(false); } }}
-                    style={{display:"grid",gridTemplateColumns:"minmax(180px,2fr) repeat(5, minmax(70px,1fr))",gap:8,alignItems:"center",width:"100%",textAlign:"left",background:on?"rgba(255,213,79,.08)":"transparent",border:"none",borderBottom:"1px solid "+LINE,padding:"10px 10px",cursor:r.id?"pointer":"default",fontFamily:"inherit",color:TXT2,fontSize:14}}>
+                    style={{display:"grid",gridTemplateColumns:gridCols,gap:8,alignItems:"center",width:"100%",textAlign:"left",background:on?"rgba(255,213,79,.08)":"transparent",border:"none",borderBottom:"1px solid "+LINE,padding:"10px 10px",cursor:r.id?"pointer":"default",fontFamily:"inherit",color:TXT2,fontSize:14}}>
                     <span style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
                       <Avatar name={r.name} colorKey={r.id || r.name} size={28}/>
                       <span style={{fontWeight:600,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
                       {rm && r.role !== "user" && <span style={{fontSize:11,fontWeight:700,color:rm.color,background:rm.bg,border:"1px solid "+rm.border,borderRadius:99,padding:"1px 7px",flexShrink:0}}>{rm.label}</span>}
                     </span>
-                    <span style={{textAlign:"right",fontWeight:700,color:TXT}}>{r.total}</span>
-                    <span style={{textAlign:"right"}}>{r.live}</span>
-                    <span style={{textAlign:"right",color:"#66BB6A"}}>{r.sold}</span>
-                    <span style={{textAlign:"right"}}>{rate}</span>
-                    <span style={{textAlign:"right",fontSize:13,color:TXT3}}>{r.last ? fmtDate(r.last) : "—"}</span>
+                    {rowCells(r)}
                   </button>
                 );
+              }
+              var head = (
+                <div style={{display:"grid",gridTemplateColumns:gridCols,fontSize:13,color:TXT3,padding:"0 10px 8px",borderBottom:"1px solid "+LINE,gap:8}}>
+                  {cols.map(function(c) {
+                    var on = sk === c[0];
+                    return (
+                      <button key={c[0]} aria-sort={on ? (repSort.dir === "asc" ? "ascending" : "descending") : "none"}
+                        onClick={function(){ setRepSort(on ? { key:c[0], dir:repSort.dir === "asc" ? "desc" : "asc" } : { key:c[0], dir:c[0] === "name" ? "asc" : "desc" }); }}
+                        style={{background:"none",border:"none",padding:compact?"8px 0":0,cursor:"pointer",fontFamily:"inherit",fontSize:13,color:on?TXT:TXT3,fontWeight:on?700:500,display:"flex",alignItems:"center",justifyContent:c[0] === "name" ? "flex-start" : "flex-end",gap:4}}>
+                        {c[1]}<span style={{fontSize:10,opacity:on?1:.35}}>{on ? (repSort.dir === "asc" ? "▲" : "▼") : "↕"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+              if (!repGroup) return <>{head}{sorted.map(repRow)}</>;
+              var groups = (orgTeams||[]).map(function(t) {
+                return { id:t.id, name:t.name, rows:sorted.filter(function(r){ return (t.memberIds||[]).indexOf(r.id) !== -1; }) };
+              }).filter(function(g){ return g.rows.length; });
+              var inTeam = {};
+              groups.forEach(function(g){ g.rows.forEach(function(r){ inTeam[r.id] = true; }); });
+              var loose = sorted.filter(function(r){ return !inTeam[r.id]; });
+              if (loose.length) groups.push({ id:"__none", name:"No team", rows:loose });
+              return (
+                <>
+                  {head}
+                  {groups.map(function(g) {
+                    var tot = g.rows.reduce(function(t, r){ return t + r.total; }, 0);
+                    var sold = g.rows.reduce(function(t, r){ return t + r.sold; }, 0);
+                    return (
+                      <div key={g.id} style={{marginTop:10}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:"rgba(255,255,255,.04)",borderRadius:8,fontSize:13,color:TXT2,fontWeight:700}}>
+                          <span style={{color:TXT,flex:1}}>🏷️ {g.name} <span style={{fontWeight:500,color:TXT3}}>· {g.rows.length} rep{g.rows.length!==1?"s":""}</span></span>
+                          <span>{tot} {isLiveOv ? "calls" : "runs"}{isLiveOv ? " · " + sold + " sold · " + (tot ? Math.round(sold / tot * 100) : 0) + "% close" : ""}</span>
+                        </div>
+                        {g.rows.map(repRow)}
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
+          </div>
+        )}
+      </div>
+    );
   }
 
   // Stacked (tablet portrait): show exactly one pane at a time
@@ -657,12 +773,20 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
             {isAdmin ? (
               <select
                 aria-label="Session scope"
-                value={viewScope||"self"}
+                value={scopeVal}
                 onChange={function(e){ setViewScope(e.target.value); setSelectedId(null); }}
                 style={Object.assign({},inputSt({padding:"8px 12px",fontSize:14,borderRadius:10}),{flex:1,width:"auto",cursor:"pointer",minHeight:ctlH})}>
                 <option value="self">My Sessions</option>
                 <option value="org">All Org Sessions</option>
-                {(orgTeams||[]).map(function(t){ return <option key={t.id} value={t.id}>{t.name}</option>; })}
+                {(orgTeams||[]).length > 0 && (
+                  <optgroup label="Teams">
+                    {(orgTeams||[]).map(function(t){ return <option key={t.id} value={"team:" + t.id}>{t.name}</option>; })}
+                  </optgroup>
+                )}
+                <optgroup label="People">
+                  {(orgUsers||[]).filter(function(u){ return u.id !== authUser.id; }).slice().sort(function(a, b){ return (a.displayName||"").localeCompare(b.displayName||""); })
+                    .map(function(u){ return <option key={u.id} value={"user:" + u.id}>{u.displayName}</option>; })}
+                </optgroup>
               </select>
             ) : (
               <div style={{flex:1,fontSize:16,fontWeight:700,color:TXT}}>My Sessions</div>
@@ -685,7 +809,43 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
             onChange={function(e){ setSearch(e.target.value); }}
             placeholder="Search by session or rep name…"
             aria-label="Search sessions"
+            list="overcard-rep-names"
             style={inputSt({height:compact?44:38,fontSize:14,padding:"0 14px",borderRadius:10})}/>
+          {/* Rep-name suggestions (mobile has an autocomplete; the native datalist gives the same here) */}
+          <datalist id="overcard-rep-names">
+            {(function() {
+              var seen = {};
+              return (sessions || []).filter(function(x){ var n = ownerName(x); if (seen[n]) return false; seen[n] = true; return true; })
+                .map(function(x){ return <option key={x.userId || ownerName(x)} value={ownerName(x)}/>; });
+            })()}
+          </datalist>
+
+          {/* My scope: all / my own / shared with me — team & org scopes: group by rep */}
+          {!isAdminScope && (
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              {[["all","All"],["mine","My runs"],["shared","Shared with me" + (sharedCount ? " · " + sharedCount : "")]].map(function(pair) {
+                return <button key={pair[0]} onClick={function(){ setFSource(pair[0]); }} style={pill(fSource === pair[0], pair[0] === "shared" ? "#00B4FF" : ACCENT)}>{pair[1]}</button>;
+              })}
+            </div>
+          )}
+          {canGroup && (
+            // Pill toggle (native checkboxes are unstyled by the app's global input reset)
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <button onClick={function(){ setGroupRep(!groupRep); }} aria-pressed={groupRep} style={pill(groupRep, ACCENT)}>
+                {groupRep ? "✓ " : ""}Group by rep
+              </button>
+              {groupRep && (
+                <button onClick={function(){
+                    var all = {}, anyClosed = false;
+                    filtered.forEach(function(x){ var k = x.userId || "__unknown"; all[k] = true; if (!openGroups[k]) anyClosed = true; });
+                    setOpenGroups(anyClosed ? all : {});
+                  }}
+                  style={{background:"none",border:"none",color:TXT3,fontSize:13,cursor:"pointer",fontFamily:"inherit",textDecoration:"underline",minHeight:ctlH}}>
+                  Expand / collapse all
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Mode filter */}
           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -767,7 +927,37 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
               {filtersActive ? "No sessions match" : "No sessions yet"}
             </div>
           )}
-          {filtered.map(renderRow)}
+          {!(canGroup && groupRep) && filtered.map(renderRow)}
+          {canGroup && groupRep && (function() {
+            // Same rep grouping the mobile list has: collapsible header with each rep's totals
+            var groups = {}, order = [];
+            filtered.forEach(function(x) {
+              var k = x.userId || "__unknown";
+              if (!groups[k]) { groups[k] = { id:k, name:ownerName(x), list:[] }; order.push(k); }
+              groups[k].list.push(x);
+            });
+            order.sort(function(a, b){ return groups[a].name.localeCompare(groups[b].name); });
+            return order.map(function(k) {
+              var g = groups[k];
+              var live = g.list.filter(function(x){ return (x.mode||"live") === "live"; });
+              var sold = live.filter(function(x){ return x.sold || x.outcome === "sold"; }).length;
+              var open = !!openGroups[k];
+              return (
+                <div key={k} style={{marginBottom:8}}>
+                  <button onClick={function(){ setOpenGroups(function(p){ var n = Object.assign({}, p); n[k] = !open; return n; }); }} aria-expanded={open}
+                    style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",background:"rgba(255,255,255,.05)",border:"1px solid "+LINE,borderRadius:12,padding:compact ? "12px" : "10px 12px",cursor:"pointer",fontFamily:"inherit",marginBottom:open ? 6 : 0}}>
+                    <Avatar name={g.name} colorKey={k} size={28}/>
+                    <span style={{flex:1,minWidth:0}}>
+                      <span style={{display:"block",fontSize:14,fontWeight:700,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.name}</span>
+                      <span style={{display:"block",fontSize:12,color:TXT3}}>{g.list.length} session{g.list.length !== 1 ? "s" : ""} · {live.length} live · {sold} sold{live.length ? " · " + Math.round(sold / live.length * 100) + "% close" : ""}</span>
+                    </span>
+                    <span style={{fontSize:12,color:TXT3}}>{open ? "▲" : "▼"}</span>
+                  </button>
+                  {open && g.list.map(renderRow)}
+                </div>
+              );
+            });
+          })()}
         </div>
       </div>
       )}

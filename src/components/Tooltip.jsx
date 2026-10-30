@@ -71,12 +71,19 @@ export function RichPromptDisplay({ text, accentColor }) {
 }
 
 // ─── OVERVIEW DISPLAY ─────────────────────────────────────────────────────────
-export function OverviewDisplay({ bullets, color }) {
+// onToggle (optional) makes the block collapsible: a "Key points" header that hides the bullets
+export function OverviewDisplay({ bullets, color, collapsed, onToggle }) {
   var valid = (bullets || []).filter(function(b) { return b && b.trim(); });
   if (!valid.length) return null;
   return (
-    <div style={{margin:"0 14px 10px",padding:"11px 14px",background:"rgba(255,255,255,.07)",borderRadius:12,borderLeft:"3px solid "+color+"88"}}>
-      {valid.map(function(b, i) {
+    <div style={{margin:"0 14px 10px",padding:onToggle && collapsed ? "8px 14px" : "11px 14px",background:"rgba(255,255,255,.07)",borderRadius:12,borderLeft:"3px solid "+color+"88"}}>
+      {onToggle && (
+        <button onClick={onToggle} aria-expanded={!collapsed}
+          style={{display:"flex",alignItems:"center",gap:6,width:"100%",background:"none",border:"none",padding:0,marginBottom:collapsed?0:7,cursor:"pointer",fontFamily:"inherit",color:"rgba(255,255,255,.5)",fontSize:10,fontWeight:700,letterSpacing:.8,textTransform:"uppercase"}}>
+          <span style={{color:color}}>{collapsed ? "▸" : "▾"}</span> Key points · {valid.length}
+        </button>
+      )}
+      {!(onToggle && collapsed) && valid.map(function(b, i) {
         return (
           <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:i<valid.length-1?5:0}}>
             <span style={{color:color,fontSize:9,marginTop:3,flexShrink:0}}>◆</span>

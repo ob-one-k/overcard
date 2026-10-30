@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA } from "../../lib/constants";
-import { apiGet, apiPost, apiPostWithRetry } from "../../lib/api";
+import { apiGet, apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
 import { useRecorder, buildAudioSegments } from "../../lib/useRecorder";
@@ -119,6 +119,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   var compact = !!(desktop && desktop.compact);
   var touch   = !!(desktop && desktop.isTouchPrimary);
   var [drawer, setDrawer] = useState(null);   // null | "path" | "notes"
+  // Key points (card overview) collapse — shared with the phone layout, expanded by default
+  var [ovCollapsed, setOvCollapsed] = useState(function(){ return lsGet("overcard_play_overviewCollapsed") === "1"; });
+  function toggleOv() { var v = !ovCollapsed; setOvCollapsed(v); lsSet("overcard_play_overviewCollapsed", v ? "1" : "0"); }
   useEffect(function() { setDrawer(null); }, [animKey]);
 
   // Track viewport width for responsive pane layout
@@ -529,18 +532,31 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
                       {inObj && <span style={{fontSize:13,fontWeight:700,color:OBJ_COLOR,background:"rgba(239,83,80,.12)",border:"1px solid rgba(239,83,80,.3)",borderRadius:99,padding:"4px 12px"}}>Objection response</span>}
                     </div>
                     <h2 style={{margin:0,padding:"14px 28px 16px",fontSize:big?36:30,fontWeight:700,color:"#fff",lineHeight:1.2,fontFamily:"'Lora',Georgia,serif"}}>{card.title}</h2>
-                    {(card.overview || []).filter(function(b){ return b && b.trim(); }).length > 0 && (
-                      <ul style={{listStyle:"none",margin:"0 24px 16px",padding:"14px 18px",background:"rgba(255,255,255,.06)",borderRadius:14,borderLeft:"3px solid "+meta.color+"99"}}>
-                        {card.overview.filter(function(b){ return b && b.trim(); }).map(function(b, i, arr) {
-                          return (
-                            <li key={i} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:i<arr.length-1?8:0}}>
-                              <span aria-hidden="true" style={{color:meta.color,fontSize:11,marginTop:5,flexShrink:0}}>◆</span>
-                              <span style={{fontSize:big?18:16,color:"rgba(255,255,255,.88)",lineHeight:1.5}}>{b}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
+                    {(function() {
+                      // Key points: collapsible (expanded by default); the choice carries across cards
+                      var pts = (card.overview || []).filter(function(b){ return b && b.trim(); });
+                      if (!pts.length) return null;
+                      return (
+                        <div style={{margin:"0 24px 16px",padding:ovCollapsed ? "10px 18px" : "12px 18px 14px",background:"rgba(255,255,255,.06)",borderRadius:14,borderLeft:"3px solid "+meta.color+"99"}}>
+                          <button onClick={toggleOv} aria-expanded={!ovCollapsed}
+                            style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"none",border:"none",padding:0,minHeight:compact ? 36 : undefined,marginBottom:ovCollapsed ? 0 : 10,cursor:"pointer",fontFamily:"inherit",color:MUTED,fontSize:12,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>
+                            <span style={{color:meta.color,fontSize:13}}>{ovCollapsed ? "▸" : "▾"}</span> Key points · {pts.length}
+                          </button>
+                          {!ovCollapsed && (
+                            <ul style={{listStyle:"none",margin:0,padding:0}}>
+                              {pts.map(function(b, i) {
+                                return (
+                                  <li key={i} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:i<pts.length-1?8:0}}>
+                                    <span aria-hidden="true" style={{color:meta.color,fontSize:11,marginTop:5,flexShrink:0}}>◆</span>
+                                    <span style={{fontSize:big?18:16,color:"rgba(255,255,255,.88)",lineHeight:1.5}}>{b}</span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <div style={{margin:"0 24px 24px",padding:big?"28px 30px":"22px 24px",background:"rgba(0,0,0,.3)",borderRadius:16,borderLeft:"4px solid "+meta.color}}>
                       <p style={{margin:0,fontSize:big?25:21,lineHeight:1.7,color:"rgba(255,255,255,.95)",fontFamily:"'Lora',Georgia,serif"}}>
                         <RichPromptDisplay text={card.prompt} accentColor={meta.color}/>

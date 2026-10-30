@@ -865,7 +865,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
 
   function buildSessionUrl() {
     var url = "/sessions?deckId=" + deckId;
-    if (isAdminScope) url += "&scope=" + viewScope;
+    if (isAdminScope) url += "&scope=" + encodeURIComponent(viewScope === "org" || /^(team|user):/.test(viewScope) ? viewScope : "team:" + viewScope);
     return url;
   }
   useEffect(function() {

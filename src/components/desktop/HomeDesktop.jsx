@@ -340,8 +340,9 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
   // ── Panel: recent sessions (me or team) ─────────────────────────────────────
   function renderRecent(showRep) {
     var list = currentSessions ? currentSessions.slice().sort(function(a, b){ return b.startTs - a.startTs; }).slice(0, 40) : [];
+    // Team view on two-column layouts: recent sessions take the full row under leaderboard + insights
     return (
-      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH })}>
+      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH, gridColumn: showRep && !wide && twoCol ? "1 / -1" : undefined })}>
         <PanelHead compact={compact} title={showRep ? "Recent team sessions" : "Recent sessions"} meta={currentSessions && currentSessions.length > 0 ? "Latest " + list.length + " of " + currentSessions.length : null}/>
         <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
           {isLoading && <EmptyNote title="Loading sessions…"/>}
@@ -493,7 +494,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     }
     var hasAny = stats && (stats.live > 0 || stats.allObjEntries.length > 0 || stats.topClose || rankRows.length > 0);
     return (
-      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH, gridColumn: wide ? undefined : "1 / -1" })}>
+      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH, gridColumn: wide || (isTeamTab && twoCol) ? undefined : "1 / -1" })}>
         <PanelHead compact={compact} title="Insights" meta={isTeamTab ? scopeLabel : viewingSelf ? "Your performance" : personName}/>
         <div style={{flex:1,overflowY:"auto",padding:"16px 20px",display:wide?"block":"grid",gridTemplateColumns:"1fr 1fr",columnGap:28}}>
           {isLoading && <EmptyNote title="Loading…"/>}
@@ -620,11 +621,12 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
 
       {/* ── Panels ── */}
       <div style={{flex:1,minHeight:0,overflowY:wide?"hidden":"auto",padding:compact?"0 "+padX+"px "+padX+"px":"0 24px 24px",display:"grid",gridTemplateColumns:cols,gridAutoRows:wide?"minmax(0,1fr)":"auto",gap:compact?12:16}}>
+        {/* Team / All: leaderboard | insights | recent team sessions.
+            Personal: recent | insights | decks on wide screens; narrower layouts keep decks beside
+            sessions and give insights the full-width row underneath. */}
         {isTeamTab ? renderLeaderboard() : renderRecent(false)}
-        {isTeamTab ? renderRecent(true) : wide ? renderInsights() : renderDecks()}
-        {/* Personal view: decks sit in the right-hand column on wide screens; narrower layouts
-            keep decks beside sessions and give insights the full-width row underneath */}
-        {isTeamTab ? renderInsights() : wide ? renderDecks() : renderInsights()}
+        {isTeamTab ? renderInsights() : wide ? renderInsights() : renderDecks()}
+        {isTeamTab ? renderRecent(true) : wide ? renderDecks() : renderInsights()}
       </div>
     </div>
   );

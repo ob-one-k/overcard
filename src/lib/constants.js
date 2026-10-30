@@ -19,11 +19,8 @@ export var ROLE_META = {
   user:  { label:"User",  color:"#00B4FF", bg:"rgba(0,180,255,.1)",   border:"rgba(0,180,255,.2)" },
 };
 export function isAdminRole(role) { return role === "admin" || role === "owner"; }
-export function roleMeta(role) {
-  // Admin badges follow the org accent
-  if (role === "admin") return { label:"Admin", color:SESS_COLOR, bg:accentA(.15), border:accentA(.3) };
-  return ROLE_META[role] || ROLE_META.user;
-}
+// Role colours are fixed (owner amber, admin green, user blue) — they never follow the org accent
+export function roleMeta(role) { return ROLE_META[role] || ROLE_META.user; }
 
 export var OBJ_COLOR  = "#EF5350";
 // ─── ORG ACCENT (theme) ───────────────────────────────────────────────────────

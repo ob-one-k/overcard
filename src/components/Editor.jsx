@@ -550,12 +550,18 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
       {!inline && <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)"}}/>}
       <div style={sheetStyle}>
         {!inline && <Handle/>}
-        <div style={{padding:headerPad,display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
-          <div>
-            <div style={{fontSize:inline?15:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>{isBlank?"New Card":"Edit Card"}</div>
-            {!isBlank && <div style={{fontSize:inline?9:10,color:"rgba(255,255,255,.25)",marginTop:2}}>ID: {form.id}</div>}
+        {/* Top bar IS the card title: edit it in place (no separate "Edit Card" label / title field) */}
+        <div style={{padding:headerPad,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <input value={form.title} onChange={function(e){setField("title",e.target.value);}}
+              placeholder={isBlank ? "New card title" : "Card title"} aria-label="Card title" autoFocus={isBlank}
+              className="oc-title-input"
+              style={{display:"block",width:"100%",background:"transparent",border:"none",borderBottom:"2px solid "+(errs.title?"#EF5350":"transparent"),borderRadius:0,
+                padding:"4px 0",color:"#fff",fontSize:inline?20:22,fontWeight:700,fontFamily:"'Lora',serif",outline:"none",transition:"border-color .15s"}}/>
+            {errs.title && <div style={{fontSize:11,color:"#EF5350",marginTop:3}}>{errs.title}</div>}
+            <style>{".oc-title-input:hover{border-bottom-color:rgba(255,255,255,.15)!important}.oc-title-input:focus{border-bottom-color:" + ((TM[form.type]||TM.pitch).color) + "!important}"}</style>
           </div>
-          <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
             {!isBlank && onDelete && <button onClick={function(){onDelete(form.id);}} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
             <button onClick={onClose} style={iconBtn()}>✕</button>
           </div>
@@ -598,12 +604,6 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
               </div>
             </div>
           )}
-          {/* Title */}
-          <div style={{marginBottom:14}}>
-            <label style={labelSt()}>Card Title</label>
-            <input value={form.title} onChange={function(e){setField("title",e.target.value);}} placeholder="e.g. Opening Hook" style={inputSt({borderColor:errs.title?"#EF5350":"rgba(255,255,255,.1)"})}/>
-            {errs.title && <div style={{fontSize:11,color:"#EF5350",marginTop:4}}>{errs.title}</div>}
-          </div>
           {/* Intended path toggle — hidden for new cards and cards with no intended-path parent */}
           {!isBlank && (isRootCard || hasIntendedParent) && (
             <div style={{marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",background:isRootCard?"rgba(102,187,106,.1)":"rgba(102,187,106,.07)",border:"1px solid "+(isRootCard?"rgba(102,187,106,.3)":"rgba(102,187,106,.18)"),borderRadius:12,padding:"11px 14px"}}>

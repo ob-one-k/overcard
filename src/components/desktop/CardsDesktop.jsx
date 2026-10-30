@@ -166,6 +166,8 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
   var [perfMode,  setPerfMode]  = useState("all");       // all | live | practice
   var [perfSessions, setPerfSessions] = useState(null);
   var [perfSort, setPerfSort] = useState({ key:"visits", dir:"desc" });
+  var [perfType, setPerfType] = useState("all");     // card performance: all | pitch | discovery | close
+  var [perfPath, setPerfPath] = useState(false);     // card performance: intended-path cards only
   useEffect(function() {
     var cancelled = false;
     setPerfSessions(null);
@@ -438,13 +440,16 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
       ["title","Card","left"],["visits","Visits"],["reach","Reach"],["avg","Avg time"],
       ["ended","Ended here"],["close","Close after"],["links","Links"],["path","Path"],
     ];
-    var rows = allCards.map(function(c) {
+    var TYPE_ORDER = { pitch:0, discovery:1, close:2 };
+    var rows = allCards.filter(function(c) {
+      return (perfType === "all" || c.type === perfType) && (!perfPath || c.intendedPath);
+    }).map(function(c) {
       var b = perf.by[c.id] || {};
       var nAns = (c.answers || []).filter(function(a){ return a && a.label; }).length;
       var nIn = getParents(deck.cards, c.id).length;
       return { c:c, visits:b.visits || 0, reach:pct(b.sessions || 0, n), avg: b.visits ? b.ms / b.visits : 0,
         ended:pct(b.endedHere || 0, b.sessions || 0), close:pct(b.soldAfter || 0, b.liveVisited || 0),
-        nAns:nAns, nIn:nIn, links:nAns + nIn, path:c.intendedPath ? 1 : 0, title:(c.title || "").toLowerCase() };
+        nAns:nAns, nIn:nIn, links:nAns + nIn, path:c.intendedPath ? 1 : 0, title:(c.title || "").toLowerCase(), type:TYPE_ORDER[c.type] || 0 };
     });
     rows.sort(function(a, b) {
       var k = perfSort.key, va = a[k], vb = b[k];
@@ -582,6 +587,39 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",margin:"0 18px 10px",gap:12,flexWrap:"wrap"}}>
               <div style={hdr}>Card performance</div>
               <div style={{fontSize:12,color:TXT3}}>Reach = % of sessions that visited · Ended here = sessions that stopped on it · Close after = live close rate when visited</div>
+            </div>
+            {/* Sorting + filtering toolbar (column headers also sort) */}
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",margin:"0 18px 12px"}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:TXT3}}>
+                Sort by
+                <select value={perfSort.key} onChange={function(e){ var k = e.target.value; setPerfSort({ key:k, dir:k === "title" || k === "type" ? "asc" : "desc" }); }}
+                  aria-label="Sort cards by"
+                  style={{background:"rgba(8,25,60,.5)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT,fontSize:13,padding:"6px 10px",minHeight:compact ? 40 : undefined,fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
+                  <option value="visits">Most visited</option>
+                  <option value="reach">Reach</option>
+                  <option value="avg">Avg time on card</option>
+                  <option value="ended">Ended here (drop-off)</option>
+                  <option value="close">Close rate after</option>
+                  <option value="links">Most linked</option>
+                  <option value="type">Card type</option>
+                  <option value="title">Name (A–Z)</option>
+                </select>
+              </label>
+              <button onClick={function(){ setPerfSort({ key:perfSort.key, dir:perfSort.dir === "asc" ? "desc" : "asc" }); }}
+                aria-label={"Sort " + (perfSort.dir === "asc" ? "ascending" : "descending") + " — click to reverse"}
+                style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT2,fontSize:13,padding:"6px 12px",minHeight:compact ? 40 : undefined,cursor:"pointer",fontFamily:"inherit"}}>
+                {perfSort.dir === "asc" ? "↑ Ascending" : "↓ Descending"}
+              </button>
+              <span style={{width:1,height:22,background:LINE}}/>
+              <span style={{display:"inline-flex",background:"rgba(255,255,255,.05)",borderRadius:99,padding:2}}>
+                {pill(perfType === "all", "All types", function(){ setPerfType("all"); })}
+                {pitchTypes.map(function(t){ return pill(perfType === t, TM[t].label, function(){ setPerfType(t); }); })}
+              </span>
+              <button onClick={function(){ setPerfPath(!perfPath); }} aria-pressed={perfPath}
+                style={{background:perfPath ? "rgba(102,187,106,.15)" : "transparent",border:"1px solid "+(perfPath ? "rgba(102,187,106,.45)" : "rgba(255,255,255,.12)"),borderRadius:99,color:perfPath ? GREEN : TXT3,fontSize:13,padding:compact ? "8px 14px" : "5px 12px",cursor:"pointer",fontFamily:"inherit",fontWeight:perfPath ? 700 : 500}}>
+                ★ Intended path only
+              </button>
+              <span style={{marginLeft:"auto",fontSize:12,color:TXT3}}>{rows.length} of {allCards.length} cards</span>
             </div>
             <div style={{display:"grid",gridTemplateColumns:gridCols,gap:10,fontSize:13,color:TXT3,padding:"0 18px 8px",borderBottom:"1px solid "+LINE,minWidth:720}}>
               {cols.map(function(col) {
@@ -821,21 +859,30 @@ export function CardsDesktop({ deck, onUpsert, onDelete, onUpdateDeck, readOnly 
               </div>
             </div>}
 
-            {/* Left: card editor / read view — collapsible so the tree can take the full width */}
-            {editing && treeEdCollapsed && (
-              <button onClick={function(){ setTreeEdCollapsed(false); }} title="Show card editor" aria-label={"Show editor for " + (editing.title || "card")}
-                style={{width:44,flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"14px 0",background:"rgba(8,20,50,.85)",border:"none",borderRight:"1px solid rgba(255,255,255,.1)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
-                <span style={{fontSize:16,color:TXT}}>›</span>
-                <span style={{writingMode:"vertical-rl",transform:"rotate(180deg)",fontSize:13,fontWeight:700,letterSpacing:.5,color:(TM[editing.type] || TM.pitch).color,whiteSpace:"nowrap",overflow:"hidden",maxHeight:"70vh"}}>
-                  {readOnly ? "View" : "Edit"} · {editing.title || "New card"}
-                </span>
-              </button>
-            )}
-            {editing && !treeEdCollapsed && (
-              <div style={{width:isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)",flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",borderRight:"1px solid rgba(255,255,255,.1)",background:"rgba(8,20,50,.85)",position:"relative"}}>
-                <button onClick={function(){ setTreeEdCollapsed(true); }} title="Collapse editor" aria-label="Collapse card editor"
-                  style={{position:"absolute",top:"50%",right:-1,transform:"translateY(-50%)",zIndex:5,width:20,height:56,borderRadius:"8px 0 0 8px",border:"1px solid rgba(255,255,255,.14)",borderRight:"none",background:"rgba(20,34,64,.95)",color:TXT2,fontSize:13,cursor:"pointer",padding:0,fontFamily:"inherit"}}>‹</button>
-                {renderDetail(false)}
+            {/* Left: card editor / read view — collapsible so the tree can take the full width.
+                One element for both states: collapsing only hides the editor (display:none), so it stays
+                mounted and unsaved edits survive collapse → expand. A full-height grab bar on the panel's
+                right edge toggles it, so the control never sits on top of editor content. */}
+            {editing && (
+              <div style={{width:treeEdCollapsed ? 44 : (isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)"),flexShrink:0,display:"flex",overflow:"hidden",
+                borderRight:"1px solid rgba(255,255,255,.1)",background:"rgba(8,20,50,.85)",transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
+                <div style={{flex:1,minWidth:0,display:treeEdCollapsed ? "none" : "flex",flexDirection:"column",overflow:"hidden"}}>
+                  {renderDetail(false)}
+                </div>
+                <button onClick={function(){ setTreeEdCollapsed(!treeEdCollapsed); }}
+                  title={treeEdCollapsed ? "Show card editor" : "Collapse card editor"}
+                  aria-label={treeEdCollapsed ? "Show editor for " + (editing.title || "card") : "Collapse card editor"}
+                  aria-expanded={!treeEdCollapsed}
+                  style={{width:treeEdCollapsed ? 44 : (isTablet ? 28 : 18),flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:treeEdCollapsed ? "flex-start" : "center",gap:12,
+                    padding:treeEdCollapsed ? "14px 0" : 0,background:treeEdCollapsed ? "transparent" : "rgba(255,255,255,.03)",border:"none",
+                    borderLeft:treeEdCollapsed ? "none" : "1px solid rgba(255,255,255,.07)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
+                  <span style={{fontSize:treeEdCollapsed ? 16 : 13,color:TXT}}>{treeEdCollapsed ? "›" : "‹"}</span>
+                  {treeEdCollapsed && (
+                    <span style={{writingMode:"vertical-rl",transform:"rotate(180deg)",fontSize:13,fontWeight:700,letterSpacing:.5,color:(TM[editing.type] || TM.pitch).color,whiteSpace:"nowrap",overflow:"hidden",maxHeight:"70vh"}}>
+                      {readOnly ? "View" : "Edit"} · {editing.title || "New card"}
+                    </span>
+                  )}
+                </button>
               </div>
             )}
 
