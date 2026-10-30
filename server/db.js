@@ -501,6 +501,15 @@ async function transferOwnership(orgId, fromUserId, toUserId) {
 
 // True when every id (users or teams) belongs to orgId — guards team/membership writes
 // against cross-org ids. table is from a fixed whitelist, never user input.
+// The subset of ids that belong to orgId (users or teams)
+async function idsInOrg(table, ids, orgId) {
+  if (["users", "teams"].indexOf(table) === -1) throw new Error("idsInOrg: bad table");
+  var list = (ids || []).filter(function(id) { return typeof id === "string" && id; });
+  if (!list.length) return [];
+  const { rows } = await pool.query("SELECT id FROM " + table + ' WHERE id = ANY($1::text[]) AND "orgId" = $2', [list, orgId]);
+  return rows.map(function(r) { return r.id; });
+}
+
 async function allInOrg(table, ids, orgId) {
   if (["users", "teams"].indexOf(table) === -1) throw new Error("allInOrg: bad table");
   var list = (ids || []).filter(Boolean);
@@ -934,7 +943,7 @@ async function getSessions(scope, orgId, userId, filters) {
     ' LEFT JOIN LATERAL (SELECT COUNT(*) AS "shareCount" FROM session_shares x WHERE x."sessionId" = sessions.id) sh ON true' +
     where + ' ORDER BY sessions."startTs" DESC' + limitSql, vals
   );
-  const sharedQuery = (!scope || scope === "self") ? getSharedWithUser(userId, f, limitSql) : Promise.resolve([]);
+  const sharedQuery = (!scope || scope === "self") ? getSharedWithUser(userId, orgId, f, limitSql) : Promise.resolve([]);
   const [ownRes, sharedRows] = await Promise.all([ownQuery, sharedQuery]);
   const result = ownRes.rows.map(function(row) {
     var sess = parseSession(row);
@@ -964,10 +973,11 @@ async function getSessions(scope, orgId, userId, filters) {
 }
 
 // Sessions other users shared with userId (same filters as the caller's own list)
-async function getSharedWithUser(userId, f, limitSql) {
-  const sharedConds = ['ss."toUserId" = $1', "s.status <> 'active'"];
-  const sharedVals  = [userId];
-  var sp = 2;
+// Shares are only ever created inside one org; the orgId filter makes that a guarantee
+async function getSharedWithUser(userId, orgId, f, limitSql) {
+  const sharedConds = ['ss."toUserId" = $1', 's."orgId" = $2', "s.status <> 'active'"];
+  const sharedVals  = [userId, orgId];
+  var sp = 3;
   function spush(val) { sharedVals.push(val); return "$" + (sp++); }
   if (f.deckId)  { sharedConds.push('s."deckId" = '  + spush(f.deckId)); }
   if (f.mode)    { sharedConds.push('s.mode = '      + spush(f.mode)); }
@@ -1114,18 +1124,19 @@ async function saveSessionAudio(sessionId, orgId, mimeType, durationMs, buf) {
   });
 }
 
-async function getSessionAudioMeta(sessionId) {
+// Audio and feedback reads take the caller's orgId so they can never return another org's rows
+async function getSessionAudioMeta(sessionId, orgId) {
   const { rows } = await pool.query(
-    'SELECT "mimeType","durationMs","sizeBytes",chapters FROM session_audio WHERE "sessionId" = $1', [sessionId]
+    'SELECT "mimeType","durationMs","sizeBytes",chapters FROM session_audio WHERE "sessionId" = $1 AND "orgId" = $2', [sessionId, orgId]
   );
   return rows[0] || null;
 }
 
 // start is 0-based; bytea substring is 1-based
-async function getSessionAudioRange(sessionId, start, length) {
+async function getSessionAudioRange(sessionId, orgId, start, length) {
   const { rows } = await pool.query(
-    'SELECT substring(data from $2 for $3) AS chunk FROM session_audio WHERE "sessionId" = $1',
-    [sessionId, start + 1, length]
+    'SELECT substring(data from $3 for $4) AS chunk FROM session_audio WHERE "sessionId" = $1 AND "orgId" = $2',
+    [sessionId, orgId, start + 1, length]
   );
   return rows[0] ? rows[0].chunk : null;
 }
@@ -1209,9 +1220,9 @@ async function insertSession(session) {
 }
 
 // ─── SESSION FEEDBACK ─────────────────────────────────────────────────────────
-async function getFeedback(sessionId) {
+async function getFeedback(sessionId, orgId) {
   const { rows } = await pool.query(
-    'SELECT * FROM session_feedback WHERE "sessionId" = $1 ORDER BY "createdAt" ASC', [sessionId]
+    'SELECT * FROM session_feedback WHERE "sessionId" = $1 AND "orgId" = $2 ORDER BY "createdAt" ASC', [sessionId, orgId]
   );
   return rows;
 }
@@ -1291,7 +1302,7 @@ module.exports = {
   // users
   findUserByEmail, findUserById, updateLastLogin, getOrgUsers, createUser, updateUser, deleteUser,
   // orgs
-  findOrgById, createOrg, updateOrg, getOrgOwner, transferOwnership, removeTeamAdminEverywhere, allInOrg, ORG_FIELDS,
+  findOrgById, createOrg, updateOrg, getOrgOwner, transferOwnership, removeTeamAdminEverywhere, allInOrg, idsInOrg, ORG_FIELDS,
   // share codes + signup
   createInvite, getOrgInvites, getInvite, updateInvite, getInviteMembers, revokeInvite, checkInvite, signupWithInvite, createOrgWithOwner, normalizeInviteCode,
   // teams

@@ -56,21 +56,14 @@ app.use("/api/admin",    adminRoutes);
 app.use("/api/org",      orgRoutes);
 app.use("/api/notifications", notificationRoutes);
 
-app.get("/api/health", async function(req, res, next) {
+// Liveness only — no counts or other data (it is public)
+app.get("/api/health", async function(req, res) {
   try {
-    const [u, d, s] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS n FROM users"),
-      pool.query("SELECT COUNT(*) AS n FROM decks"),
-      pool.query("SELECT COUNT(*) AS n FROM sessions"),
-    ]);
-    res.json({
-      ok:       true,
-      ts:       Date.now(),
-      users:    parseInt(u.rows[0].n, 10),
-      decks:    parseInt(d.rows[0].n, 10),
-      sessions: parseInt(s.rows[0].n, 10),
-    });
-  } catch (err) { next(err); }
+    await pool.query("SELECT 1");
+    res.json({ ok: true, ts: Date.now() });
+  } catch (err) {
+    res.status(503).json({ ok: false, ts: Date.now() });
+  }
 });
 
 // ─── FRONTEND ─────────────────────────────────────────────────────────────────

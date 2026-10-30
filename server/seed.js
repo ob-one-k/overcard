@@ -15,18 +15,9 @@ async function runSeed() {
 // Ensure schema exists before seeding
 await initSchema();
 
-// ─── ONE-TIME MIGRATION ───────────────────────────────────────────────────────
-// If seed_manifest is empty but seed users already exist, the DB was seeded with
-// the old TRUNCATE system. Purge all sessions so smart-seed starts clean.
-// Runs exactly once: after this, manifest has entries and the condition is never true again.
-var manifestCount = await pool.query("SELECT COUNT(*) AS n FROM seed_manifest");
-if (parseInt(manifestCount.rows[0].n, 10) === 0) {
-  var seedUserCheck = await pool.query("SELECT 1 FROM users WHERE id='u_alex' LIMIT 1");
-  if (seedUserCheck.rows.length > 0) {
-    console.log("First smart-seed run: purging old seed sessions...");
-    await pool.query("TRUNCATE sessions, session_feedback, session_shares CASCADE");
-  }
-}
+// (A one-time purge that truncated every session table for databases seeded by the old
+// TRUNCATE-based seed has been removed: it would wipe real orgs' sessions on any database
+// whose seed manifest is empty. The seed only ever touches its own demo records.)
 
 console.log("Smart seeding — preserving user data...");
 

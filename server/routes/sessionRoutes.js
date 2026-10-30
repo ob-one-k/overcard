@@ -62,6 +62,13 @@ function cleanLive(live) {
 }
 var MAX_EVENTS = 5000;
 
+// A run's reference session must be a completed session of the same org; anything else is dropped
+async function cleanReference(id, orgId) {
+  if (typeof id !== "string" || !id) return null;
+  const ref = await getSessionById(id);
+  return ref && ref.orgId === orgId && ref.status === "completed" ? id : null;
+}
+
 // GET /api/sessions/org-users — all authenticated users can fetch their org's user list (for sharing)
 router.get("/org-users", async function(req, res, next) {
   try {
@@ -127,6 +134,7 @@ router.post("/", async function(req, res, next) {
     }
     // Snapshot the deck's look when the client didn't send it (a deleted deck must have been sent)
     var body = Object.assign({}, req.body);
+    body.referenceSessionId = await cleanReference(body.referenceSessionId, req.user.orgId);
     if (!body.deckName) {
       if (!deck) return res.status(400).json({ error: "Unknown deck" });
       body.deckName = deck.name; body.deckColor = body.deckColor || deck.color; body.deckIcon = body.deckIcon || deck.icon;
@@ -158,6 +166,7 @@ router.post("/:id/start", async function(req, res, next) {
     const live = await startLiveSession(Object.assign({}, body, {
       id: req.params.id, deckName: deck.name, deckColor: deck.color, deckIcon: deck.icon,
       events: [], live: cleanLive(body.live),
+      referenceSessionId: await cleanReference(body.referenceSessionId, req.user.orgId),
     }), req.user.id, req.user.orgId);
     if (!live) return res.status(409).json({ error: "Session can't be started" });
     publish({ orgAdmins: live.orgId }, "session.started", live);
@@ -263,7 +272,7 @@ router.get("/:id/audio/meta", async function(req, res, next) {
   try {
     const session = await getSessionById(req.params.id);
     if (!await canAccessFeedback(session, req.user)) return res.status(403).json({ error: "Access denied" });
-    const meta = await getSessionAudioMeta(session.id);
+    const meta = await getSessionAudioMeta(session.id, req.user.orgId);
     if (!meta) return res.status(404).json({ error: "No recording for this session" });
     res.json({ mimeType: meta.mimeType, durationMs: meta.durationMs, sizeBytes: meta.sizeBytes, chapters: meta.chapters || session.audioSegments || [] });
   } catch (err) { next(err); }
@@ -275,7 +284,7 @@ router.get("/:id/audio", async function(req, res, next) {
   try {
     const session = await getSessionById(req.params.id);
     if (!await canAccessFeedback(session, req.user)) return res.status(403).json({ error: "Access denied" });
-    const meta = await getSessionAudioMeta(session.id);
+    const meta = await getSessionAudioMeta(session.id, req.user.orgId);
     if (!meta) return res.status(404).json({ error: "No recording for this session" });
 
     var size  = meta.sizeBytes;
@@ -290,7 +299,7 @@ router.get("/:id/audio", async function(req, res, next) {
       }
       partial = true;
     }
-    const chunk = await getSessionAudioRange(session.id, start, end - start + 1);
+    const chunk = await getSessionAudioRange(session.id, req.user.orgId, start, end - start + 1);
     res.set({
       "Content-Type":   meta.mimeType,
       "Accept-Ranges":  "bytes",
@@ -321,7 +330,7 @@ router.get("/:id/feedback", async function(req, res, next) {
   try {
     const session = await getSessionById(req.params.id);
     if (!await canAccessFeedback(session, req.user)) return res.status(403).json({ error: "Access denied" });
-    res.json(await getFeedback(req.params.id));
+    res.json(await getFeedback(req.params.id, req.user.orgId));
   } catch (err) { next(err); }
 });
 
