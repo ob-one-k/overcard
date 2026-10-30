@@ -17,11 +17,18 @@ export function lsSet(key, val) {
   try { if (val === null || val === undefined) localStorage.removeItem(key); else localStorage.setItem(key, val); } catch (e) {}
 }
 
-// Token stored in localStorage for mobile/Safari ITP fallback (Authorization: Bearer header)
-var _token = lsGet("overcard_token") || null;
+// Bearer token fallback for cross-site deployments (frontend and API on different sites),
+// where browsers may block the HttpOnly cookie. Only then is it persisted to localStorage;
+// when the API is same-origin the cookie is enough and the token lives in memory only, so
+// script access to storage can't lift a session.
+var CROSS_SITE = (function() {
+  try { return !!_apiUrl && new URL(_apiUrl, window.location.href).origin !== window.location.origin; } catch (_) { return false; }
+})();
+var _token = CROSS_SITE ? (lsGet("overcard_token") || null) : null;
+if (!CROSS_SITE) lsSet("overcard_token", null);
 export function setStoredToken(t) {
   _token = t || null;
-  lsSet("overcard_token", _token);
+  if (CROSS_SITE) lsSet("overcard_token", _token);
 }
 export function getStoredToken() { return _token; }
 

@@ -1,9 +1,15 @@
+# Render Blueprint — API web service + PostgreSQL.
+# Paid plans: an always-on instance (live updates hold connections open; the free tier
+# sleeps after 15 minutes) and a database with daily backups and no expiry.
+# Plan names/prices: https://render.com/pricing — syncing this file changes billing.
 services:
   - type: web
     name: overcard-api
     runtime: node
+    plan: starter
     buildCommand: npm install
     startCommand: node server/index.js
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -13,6 +19,16 @@ services:
         sync: false
       - key: MASTER_CODE
         sync: false
+      # Public URL of the app — used in owner recovery links (npm run owner-reset)
+      - key: APP_URL
+        sync: false
+      # Demo orgs + one-click demo sign-in. Set to "off" for the production launch
+      # (keeps the demo data, stops re-seeding and hides the picker).
+      - key: DEMO_MODE
+        value: "on"
+      # bcrypt runs on libuv's pool — more threads keep a burst of sign-ins fast
+      - key: UV_THREADPOOL_SIZE
+        value: "8"
       - key: DATABASE_URL
         fromDatabase:
           name: overcard-db
@@ -20,6 +36,6 @@ services:
 
 databases:
   - name: overcard-db
-    plan: free
+    plan: basic-256mb
     databaseName: overcard
     user: overcard

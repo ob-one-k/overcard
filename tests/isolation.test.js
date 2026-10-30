@@ -92,7 +92,8 @@ test("cross-org access is refused everywhere", async function() {
       denied(await adm.put("/admin/teams/" + MER_TEAM, { name: "x" }), "edit their team");
       denied(await adm.del("/admin/teams/" + MER_TEAM), "delete their team");
       denied(await adm.post("/admin/users", { firstName: "X", lastName: "Y", email: tid() + "@example.com", phone: "555 010 0100", password: "Abcdefg1", role: "user", teamId: MER_TEAM }), "user into their team");
-      denied(await adm.post("/admin/teams", { name: tid("t"), memberIds: [MER_USER] }), "team with their user");
+      denied(await adm.post("/admin/teams", { name: tid("t"), adminIds: [adm.user.id], memberIds: [MER_USER] }), "team with their user");
+      denied(await adm.post("/admin/teams", { name: tid("t"), adminIds: [MER_USER] }), "team run by their user");
       denied(await adm.put("/admin/invites/" + merInvite.id, { label: "x" }), "edit their invite");
       assert.ok(!(await adm.get("/admin/users")).body.some(function(u) { return u.id === MER_USER; }), "admin user list");
       assert.ok(!(await adm.get("/admin/teams")).body.some(function(t) { return t.id === MER_TEAM; }), "admin team list");

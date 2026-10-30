@@ -1,4 +1,4 @@
-const rateLimit = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 
 // ─── RATE LIMITS ──────────────────────────────────────────────────────────────
 // One factory so every limiter behaves the same. RATE_LIMITS=off disables them for the
@@ -18,4 +18,18 @@ function limiter(windowMs, max, message, keyGenerator) {
   return rateLimit(opts);
 }
 
-module.exports = { limiter };
+// Whole-API ceiling per signed-in account (falls back to the client IP), so one runaway
+// client can't starve the server — and 100 reps behind one office IP don't share a limit.
+// The token is only decoded to pick a bucket; requireAuth still verifies it on every route.
+function apiLimiter() {
+  const jwt = require("jsonwebtoken");
+  return limiter(60 * 1000, 600, "Too many requests — slow down and try again in a minute", function(req) {
+    var token = (req.cookies && req.cookies.rc_token) || null;
+    var h = req.headers.authorization || "";
+    if (!token && h.indexOf("Bearer ") === 0) token = h.slice(7);
+    var p = token ? jwt.decode(token) : null;
+    return p && typeof p.sub === "string" ? "u:" + p.sub : "ip:" + ipKeyGenerator(req.ip || "");
+  });
+}
+
+module.exports = { limiter, apiLimiter };

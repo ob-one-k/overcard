@@ -9,14 +9,28 @@ if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is required in production");
 }
 
+// DATABASE_SSL: "verify" (TLS + verify the server certificate — managed DBs reached over the
+// internet), "require" (TLS, unverified — the production default), "off" (no TLS — local
+// dev, or Render's private internal connection string)
+function sslConfig() {
+  var mode = (process.env.DATABASE_SSL || (process.env.NODE_ENV === "production" ? "require" : "off")).toLowerCase();
+  if (mode === "off") return false;
+  if (mode === "verify") return { rejectUnauthorized: true };
+  return { rejectUnauthorized: false };
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 20,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  max: parseInt(process.env.DATABASE_POOL_MAX, 10) || 20,
+  ssl: sslConfig(),
   // Fail fast instead of hanging requests forever when the database is unreachable
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis:       30000,
   query_timeout:           30000,
+  // Enforced by PostgreSQL too, so a runaway query or a stuck transaction can't hold
+  // locks or a connection after the client gave up
+  statement_timeout:                   30000,
+  idle_in_transaction_session_timeout: 60000,
 });
 
 // An idle client erroring (e.g. DB restart) must not crash the process
@@ -440,8 +454,12 @@ async function updateUser(id, orgId, fields) {
   return findUserById(id);
 }
 
+// Their sessions stay (owner cleared), shares to/from them go — see migration 006
 async function deleteUser(id, orgId) {
-  await pool.query('DELETE FROM users WHERE id = $1 AND "orgId" = $2', [id, orgId]);
+  await withTransaction(async function(client) {
+    const r = await client.query('DELETE FROM users WHERE id = $1 AND "orgId" = $2', [id, orgId]);
+    if (r.rowCount) await client.query('DELETE FROM deck_access WHERE "entityType" = \'user\' AND "entityId" = $1', [id]);
+  });
 }
 
 // ─── ORGS ─────────────────────────────────────────────────────────────────────
@@ -717,7 +735,10 @@ async function updateTeam(id, orgId, fields) {
 }
 
 async function deleteTeam(id, orgId) {
-  await pool.query('DELETE FROM teams WHERE id = $1 AND "orgId" = $2', [id, orgId]);
+  await withTransaction(async function(client) {
+    const r = await client.query('DELETE FROM teams WHERE id = $1 AND "orgId" = $2', [id, orgId]);
+    if (r.rowCount) await client.query('DELETE FROM deck_access WHERE "entityType" = \'team\' AND "entityId" = $1', [id]);
+  });
 }
 
 // ─── DECKS ────────────────────────────────────────────────────────────────────
@@ -876,6 +897,12 @@ async function usePasswordReset(token, passwordHash) {
   });
 }
 
+// Is this user one of the seeded demo accounts?
+async function isSeedUser(userId) {
+  const { rows } = await pool.query("SELECT 1 FROM seed_manifest WHERE table_name = 'users' AND record_id = $1", [userId]);
+  return rows.length > 0;
+}
+
 async function setPasswordHash(userId, passwordHash) {
   await pool.query('UPDATE users SET "passwordHash"=$1 WHERE id=$2', [passwordHash, userId]);
 }
@@ -937,7 +964,7 @@ async function getSessions(scope, orgId, userId, filters) {
   var limit = parseInt(f.limit, 10);
   var limitSql = limit > 0 ? " LIMIT " + Math.min(limit, 1000) : "";
   const ownQuery = pool.query(
-    'SELECT sessions.*, (SELECT "displayName" FROM users WHERE users.id = sessions."userId") AS "userName",' +
+    'SELECT sessions.*, COALESCE((SELECT "displayName" FROM users WHERE users.id = sessions."userId"), \'Former member\') AS "userName",' +
     ' fb."feedbackCount", fb."latestFeedbackAt", sh."shareCount"' +
     ' FROM sessions' + sessionCountsSql("sessions") +
     ' LEFT JOIN LATERAL (SELECT COUNT(*) AS "shareCount" FROM session_shares x WHERE x."sessionId" = sessions.id) sh ON true' +
@@ -993,7 +1020,7 @@ async function getSharedWithUser(userId, orgId, f, limitSql) {
   const sharedSql =
     'SELECT s.*, ss.context AS "_shareContext", ss."fromUserId" AS "_shareFromUserId",' +
     ' (SELECT "displayName" FROM users WHERE id = ss."fromUserId") AS "_shareFromName",' +
-    ' (SELECT "displayName" FROM users WHERE id = s."userId") AS "userName",' +
+    ' COALESCE((SELECT "displayName" FROM users WHERE id = s."userId"), \'Former member\') AS "userName",' +
     ' fb."feedbackCount", fb."latestFeedbackAt"' +
     ' FROM sessions s JOIN session_shares ss ON ss."sessionId" = s.id' + sessionCountsSql("s") +
     ' WHERE ' + sharedConds.join(" AND ");
@@ -1313,7 +1340,7 @@ module.exports = {
   getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
   // passwords
-  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash,
+  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, isSeedUser,
   // sessions
   getSessions, getSessionById, upsertSession,
   startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, deleteSession, insertSession,

@@ -163,7 +163,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
                     </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</div>
-                      <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{isAdminRole(u.role)?u.role:u.email}</div>
+                      <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{u.email || u.role}</div>
                     </div>
                     <span style={{fontSize:16,color:"rgba(255,255,255,.2)",flexShrink:0}}>+</span>
                   </button>
@@ -198,7 +198,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
                 <div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderRadius:10,padding:"9px 12px",marginBottom:7}}>
                   <div>
                     <div style={{fontSize:12,color:"#fff",fontWeight:600}}>{s.toUserName}</div>
-                    <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{s.toUserEmail}{s.context?" · "+s.context:""}</div>
+                    <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{s.toUserEmail || ""}{s.context?(s.toUserEmail?" · ":"")+s.context:""}</div>
                   </div>
                   <button onClick={function(){revokeShare(s.id);}} style={ghostSm({color:"rgba(239,83,80,.5)",borderColor:"rgba(239,83,80,.2)",fontSize:10,padding:"4px 8px"})}>Revoke</button>
                 </div>
@@ -1215,7 +1215,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
                       </div>
                       <div>
                         <div style={{fontSize:12,fontWeight:600,color:"#fff"}}>{u.displayName}</div>
-                        <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{u.email}</div>
+                        <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{u.email || u.role}</div>
                       </div>
                     </button>
                   );

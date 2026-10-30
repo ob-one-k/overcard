@@ -73,8 +73,11 @@ async function cleanReference(id, orgId) {
 router.get("/org-users", async function(req, res, next) {
   try {
     var users = await getOrgUsers(req.user.orgId);
+    // Names and roles are enough to pick a teammate; contact details are for admins
+    var admin = isAdminRole(req.user.role);
     res.json(users.map(function(u) {
-      return { id: u.id, displayName: u.displayName, email: u.email, role: u.role };
+      return admin ? { id: u.id, displayName: u.displayName, email: u.email, role: u.role }
+                   : { id: u.id, displayName: u.displayName, role: u.role };
     }));
   } catch (err) { next(err); }
 });
@@ -445,7 +448,9 @@ router.get("/:id/shares", async function(req, res, next) {
       ? session.orgId === req.user.orgId
       : session.userId === req.user.id;
     if (!canView) return res.status(403).json({ error: "Access denied" });
-    res.json(await getSharesForSession(req.params.id));
+    var shares = await getSharesForSession(req.params.id);
+    if (!isAdminRole(req.user.role)) shares = shares.map(function(x) { var c = Object.assign({}, x); delete c.toUserEmail; return c; });
+    res.json(shares);
   } catch (err) { next(err); }
 });
 

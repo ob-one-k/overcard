@@ -149,3 +149,11 @@ test("signing in on a second device signs the first out live and saves its run",
   await second.del("/sessions/" + id);
   aStream.close(); fStream.close();
 });
+
+test("the live stream accepts the session cookie alone (same-origin browsers)", async function() {
+  var user = await login("apexUser");
+  var ctrl = new AbortController();
+  var r = await fetch(require("./helpers").BASE + "/events", { headers: { Cookie: "rc_token=" + user.token }, signal: ctrl.signal });
+  assert.equal(r.status, 200);
+  ctrl.abort();
+});

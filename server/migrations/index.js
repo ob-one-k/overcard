@@ -13,6 +13,7 @@ var MIGRATIONS = [
   require("./003_hash_session_ids"),
   require("./004_password_resets"),
   require("./005_invite_details"),
+  require("./006_integrity"),
 ];
 
 var LOCK_KEY = 72017301; // arbitrary constant shared by every instance

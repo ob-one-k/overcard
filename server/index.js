@@ -16,6 +16,8 @@ const orgRoutes     = require("./routes/orgRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const { requireAuth } = require("./auth");
 const realtime      = require("./realtime");
+const { DEMO_MODE } = require("./config");
+const { apiLimiter } = require("./limits");
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -40,13 +42,15 @@ app.use(cors({
   exposedHeaders: ["X-Audio-Duration-Ms", "Content-Range", "Accept-Ranges"],
 }));
 
+app.use(cookieParser());
+
 // Live event stream — mounted before compression so events are never buffered
 app.get("/api/events", requireAuth, realtime.streamHandler);
 
 // gzip JSON/HTML/JS (session lists are large and highly repetitive); audio/* is skipped by the default filter
 app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: "10mb" }));
-app.use(cookieParser());
+app.use("/api", apiLimiter());
 
 // ─── API ROUTES ───────────────────────────────────────────────────────────────
 app.use("/api/auth",     authRoutes);
@@ -55,6 +59,11 @@ app.use("/api/sessions", sessionRoutes);
 app.use("/api/admin",    adminRoutes);
 app.use("/api/org",      orgRoutes);
 app.use("/api/notifications", notificationRoutes);
+
+// Public client settings
+app.get("/api/config", function(req, res) {
+  res.json({ demo: DEMO_MODE });
+});
 
 // Liveness only — no counts or other data (it is public)
 app.get("/api/health", async function(req, res) {
@@ -91,7 +100,10 @@ app.use(function(err, req, res, next) {
     }
     return;
   }
-  console.error(err);
+  // Production logs get the message, code and route only — full error objects (pg "detail"
+  // can contain emails or other row values) are logged in development
+  if (isDev) console.error(err);
+  else console.error("Error " + (err && err.code ? "[" + err.code + "] " : "") + req.method + " " + req.path + ": " + (err && err.message));
   if (!res.headersSent) {
     res.status(500).json({ error: "Internal server error" });
   }
@@ -137,10 +149,15 @@ async function start() {
 
     setInterval(sweepStaleSessions, 60 * 1000).unref();
 
-    // Seed after server is up — runs in background, won't block requests
-    runSeed().catch(function(err) {
-      console.error("Seed error:", err.message);
-    });
+    // Demo data is (re)seeded after the server is up — background, won't block requests.
+    // DEMO_MODE=off skips it and leaves existing demo records untouched.
+    if (DEMO_MODE) {
+      runSeed().catch(function(err) {
+        console.error("Seed error:", err.message);
+      });
+    } else {
+      console.log("Demo mode off — skipping demo seed");
+    }
   });
 }
 

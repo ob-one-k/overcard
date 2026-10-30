@@ -3,11 +3,14 @@
   "version": "2.1.0",
   "private": true,
   "scripts": {
-    "server": "PORT=3001 node server/index.js",
+    "server": "NODE_ENV=development PORT=3001 node server/index.js",
     "client": "vite",
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "build": "vite build",
-    "start": "npm run build && node server/index.js"
+    "start": "npm run build && node server/index.js",
+    "test": "node --test --test-concurrency=1 tests/",
+    "loadtest": "node scripts/loadtest.mjs",
+    "owner-reset": "node server/scripts/ownerReset.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

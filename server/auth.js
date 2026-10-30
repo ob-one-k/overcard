@@ -3,8 +3,14 @@ const bcrypt = require("bcrypt");
 const { timingSafeEqual } = require("crypto");
 const { findUserById, hashSid } = require("./db");
 
-if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is required in production");
+// The built-in secret is only for local development/tests, and only when NODE_ENV says so
+// explicitly — a deploy that forgets NODE_ENV must not silently sign tokens with it
+var LOCAL_ENV = ["development", "test"].indexOf(process.env.NODE_ENV) !== -1;
+if (!process.env.JWT_SECRET && !LOCAL_ENV) {
+  throw new Error("JWT_SECRET environment variable is required (only NODE_ENV=development/test may run without it)");
+}
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32 && !LOCAL_ENV) {
+  throw new Error("JWT_SECRET must be at least 32 characters");
 }
 const JWT_SECRET  = process.env.JWT_SECRET  || "overcard-dev-secret-change-in-prod";
 const JWT_EXPIRES = process.env.JWT_EXPIRES || "24h";

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT } from "../lib/constants";
-import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
+import { apiGet, apiPost, apiPut, apiDel, setStoredToken, getStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
@@ -267,7 +267,9 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
 }
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
-var DEV_PASSWORD = "Overcard2025!";
+// Demo accounts (seeded by server/seed.js). The picker only appears when the server runs
+// with DEMO_MODE on (GET /api/config), and signs in through /auth/demo-login — no
+// password ships in the app.
 var DEV_ORGS = [
   {
     id: "apex", name: "Apex Sales", domain: "apexsales.com",
@@ -327,6 +329,11 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   var [showPicker, setShowPicker] = useState(false);
   var [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false);
   var [forgotOpen, setForgotOpen] = useState(false);
+  var [demo, setDemo] = useState(false);          // server has demo accounts enabled
+  var [demoEmail, setDemoEmail] = useState(null); // demo account being signed in (for "Log in anyway")
+  useEffect(function() {
+    apiGet("/config").then(function(c) { setDemo(!!(c && c.demo)); }).catch(function() {});
+  }, []);
 
   function pickOrg(org) {
     setSelOrg(org);
@@ -335,9 +342,11 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
 
   function pickUser(u) {
     setEmail(u.email);
-    setPass(DEV_PASSWORD);
+    setPass("");
     setShowPicker(false);
     setErr("");
+    setDemoEmail(u.email);
+    doLogin("/auth/demo-login", { email: u.email });
   }
 
   function doLogin(url, creds) {
@@ -360,11 +369,13 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
 
   function submit(e) {
     e.preventDefault();
+    setDemoEmail(null);
     if (!email.trim() || !pass) { setErr("Email and password are required."); return; }
     doLogin("/auth/login", { email: email.trim(), password: pass });
   }
 
   function handleForceLogin() {
+    if (demoEmail) { doLogin("/auth/demo-login?force=true", { email: demoEmail }); return; }
     if (!email.trim() || !pass) return;
     doLogin("/auth/login?force=true", { email: email.trim(), password: pass });
   }
@@ -550,7 +561,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   );
 
   var footer = (
-    <div style={{textAlign:"center",marginTop:16,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>OverCard v2 · dev build</div>
+    <div style={{textAlign:"center",marginTop:16,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>{demo ? "OverCard · demo accounts enabled" : "OverCard"}</div>
   );
 
   return (
@@ -576,7 +587,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
           {/* Sign-in column */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 40px",overflowY:"auto"}}>
             <div style={{width:"100%",maxWidth:480,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) .05s both"}}>
-              {orgPicker}
+              {demo && orgPicker}
               {userPicker}
               {form}
               {footer}
@@ -586,7 +597,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
       ) : (
         <div style={{width:"100%",maxWidth:big ? 520 : 380,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both",paddingBottom:24}}>
           {brand}
-          {orgPicker}
+          {demo && orgPicker}
           {userPicker}
           {form}
           {footer}
@@ -654,7 +665,7 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
   var [busy, setBusy] = useState(false);
   function logout() {
     setBusy(true);
-    var storedToken = lsGet("overcard_token");
+    var storedToken = getStoredToken();
     var headers = storedToken ? { "Authorization": "Bearer " + storedToken } : {};
     fetchWithTimeout(API_BASE + "/auth/logout", { method:"POST", credentials:"include", headers: headers }, 10000)
       .then(function(){ onLogout(); })
