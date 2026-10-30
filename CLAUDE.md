@@ -32,8 +32,9 @@ No test framework is configured.
 **Backend:** Express REST API with PostgreSQL database via async `pg` Pool (connection string from `DATABASE_URL`).
 - `server/index.js` — Express entry, middleware, route mounting, static file serving; calls `initSchema()` (retried with backoff) before `app.listen()`, then runs `runSeed()` in the background on every boot (including production — demo data). SPA catch-all uses Express 5 syntax `app.get("/{*splat}")`. `trust proxy` is set in production (Render).
 - `server/db.js` — PostgreSQL schema init (`initSchema`), async pool (10s connection timeout, 30s query timeout, `pool.on("error")` handler), `withTransaction` helper, all database query functions (50+ exports). BIGINT timestamp columns use a type parser to return JS numbers. JSONB columns (cards, objStacks, events, notes, metrics) are auto-serialized/deserialized by pg. All camelCase column names are double-quoted in SQL strings.
-- `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, async auth middleware
-- `server/routes/` — Route handlers (authRoutes, deckRoutes, sessionRoutes, adminRoutes)
+- `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, async auth middleware (`requireAuth`, `requireAdmin`, `requireOwner`, `isAdminRole`)
+- `server/validate.js` — Shared validators for signup/admin/org input (names, email, phone, password policy, org fields)
+- `server/routes/` — Route handlers (authRoutes, deckRoutes, sessionRoutes, adminRoutes, orgRoutes)
 - `server/seed.js` — Database seeder (2 orgs, 6 teams, 20+ users, 3 decks, 300+ sessions)
 
 In dev mode, Vite proxies `/api/*` to `http://localhost:3001` (see `vite.config.mjs`). In production, Express serves the built `dist/` and handles all routes.
@@ -43,27 +44,34 @@ In dev mode, Vite proxies `/api/*` to `http://localhost:3001` (see `vite.config.
 JWT-based authentication with HttpOnly cookies.
 
 - **Cookie:** `rc_token` — HttpOnly, SameSite=Strict, Secure in production
-- **JWT payload:** `{ sub: userId, role, orgId }` — 24h expiry by default
-- **Middleware:** `requireAuth` (async — validates JWT, attaches `req.user`) and `requireAdmin` (chains `requireAuth` then checks `role === "admin"`)
-- **Roles:** `admin` (full org access, deck CRUD, user management) and `user` (play sessions, view cards/objections read-only, share sessions)
+- **JWT payload:** `{ sub: userId, role, orgId, sid }` — 24h expiry by default. `req.user.role` always comes from the DB, not the token.
+- **Middleware:** `requireAuth` (async — validates JWT, attaches `req.user`), `requireAdmin` (admin **or owner**), `requireOwner` (owner only)
+- **Roles:** `owner` > `admin` > `user`. Always check admin access with `isAdminRole(role)` (server: `auth.js`, client: `src/lib/constants.js`) — never `role === "admin"`, or owners lose admin powers.
+  - `owner` — exactly one per org (partial unique index `uniq_users_org_owner`); the org's creator. Only the owner edits org details (`PUT /api/org`), demotes/edits/deletes/resets admins, and transfers ownership. The owner can't be deleted or have their role changed except via transfer.
+  - `admin` — deck CRUD, user management (users only), promote user→admin, teams, share codes
+  - `user` — play sessions, view cards/objections read-only, share sessions
+  - Nobody changes their own role. Demoting an admin removes them from `team_admins`.
+- **Signup:** `POST /api/auth/signup` (share code → joins that org as `user`) and `POST /api/auth/create-org` (requires `MASTER_CODE` env; creator becomes `owner`). Both create the account and log in. Share-code use is claimed in the same transaction as the user insert, so a failed signup never burns a use. Both share a 10/15min rate limiter. Invite links: `/?join=CODE` opens the signup screen pre-filled.
 - **Dev login:** Uses `DEV_ORGS` and `DEV_PASSWORD` defined unconditionally at module level in `Panels.jsx`. Only the LoginScreen UI that renders them is conditionally shown. Default credentials are configured in `server/seed.js` (development only).
 
 ## Database Schema
 
-PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE TABLE IF NOT EXISTS`. 10 tables:
+PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE TABLE IF NOT EXISTS`. 11 tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `orgs` | Organizations | id, name |
+| `orgs` | Organizations | id, name, industry, website, phone, address, "updatedAt" |
+| `org_invites` | Share codes for signup | id, "orgId", code (8 chars, unique, stored without dash), "createdBy", "expiresAt", "maxUses", uses, "revokedAt" |
 | `teams` | Teams per org | id, "orgId", name |
 | `team_admins` | Team admin assignments | "teamId", "userId" |
 | `user_teams` | User-to-team membership (many-to-many) | "userId", "teamId" |
-| `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", role |
+| `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", "firstName", "lastName", phone, role (owner/admin/user) |
 | `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility |
 | `deck_access` | Deck visibility controls for private decks | "deckId", "entityType" (team/user), "entityId" |
 | `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", "deckColor", "deckIcon", mode, status, outcome, sold, "soldCardId", "soldCardTitle", events (JSONB), notes (JSONB), metrics (JSONB) |
 | `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
 | `session_shares` | Session sharing between users | id, "sessionId", "fromUserId", "toUserId", context |
+| `session_audio` | Session recordings (BYTEA, one per session; cascades on session delete) | "sessionId" PK, "orgId", "mimeType", "durationMs", "sizeBytes", data |
 
 **Column naming:** All camelCase column names are double-quoted in every SQL string throughout db.js to preserve case in PostgreSQL (e.g., `"orgId"`, `"userId"`, `"startTs"`).
 
@@ -72,6 +80,8 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 **BIGINT timestamps:** `"startTs"`, `"updatedAt"`, `"lastLoginAt"` are `BIGINT` storing Unix milliseconds. A type parser (`types.setTypeParser(20, ...)`) ensures these are returned as JS numbers, not strings.
 
 **Migrations:** Applied at end of `initSchema()` with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+
+**Audio size budget:** recordings are ~0.24 MB/min (32 kbps). The free Render database is 1 GB, which is roughly 60 hours of audio in total.
 
 **Helper functions:** `parseDeck(row)` and `parseSession(row)` in db.js set defaults for JSONB fields that may be null (no JSON parsing needed).
 
@@ -94,6 +104,11 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 - `notes[]` — Array of `{ cardId, cardTitle, text, ts }`
 - `metrics` — Computed stats: totalVisits, intendedVisits, intendedPct, noteCount, objectionVisits, uniqueCards, totalMs, etc.
 - `feedbackCount` / `latestFeedbackAt` — Attached by getSessions() query (not stored)
+- `userName` — Display name of the user who ran the session, attached by getSessions() (not stored)
+- `hasAudio` / `audioDurationMs` — set when a recording is uploaded / measured by the recorder
+- `audioSegments[]` — `{ segId (= visit ts), cardId, cardTitle, cardType, isObjCard, stackLabel, startMs, endMs, segmentIndex }`, built by `buildAudioSegments()` from visit events; contiguous across the recording
+
+**User** — `displayName` is always `firstName + " " + lastName`; `updateUser` re-derives it when either name part changes. Older accounts were backfilled by splitting `displayName` on the first space.
 
 **Feedback** — Comments on sessions by admins or share recipients (not the session owner).
 
@@ -117,7 +132,14 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/components/Viewer.jsx` | `TreeView` (collapsible tree navigator), `SwimlaneView` (horizontal type-lane layout) |
 | `src/components/Sessions.jsx` | `ShareModal`, `SessionReview`, `SessionsTab`, `SessionAnalytics` |
 | `src/components/Cards.jsx` | `CardsTab`, `ObjStackEditor`, `ObjectionsTab` |
-| `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` |
+| `src/components/Panels.jsx` | `DeckSwitcherSheet`, `LoginScreen`, `ProfileSheet`, `AdminPanel` (Users / Teams / Share Codes / Organization sub-tabs) |
+| `src/components/CardStage.jsx` | `CardStage`, `PaneRail` |
+| `src/lib/cardGraph.js` | `getParents`, `orderParents`, `getChildren` |
+| `src/components/Signup.jsx` | `SignupScreen` (join with share code, or create organization with master code) |
+| `src/components/AudioPlayer.jsx` | `useSessionAudio`, `AudioMiniBar`, `AudioPlayback`, `UploadNotice`, `wallClockToAudioMs`, `segColor`, `msToMmss` |
+| `src/components/RecordingSetup.jsx` | `RecordingSetup` (mic picker, level, test, call audio), `RecIndicator` |
+| `src/lib/useRecorder.js` | `useRecorder`, `buildAudioSegments`, `pickMimeType`, `recorderSupported`, `callAudioSupported` |
+| `src/lib/audioUpload.js` | `uploadSessionAudio`, `retrySessionAudio`, `useUploadStatus` |
 
 ## API Endpoints
 
@@ -127,7 +149,16 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | POST | `/api/auth/login` | No | Email/password login, sets JWT cookie |
 | POST | `/api/auth/logout` | No | Clears auth cookie |
 | POST | `/api/auth/refresh` | Yes | Issues fresh JWT |
-| GET | `/api/auth/me` | Yes | Returns current user profile with team info |
+| GET | `/api/auth/me` | Yes | Returns current user profile with team info, name parts, phone, orgName |
+| GET | `/api/auth/invite/:code` | No | Preview the org a share code joins (rate limited) |
+| POST | `/api/auth/signup` | No | `{code, firstName, lastName, email, phone, password}` → new `user` in the code's org, logged in |
+| POST | `/api/auth/create-org` | No | `{masterCode, org:{name, industry, website, phone, address}, firstName, lastName, email, phone, password}` → new org + `owner`, logged in. 503 if `MASTER_CODE` unset |
+
+### Organization
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/org` | Yes | Caller's org profile + `owner` |
+| PUT | `/api/org` | Owner | Update name/industry/website/phone/address (empty string clears) |
 
 ### Decks
 | Method | Path | Auth | Admin | Description |
@@ -162,14 +193,24 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | GET | `/api/sessions/:id/shares` | Yes | List shares for session (owner or admin) |
 | DELETE | `/api/sessions/:id/shares/:shareId` | Yes | Revoke share (owner or admin) |
 
+### Session Audio
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| PUT | `/api/sessions/:id/audio?durationMs=` | Owner | Raw audio body (`audio/*`), max 60 MB → 413. Replaces any existing recording |
+| GET | `/api/sessions/:id/audio` | Owner, org admin, share recipient | Streams the recording; honours `Range` (206/416). `X-Audio-Duration-Ms` header |
+
 ### Admin (requires admin role)
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/admin/users` | List org users |
-| POST | `/api/admin/users` | Create user |
-| PUT | `/api/admin/users/:id` | Update user |
-| POST | `/api/admin/users/:id/reset-password` | Reset password |
-| DELETE | `/api/admin/users/:id` | Delete user |
+| POST | `/api/admin/users` | Create user (`firstName, lastName, email, phone, password, role: admin|user`) |
+| PUT | `/api/admin/users/:id` | Update name/phone/role/team (role rules above) |
+| POST | `/api/admin/users/:id/reset-password` | Reset password (owner required for admin targets) |
+| DELETE | `/api/admin/users/:id` | Delete user (never the owner; owner required for admin targets) |
+| POST | `/api/admin/transfer-ownership` | Owner only — `{userId}`; target becomes owner, caller becomes admin |
+| GET | `/api/admin/invites` | List share codes |
+| POST | `/api/admin/invites` | Generate share code (`expiresInDays` 1–365 or null, `maxUses` 1–1000 or null) |
+| DELETE | `/api/admin/invites/:id` | Revoke share code |
 | GET | `/api/admin/teams` | List org teams |
 | POST | `/api/admin/teams` | Create team |
 | PUT | `/api/admin/teams/:id` | Update team |
@@ -203,6 +244,12 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 ## Key Patterns
 
 - **Startup resilience:** `App` checks `/auth/me` with a 75s timeout (shows "Waking up the server" after 5s). Only 401/403 route to login; network errors/timeouts/5xx show a "Can't reach the server" retry screen. Deck load failures show a retry screen too.
+- **Recording:** `src/lib/useRecorder.js` is the only recorder (used by `PlayMobile` and `PlayDesktop`): device list with permission + `devicechange`, optional call audio (`getDisplayMedia` mixed with the mic via Web Audio, desktop only), level meter, 3s test, mono 32 kbps, mime fallback webm→mp4. Navigators close the current card's visit on EVERY card change (forward, back, jump, exit objection, restart) and once more on finish, so segments tile the recording. `finishSession` → save session JSON → `uploadSessionAudio()` (`src/lib/audioUpload.js`: IndexedDB backup first, upload with retries, local copy deleted on success, "Retry upload" on failure). UI: `src/components/RecordingSetup.jsx` (`RecordingSetup`, `RecIndicator`).
+- **Playback:** `useSessionAudio(session)` in `AudioPlayer.jsx` owns one `<audio>` per `SessionReview`, loading server → device fallback. Modes: full recording, or `playClip(seg)` which stops at the segment end (rAF-precise). Views: `AudioMiniBar` (every tab), `AudioPlayback` (Playback tab: segment timeline, transport, list in order / by card), Path-tab ▶ per visit, Notes "▶ hear this" (via `wallClockToAudioMs`). WebM without a duration header is fixed by seeking far ahead once on load.
+- **Empty org:** A new org has no decks. `MainApp` shows admins/owners a "Create your first deck" form (and everyone a Sign out button) instead of the main shell, since most tabs require a deck.
+- **API errors:** `apiGet/Put/Post/Del` throw `Error(message)` using the server's `{ error }` text when present (falls back to `"API <status>"`), with `.status` set.
+- **Three layouts:** `useDesktop()` returns `layout` = desktop (≥1024px, mouse) | tablet (768–1023px, or touch tablets) | mobile. App passes `DesktopCtx` with `isDesktop:true` on tablet too, so every `XDesktop/XMobile` switch shows the desktop component; tablet-aware code checks `desktop.compact` (smaller type, 44px touch targets, icon rail + ☰ drawer, in-session Play side rails as drawers) and `desktop.splitPanes` (list + detail side by side only when ≥960px wide, otherwise list ↔ detail with back buttons). Phones are unchanged.
+- **Card stage (desktop/tablet editors only):** `src/components/CardStage.jsx` shows the open card large in the centre, its parent card(s) as tabs tucked behind on the left (fanned when there are several; front = the card you came from, else intended path), and its destinations as floating cards on the right with hover/tap previews. Used by `CardsDesktop` (list mode), `ObjectionsDesktop` and `ObjStackEditor` (inline). Graph helpers live in `src/lib/cardGraph.js` (`getParents`, `orderParents`, `getChildren`). Never used in Play or on phones. Stage navigation saves through `CardEditorSheet`'s `onSaveAndNavigateTo`.
 - **Desktop/mobile split:** `PlayTab`, `CardsTab`, `ObjectionsTab`, `SessionsTab` are thin wrappers that render `XDesktop` or `XMobile`. Never put hooks after a conditional `return` — crossing the 1024px breakpoint would change hook order and crash.
 - **Auth sessions:** `requireAuth` requires the JWT `sid` to equal `users.activeToken`. Logout clears `activeToken` only if the token's `sid` matches (a stale device can't end the active session); admin password reset nulls it unconditionally, revoking all tokens. JWTs pinned to HS256. bcrypt is async (`hashPassword`/`checkPassword` return promises).
 - **Autosave:** 800ms debounce per deck. `dirtyIds` ref tracks which decks have unsaved changes. Saves via `PUT /api/decks/:id`.
@@ -237,7 +284,8 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `LANE_ORDER` | `src/components/Viewer.jsx` | Swimlane column order: pitch / discovery / close / objection |
 | `TAB_ACCENTS` | `src/App.jsx` | Color accent per tab |
 | `USER_TABS` | `src/App.jsx` | Tabs for regular users: home, play, sessions, cards, objections |
-| `ADMIN_TABS` | `src/App.jsx` | Tabs for admins: home, play, sessions, cards, objections, admin |
+| `ADMIN_TABS` | `src/App.jsx` | Tabs for admins/owners: home, play, sessions, cards, objections, admin |
+| `ROLE_META` / `roleMeta()` / `isAdminRole()` | `src/lib/constants.js` | Role badge colours/labels and the admin-access check |
 
 ## Environment Variables
 
@@ -247,6 +295,7 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `JWT_SECRET` | Yes (production) | App exits without it. Dev uses a hardcoded fallback. |
 | `NODE_ENV` | Yes (production) | Set to `production`. Enables secure cookies, helmet CSP, JWT secret enforcement. |
 | `CORS_ORIGIN` | Yes (production) | Frontend URL allowed for CORS (e.g., your Vercel URL) |
+| `MASTER_CODE` | For org sign-up | Secret entered on the "Create organization" signup form. Unset = org creation disabled (503). Compared in constant time. |
 | `PORT` | No | Default: 3000 |
 
 **Local dev:** Set `DATABASE_URL` in a `.env` file or shell: `export DATABASE_URL=postgres://localhost/overcard_dev`
@@ -288,3 +337,4 @@ Deploy steps:
 - **Dev-only features:** `DEV_ORGS` and `DEV_PASSWORD` are defined unconditionally in `Panels.jsx` (not tree-shaken by Vite). Only the LoginScreen UI rendering them checks a condition. Do not rely on Vite bundle stripping for these values.
 - **Seed on boot:** `server/index.js` runs `runSeed()` on every start, including production. There is no production guard — seeded accounts share a known password (demo deployment only).
 - **Feedback limits:** Feedback text capped at 5000 characters.
+- **Signup:** Share codes are 8 chars from an unambiguous 31-char alphabet (~40 bits), expirable, use-limited and revocable. `/auth/invite`, `/auth/signup` and `/auth/create-org` share a 10-per-15-min rate limiter.

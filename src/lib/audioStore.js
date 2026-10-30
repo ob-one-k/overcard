@@ -1,7 +1,8 @@
 // ─── AUDIO STORE — IndexedDB utility ─────────────────────────────────────────
 // Stores session audio blobs locally in IndexedDB, keyed by sessionId.
-// Audio is device-local — recordings are only accessible on the device where
-// they were made. This is acceptable for a personal sales training tool.
+// This is the on-device backup: audioUpload.js saves here first, uploads to the
+// server, and deletes the local copy once the upload succeeds. Recordings made
+// before server storage existed only live here, so playback falls back to it.
 //
 // Storage estimate: WebM/Opus ~1MB/min. A 30-min session ≈ 30MB.
 // IndexedDB has no hard per-entry limit in modern browsers.
@@ -39,13 +40,13 @@ function initAudioDB() {
   });
 }
 
-export function saveAudioBlob(sessionId, blob, mimeType) {
+export function saveAudioBlob(sessionId, blob, mimeType, durationMs) {
   return initAudioDB().then(function(db) {
     if (!db) return;
     return new Promise(function(resolve, reject) {
       var tx    = db.transaction(STORE_NAME, "readwrite");
       var store = tx.objectStore(STORE_NAME);
-      var req   = store.put({ sessionId: sessionId, blob: blob, mimeType: mimeType, createdAt: Date.now() });
+      var req   = store.put({ sessionId: sessionId, blob: blob, mimeType: mimeType, durationMs: durationMs || null, createdAt: Date.now() });
       req.onsuccess = function() { resolve(); };
       req.onerror   = function() { reject(req.error); };
     });
@@ -61,7 +62,7 @@ export function getAudioBlob(sessionId) {
       var req   = store.get(sessionId);
       req.onsuccess = function() {
         var rec = req.result;
-        resolve(rec ? { blob: rec.blob, mimeType: rec.mimeType } : null);
+        resolve(rec ? { blob: rec.blob, mimeType: rec.mimeType, durationMs: rec.durationMs || null } : null);
       };
       req.onerror = function() { resolve(null); };
     });

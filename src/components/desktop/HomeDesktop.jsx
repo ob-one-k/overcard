@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR } from "../../lib/constants";
+import { useState, useEffect, useRef, useContext } from "react";
+import DesktopCtx from "../../lib/DesktopCtx";
+import { SESS_COLOR, OBJ_COLOR, isAdminRole } from "../../lib/constants";
 import { apiGet } from "../../lib/api";
-import { solidBtn, ghostBtn, ghostSm } from "../../lib/styles";
-import { SectionHdr, StatBox, BarRow } from "../ui";
-import { sessionVisits, sessionDurSec, fmtSec, fmtDate, fmtTime } from "../Sessions";
+import { solidBtn } from "../../lib/styles";
+import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "../Sessions";
 
 // ─── HELPERS (mirrors Home.jsx) ───────────────────────────────────────────────
 function computeStats(sessions, decks) {
@@ -64,7 +64,7 @@ function computeStats(sessions, decks) {
   var pastIntro    = live.filter(function(s){ return sessionVisits(s).some(function(v){ return v.cardType==="discovery" && !v.isObjCard; }); }).length;
   var reachedClose = live.filter(function(s){ return sessionVisits(s).some(function(v){ return v.cardType==="close" && !v.isObjCard; }); }).length;
 
-  var recent = sessions.slice().sort(function(a, b){ return b.startTs - a.startTs; }).slice(0, 5);
+  var recent = sessions.slice().sort(function(a, b){ return b.startTs - a.startTs; }).slice(0, 40);
   var totalObjVisits = allVisits.filter(function(v){ return v.isObjCard; }).length;
 
   return {
@@ -107,29 +107,84 @@ function computeRankings(sessions, orgUsers) {
   return entries;
 }
 
+var MUTED  = "rgba(255,255,255,.55)";
+var SUBTLE = "rgba(255,255,255,.4)";
+var PANEL  = { background:"rgba(255,255,255,.045)", border:"1px solid rgba(255,255,255,.08)", borderRadius:16, display:"flex", flexDirection:"column", overflow:"hidden", minHeight:0 };
+
 function OutcomeBadge({ session }) {
   var mode = session.mode || session.sessionType || "live";
   var outcome = session.outcome || "";
   var sold = session.sold || outcome === "sold";
-  if (mode === "practice") return <span style={{fontSize:9,background:"rgba(0,180,255,.12)",border:"1px solid rgba(0,180,255,.25)",color:"#00B4FF",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Practice</span>;
-  if (outcome === "not_contacted") return <span style={{fontSize:9,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.14)",color:"rgba(255,255,255,.4)",padding:"2px 7px",borderRadius:99,fontWeight:700}}>📵 No Contact</span>;
-  if (sold) return <span style={{fontSize:9,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"2px 7px",borderRadius:99,fontWeight:700}}>✓ Sold</span>;
-  if (outcome === "booked") return <span style={{fontSize:9,background:"rgba(255,213,79,.12)",border:"1px solid rgba(255,213,79,.25)",color:"#FFD54F",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Booked</span>;
-  if (outcome === "abandoned") return <span style={{fontSize:9,background:"rgba(239,83,80,.1)",border:"1px solid rgba(239,83,80,.2)",color:"#EF5350",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Abandoned</span>;
-  return <span style={{fontSize:9,background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.5)",padding:"2px 7px",borderRadius:99,fontWeight:700}}>Live</span>;
+  var spec;
+  if (mode === "practice")              spec = { t:"Practice",   c:"#00B4FF", bg:"rgba(0,180,255,.12)",   b:"rgba(0,180,255,.3)" };
+  else if (outcome === "not_contacted") spec = { t:"No contact", c:"rgba(255,255,255,.6)", bg:"rgba(255,255,255,.06)", b:"rgba(255,255,255,.16)" };
+  else if (sold)                        spec = { t:"✓ Sold",     c:"#66BB6A", bg:"rgba(102,187,106,.15)", b:"rgba(102,187,106,.35)" };
+  else if (outcome === "booked")        spec = { t:"Booked",     c:"#FFD54F", bg:"rgba(255,213,79,.12)",  b:"rgba(255,213,79,.3)" };
+  else if (outcome === "abandoned")     spec = { t:"Abandoned",  c:"#EF5350", bg:"rgba(239,83,80,.1)",    b:"rgba(239,83,80,.25)" };
+  else                                  spec = { t:"Live",       c:"rgba(255,255,255,.7)", bg:"rgba(255,255,255,.07)", b:"rgba(255,255,255,.16)" };
+  return <span style={{fontSize:12,background:spec.bg,border:"1px solid "+spec.b,color:spec.c,padding:"3px 10px",borderRadius:99,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>{spec.t}</span>;
+}
+
+// Larger desktop bar row (ui.jsx BarRow is sized for mobile)
+function Bar({ label, value, denom, color, showCount }) {
+  // Clamp: funnel stages are counted independently, so a later stage can exceed an earlier one
+  var pct = denom > 0 ? Math.min(100, Math.round(value / denom * 100)) : 0;
+  return (
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5,gap:10}}>
+        <span style={{fontSize:14,color:"rgba(255,255,255,.8)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
+        <span style={{fontSize:14,fontWeight:700,color:color,flexShrink:0}}>{showCount ? value : pct + "%"}{showCount ? "" : <span style={{fontSize:12,fontWeight:500,color:SUBTLE,marginLeft:6}}>{value}/{denom}</span>}</span>
+      </div>
+      <div style={{height:6,background:"rgba(255,255,255,.07)",borderRadius:99,overflow:"hidden"}}>
+        <div style={{height:"100%",background:color,borderRadius:99,width:pct+"%",transition:"width .4s"}}/>
+      </div>
+    </div>
+  );
+}
+
+function PanelHead({ title, meta, compact }) {
+  return (
+    <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,padding:compact?"14px 16px 10px":"16px 20px 12px",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
+      <h2 style={{margin:0,fontSize:compact?16:17,fontWeight:700,color:"#fff"}}>{title}</h2>
+      {meta && <span style={{fontSize:13,color:MUTED,whiteSpace:"nowrap"}}>{meta}</span>}
+    </div>
+  );
+}
+
+function SubHead({ children }) {
+  return <div style={{fontSize:12,fontWeight:700,color:SUBTLE,letterSpacing:1.1,textTransform:"uppercase",margin:"4px 0 12px"}}>{children}</div>;
+}
+
+function EmptyNote({ icon, title, body, action }) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:"36px 20px",gap:8,color:MUTED,flex:1}}>
+      {icon && <div style={{fontSize:34,marginBottom:4}}>{icon}</div>}
+      <div style={{fontSize:16,fontWeight:700,color:"rgba(255,255,255,.85)"}}>{title}</div>
+      {body && <div style={{fontSize:14,lineHeight:1.6,maxWidth:340}}>{body}</div>}
+      {action}
+    </div>
+  );
 }
 
 // ─── HOME DESKTOP ─────────────────────────────────────────────────────────────
-// Two-column dashboard: left (recent + decks) | right (funnel + analytics)
+// Full-width dashboard.
+//   Header:   greeting + Me / team switcher
+//   KPI strip: sessions, close rate, on-path, avg time, objections handled
+//   Body (3 full-height panels, each scrolls on its own):
+//     Me tab:   Recent sessions | Decks (quick launch) | Insights (funnel, objections, ranking, top close)
+//     Team tab: Leaderboard     | Recent team sessions | Insights
 // Mirrors HomeTab data/state — no hooks extracted to avoid conditional-hooks issues
 export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");
   var [loadingTeam,  setLoadingTeam]  = useState(null);
+  var [vw,           setVw]           = useState(function(){ return window.innerWidth; });
+  var desktop = useContext(DesktopCtx);
+  var compact = !!desktop.compact;   // tablet: compact desktop
 
   var myTeams;
-  if (authUser.role === "admin" && orgTeams && orgTeams.length > 0) {
+  if (isAdminRole(authUser.role) && orgTeams && orgTeams.length > 0) {
     myTeams = orgTeams.map(function(t){ return { id: t.id, name: t.name }; });
   } else if (authUser.teams && authUser.teams.length > 0) {
     myTeams = authUser.teams;
@@ -149,6 +204,23 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     myTeams.forEach(function(team) { loadTeamSessions(team.id); });
   }, [myTeams.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // No personal sessions yet → open on the first team so the dashboard isn't empty (until the user picks a scope)
+  var userPickedRef = useRef(false);
+  useEffect(function() {
+    if (userPickedRef.current) return;
+    if (mySessions && mySessions.length === 0 && myTeams.length > 0 && activeSubTab === "me") {
+      setActiveSubTab(myTeams[0].id);
+      loadTeamSessions(myTeams[0].id);
+    }
+  }, [mySessions, myTeams.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(function() {
+    var timer = null;
+    function onResize() { clearTimeout(timer); timer = setTimeout(function(){ setVw(window.innerWidth); }, 60); }
+    window.addEventListener("resize", onResize);
+    return function() { window.removeEventListener("resize", onResize); clearTimeout(timer); };
+  }, []);
+
   function loadTeamSessions(teamId) {
     if (teamSessions[teamId] !== undefined) return;
     setLoadingTeam(teamId);
@@ -164,6 +236,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
   }
 
   function handleSubTab(tabId) {
+    userPickedRef.current = true;
     setActiveSubTab(tabId);
     if (tabId !== "me") loadTeamSessions(tabId);
   }
@@ -183,6 +256,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     : null;
 
   var isTeamTab = activeSubTab !== "me";
+  var activeTeam = isTeamTab ? myTeams.find(function(t){ return t.id === activeSubTab; }) : null;
 
   var hr = new Date().getHours();
   var greeting = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
@@ -199,275 +273,281 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     if (aTs !== bTs) return bTs - aTs;
     return (a.name || "").localeCompare(b.name || "");
   });
-  var decksWithSessions = stats ? stats.deckStats.sort(function(a, b){ return b.total - a.total; }) : [];
+  // Deck stats always come from the user's own sessions so the quick-launch list is personal
+  var myStats = (mySessions && mySessions.length > 0) ? (activeSubTab === "me" && stats ? stats : computeStats(mySessions, decks)) : null;
+  var myDeckStats = myStats ? myStats.deckStats : [];
 
-  return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+  var userName = {};
+  (orgUsers || []).forEach(function(u){ userName[String(u.id)] = u.displayName || u.email; });
 
-      {/* ── Header row: greeting + sub-tabs ── */}
-      <div style={{flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)",background:"rgba(8,25,55,.3)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:0,padding:"0 24px",minHeight:52}}>
-          {/* Greeting */}
-          <div style={{flex:1,display:"flex",alignItems:"center",gap:0}}>
-            <span style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:"'Lora',Georgia,serif",marginRight:12}}>{greeting}, {firstName}</span>
-            {stats && (
-              <span style={{fontSize:11,color:"rgba(255,255,255,.32)"}}>
-                {stats.total} session{stats.total!==1?"s":""}
-                {stats.winRate !== null ? " · " + stats.winRate + "% close" : ""}
-                {stats.intPct !== null ? " · " + stats.intPct + "% on-path" : ""}
-              </span>
-            )}
-          </div>
-          {/* Sub-tabs */}
-          {myTeams.length > 0 && (
-            <div style={{display:"flex"}}>
-              {[{ id:"me", label:"Me" }].concat(myTeams).map(function(t){
-                var on = activeSubTab === t.id;
-                var cnt = t.id === "me" ? null
-                  : (teamSessions[t.id] !== undefined ? teamSessions[t.id].length : null);
-                return (
-                  <button key={t.id} onClick={function(){ handleSubTab(t.id); }}
-                    style={{background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),cursor:"pointer",padding:"14px 14px",fontSize:11,fontWeight:on?700:500,color:on?SESS_COLOR:"rgba(255,255,255,.35)",fontFamily:"inherit",whiteSpace:"nowrap",transition:"color .15s"}}>
-                    {t.label || t.name}
-                    {cnt !== null && <span style={{marginLeft:4,fontSize:9,color:"rgba(255,255,255,.2)"}}>{cnt}</span>}
-                  </button>
-                );
-              })}
-            </div>
+  // Tablet: the 72px rail eats into the width; 2 columns in landscape, stacked in portrait
+  var contentW = vw - (compact ? 72 : 0);
+  var wide   = !compact && vw >= 1360;
+  var twoCol = !compact || contentW >= 860;
+  var cols   = wide ? "minmax(0,1.15fr) minmax(0,1.05fr) minmax(0,1fr)" : twoCol ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(0,1fr)";
+  // Stacked (tablet portrait): panels size to their content, capped so each still scrolls on its own
+  var panelH    = wide || !twoCol ? undefined : compact ? 420 : 460;
+  var panelMaxH = !twoCol ? 480 : undefined;
+  var padX   = compact ? 16 : 24;
+
+  // ── Panel: recent sessions (me or team) ─────────────────────────────────────
+  function renderRecent(showRep) {
+    var list = currentSessions ? currentSessions.slice().sort(function(a, b){ return b.startTs - a.startTs; }).slice(0, 40) : [];
+    return (
+      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH })}>
+        <PanelHead compact={compact} title={showRep ? "Recent team sessions" : "Recent sessions"} meta={currentSessions && currentSessions.length > 0 ? "Latest " + list.length + " of " + currentSessions.length : null}/>
+        <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
+          {isLoading && <EmptyNote title="Loading sessions…"/>}
+          {!isLoading && list.length === 0 && (
+            <EmptyNote icon="📊" title="No sessions yet"
+              body={showRep ? "Nobody on this team has run a session yet." : "Pick a deck and run your first practice or live session — results will land here."}
+              action={!showRep && sortedDecks.length > 0 && onSwitchDeckAndPlay ? (
+                <button onClick={function(){ onSwitchDeckAndPlay(sortedDecks[0].id); }} style={Object.assign({}, solidBtn(SESS_COLOR), {marginTop:10,fontSize:15,padding:"11px 20px",borderRadius:12})}>▶ Start a session</button>
+              ) : null}/>
           )}
-        </div>
-      </div>
-
-      {/* ── Stat strip ── */}
-      {stats && (
-        <div style={{flexShrink:0,display:"flex",borderBottom:"1px solid rgba(255,255,255,.05)",background:"rgba(0,0,0,.18)"}}>
-          {[
-            {v:stats.total,                                          l:"Sessions",   c:"rgba(255,255,255,.8)"},
-            {v:stats.winRate !== null ? stats.winRate+"%" : "—",     l:"Close Rate", c:"#66BB6A"},
-            {v:stats.intPct  !== null ? stats.intPct+"%"  : "—",     l:"On-Path",    c:"#00B4FF"},
-            {v:stats.avgSec  !== null ? fmtSec(stats.avgSec) : "—",  l:"Avg Time",   c:"rgba(255,213,79,.85)"},
-          ].map(function(st, i) {
+          {!isLoading && list.map(function(s){
+            var modeIcon = (s.mode||s.sessionType||"live") === "live" ? "📞" : "🎯";
+            var dColor = s.deckColor || "#F5A623";
+            var dur = sessionDurSec(s);
+            var rep = showRep ? (userName[String(s.userId)] || "Unknown rep") : null;
             return (
-              <div key={i} style={{flex:1,padding:"9px 0 8px",textAlign:"center",borderRight:i<3?"1px solid rgba(255,255,255,.05)":"none"}}>
-                <div style={{fontSize:17,fontWeight:700,color:st.c,lineHeight:1}}>{st.v}</div>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.7,marginTop:3}}>{st.l}</div>
+              <div key={s.id} style={{display:"flex",alignItems:"center",gap:14,padding:"11px 20px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+                <span style={{fontSize:18,flexShrink:0}}>{modeIcon}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:15,fontWeight:600,color:"rgba(255,255,255,.92)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name || "Untitled session"}</div>
+                  <div style={{fontSize:13,color:MUTED,marginTop:3,display:"flex",gap:7,alignItems:"center",minWidth:0,whiteSpace:"nowrap",overflow:"hidden"}}>
+                    {rep && <span style={{color:"rgba(255,255,255,.8)",fontWeight:600,flexShrink:0}}>{rep}</span>}
+                    {rep && <span style={{color:"rgba(255,255,255,.25)",flexShrink:0}}>·</span>}
+                    <span title={s.deckName || ""} style={{width:8,height:8,borderRadius:"50%",background:dColor,display:"inline-block",flexShrink:0}}/>
+                    <span style={{overflow:"hidden",textOverflow:"ellipsis",minWidth:24,flex:"0 1 auto"}}>{s.deckName || "—"}</span>
+                    <span style={{color:"rgba(255,255,255,.25)",flexShrink:0}}>·</span>
+                    <span style={{flexShrink:0}}>{fmtDate(s.startTs)}</span>
+                    {dur ? <span style={{color:"rgba(255,255,255,.25)",flexShrink:0}}>·</span> : null}
+                    {dur ? <span style={{flexShrink:0}}>{fmtSec(dur)}</span> : null}
+                  </div>
+                </div>
+                <OutcomeBadge session={s}/>
               </div>
             );
           })}
         </div>
-      )}
+      </section>
+    );
+  }
 
-      {/* ── Two-column body ── */}
-      <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
+  // ── Panel: decks quick launch ───────────────────────────────────────────────
+  function renderDecks() {
+    return (
+      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH })}>
+        <PanelHead compact={compact} title="Your decks" meta={sortedDecks.length + " deck" + (sortedDecks.length!==1?"s":"")}/>
+        <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+          {sortedDecks.length === 0 && <EmptyNote icon="🗂️" title="No decks yet" body="Decks your admin shares with you will appear here."/>}
+          {sortedDecks.map(function(d) {
+            var deckStat = myDeckStats.find(function(ds){ return ds.deckId === d.id; });
+            var dColor   = d.color || "#F5A623";
+            var wr       = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
+            var nCards   = Object.keys(d.cards || {}).length;
+            var nStacks  = (d.objStacks || []).length;
+            return (
+              <div key={d.id} title={d.name} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"4px solid "+dColor,borderRadius:"4px 14px 14px 4px",padding:"14px 14px",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:40,height:40,borderRadius:12,background:dColor+"22",border:"1.5px solid "+dColor+"55",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{d.icon||"💼"}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:16,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
+                  <div style={{fontSize:13,color:MUTED,marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                    {nCards} card{nCards!==1?"s":""} · {nStacks} stack{nStacks!==1?"s":""}
+                  </div>
+                  <div style={{fontSize:13,color:SUBTLE,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                    {deckStat ? deckStat.total + " session" + (deckStat.total!==1?"s":"") : "Not run yet"}
+                    {wr !== null ? <span style={{color:"#66BB6A",fontWeight:600}}>{" · " + wr + "% close"}</span> : ""}
+                  </div>
+                </div>
+                {onSwitchDeckAndPlay && (
+                  <button onClick={function(){ onSwitchDeckAndPlay(d.id); }} aria-label={"Play " + d.name}
+                    style={{background:"rgba(168,255,62,.12)",border:"1px solid rgba(168,255,62,.35)",borderRadius:10,padding:"9px 13px",minHeight:compact?44:undefined,cursor:"pointer",fontSize:14,color:"#A8FF3E",fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
+                    ▶ Play
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
 
-        {/* ── Left column: recent + decks ── */}
-        <div style={{flex:1,overflowY:"auto",padding:"18px 20px",borderRight:"1px solid rgba(255,255,255,.05)"}}>
+  // ── Panel: team leaderboard ─────────────────────────────────────────────────
+  function renderLeaderboard() {
+    var rankings = currentSessions && currentSessions.length > 0 ? computeRankings(currentSessions, orgUsers) : [];
+    return (
+      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH })}>
+        <PanelHead compact={compact} title="Leaderboard" meta={rankings.length > 0 ? rankings.length + " rep" + (rankings.length!==1?"s":"") + " · ranked by close rate" : null}/>
+        <div style={{flex:1,overflowY:"auto",padding:"10px 14px",display:"flex",flexDirection:"column",gap:6}}>
+          {isLoading && <EmptyNote title="Loading team…"/>}
+          {!isLoading && rankings.length === 0 && <EmptyNote icon="🏆" title="No rankings yet" body="Rankings appear once team members record sessions."/>}
+          {!isLoading && rankings.map(function(entry, idx) {
+            var isMe = String(entry.userId) === String(authUser.id);
+            var rn = idx + 1;
+            var rc = rn === 1 ? "#FFD700" : rn === 2 ? "#C0C0C0" : rn === 3 ? "#CD7F32" : "rgba(255,255,255,.45)";
+            return (
+              <div key={entry.userId} style={{background:isMe?"rgba(168,255,62,.07)":"rgba(255,255,255,.035)",border:"1px solid "+(isMe?"rgba(168,255,62,.3)":"rgba(255,255,255,.06)"),borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:14}}>
+                <div style={{fontSize:16,fontWeight:900,color:rc,minWidth:30,textAlign:"center"}}>#{rn}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:15,fontWeight:isMe?700:600,color:isMe?SESS_COLOR:"rgba(255,255,255,.9)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {entry.displayName}{isMe ? " (you)" : ""}
+                  </div>
+                  <div style={{fontSize:13,color:MUTED,marginTop:2}}>
+                    {entry.total} session{entry.total!==1?"s":""}
+                    {entry.live > 0 ? " · " + entry.live + " live · " + entry.sold + " sold" : ""}
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:18,fontWeight:700,color:entry.winRate!==null?"#66BB6A":"rgba(255,255,255,.3)"}}>{entry.winRate !== null ? entry.winRate+"%" : "—"}</div>
+                  <div style={{fontSize:12,color:SUBTLE}}>close</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
 
-          {isLoading && (
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 0",gap:10,color:"rgba(255,255,255,.3)",fontSize:13}}>
-              <span style={{opacity:.4}}>⏳</span> Loading sessions…
+  // ── Panel: insights ─────────────────────────────────────────────────────────
+  function renderInsights() {
+    var rankRows = [];
+    if (!isTeamTab && myTeams.length > 0) {
+      rankRows = myTeams.map(function(team) {
+        var tSess = teamSessions[team.id];
+        if (!tSess || tSess.length === 0) return null;
+        var rankings = computeRankings(tSess, orgUsers);
+        if (rankings.length < 2) return null;
+        var myIdx = rankings.findIndex(function(r){ return String(r.userId) === String(authUser.id); });
+        if (myIdx === -1) return null;
+        var me = rankings[myIdx];
+        return { team: team, rank: myIdx + 1, total: rankings.length, winRate: me.winRate, totalSess: me.total };
+      }).filter(Boolean);
+    }
+    var hasAny = stats && (stats.live > 0 || stats.allObjEntries.length > 0 || stats.topClose || rankRows.length > 0);
+    return (
+      <section style={Object.assign({}, PANEL, { height:panelH, maxHeight:panelMaxH, gridColumn: wide ? undefined : "1 / -1" })}>
+        <PanelHead compact={compact} title="Insights" meta={isTeamTab && activeTeam ? activeTeam.name : "Your performance"}/>
+        <div style={{flex:1,overflowY:"auto",padding:"16px 20px",display:wide?"block":"grid",gridTemplateColumns:"1fr 1fr",columnGap:28}}>
+          {isLoading && <EmptyNote title="Loading…"/>}
+          {!isLoading && !hasAny && <EmptyNote icon="📈" title="No insights yet" body="Funnel, objection and close-card insights appear once sessions are recorded."/>}
+
+          {!isLoading && stats && stats.live > 0 && (
+            <div style={{marginBottom:20}}>
+              <SubHead>Live call funnel</SubHead>
+              <Bar label="Contacted"      value={stats.contacted}    denom={stats.live}         color={SESS_COLOR}/>
+              <Bar label="Into discovery" value={stats.pastIntro}    denom={stats.contacted}    color="#00B4FF"/>
+              <Bar label="Reached close"  value={stats.reachedClose} denom={stats.pastIntro}    color="#66BB6A"/>
+              <Bar label="Sold"           value={stats.sold}         denom={stats.reachedClose} color="#A8FF3E"/>
             </div>
           )}
 
-          {!isLoading && (!currentSessions || currentSessions.length === 0) && (
-            <div style={{textAlign:"center",padding:"48px 0",color:"rgba(255,255,255,.3)"}}>
-              <div style={{fontSize:32,marginBottom:10}}>📊</div>
-              <div style={{fontSize:14,fontWeight:700,marginBottom:6}}>No sessions yet</div>
-              <div style={{fontSize:12,lineHeight:1.6}}>
-                {isTeamTab ? "No sessions for this team yet." : "Select a deck and run your first session."}
+          {!isLoading && stats && stats.allObjEntries.length > 0 && (
+            <div style={{marginBottom:20}}>
+              <SubHead>Most common objections</SubHead>
+              {stats.allObjEntries.slice(0, 6).map(function(e){
+                return <Bar key={e.label} label={e.label} value={e.count} denom={stats.allObjEntries[0].count} color={OBJ_COLOR} showCount={true}/>;
+              })}
+            </div>
+          )}
+
+          {!isLoading && rankRows.length > 0 && (
+            <div style={{marginBottom:20}}>
+              <SubHead>My ranking</SubHead>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {rankRows.map(function(row) {
+                  var rc = row.rank === 1 ? "#FFD700" : row.rank === 2 ? "#C0C0C0" : row.rank === 3 ? "#CD7F32" : SESS_COLOR;
+                  return (
+                    <div key={row.team.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:14}}>
+                      <div style={{fontSize:20,fontWeight:900,color:rc,minWidth:34,textAlign:"center"}}>#{row.rank}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:15,fontWeight:700,color:"rgba(255,255,255,.9)"}}>{row.team.name}</div>
+                        <div style={{fontSize:13,color:MUTED,marginTop:2}}>
+                          {row.winRate !== null ? row.winRate + "% close" : "No live sessions"}{" · #" + row.rank + " of " + row.total}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {!isLoading && stats && (
-            <div>
-              {/* Recent Sessions */}
-              {!isTeamTab && stats.recent.length > 0 && (
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Recent Sessions</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                    {stats.recent.map(function(s){
-                      var modeIcon = (s.mode||s.sessionType||"live") === "live" ? "📞" : "🎯";
-                      var dColor = s.deckColor || "#F5A623";
-                      return (
-                        <div key={s.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,padding:"9px 13px",display:"flex",alignItems:"center",gap:10}}>
-                          <span style={{fontSize:14,flexShrink:0}}>{modeIcon}</span>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,.85)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
-                            <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:2,display:"flex",gap:5,alignItems:"center"}}>
-                              <span style={{width:6,height:6,borderRadius:"50%",background:dColor,display:"inline-block",flexShrink:0}}/>
-                              {s.deckName || "—"}
-                              <span style={{color:"rgba(255,255,255,.18)"}}>·</span>
-                              {fmtDate(s.startTs)}
-                            </div>
-                          </div>
-                          <OutcomeBadge session={s}/>
-                        </div>
-                      );
-                    })}
-                  </div>
+          {!isLoading && stats && stats.topClose && (
+            <div style={{marginBottom:20}}>
+              <SubHead>Top close card</SubHead>
+              <div style={{background:"rgba(102,187,106,.07)",border:"1px solid rgba(102,187,106,.22)",borderRadius:12,padding:"13px 15px",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:15,color:"#fff",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stats.topClose.title}</div>
+                  <div style={{fontSize:13,color:MUTED,marginTop:3}}>Most reached close card</div>
                 </div>
-              )}
-
-              {/* Deck Quick-Launch */}
-              {!isTeamTab && sortedDecks.length > 0 && (
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Decks</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    {sortedDecks.slice(0, 5).map(function(d) {
-                      var deckStat = decksWithSessions.find(function(ds){ return ds.deckId === d.id; });
-                      var dColor   = d.color || "#F5A623";
-                      var wr       = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
-                      return (
-                        <div key={d.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderLeft:"3px solid "+dColor,borderRadius:"0 14px 14px 0",padding:"11px 14px",display:"flex",alignItems:"center",gap:12}}>
-                          <div style={{width:34,height:34,borderRadius:9,background:dColor+"22",border:"1.5px solid "+dColor+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{d.icon||"💼"}</div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
-                            <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:2}}>
-                              {deckStat ? deckStat.total+" session"+(deckStat.total!==1?"s":"") : "No sessions"}
-                              {wr !== null ? " · "+wr+"% close" : ""}
-                            </div>
-                          </div>
-                          {onSwitchDeckAndPlay && (
-                            <button onClick={function(){ onSwitchDeckAndPlay(d.id); }}
-                              style={{background:"rgba(168,255,62,.1)",border:"1px solid rgba(168,255,62,.25)",borderRadius:10,padding:"7px 13px",cursor:"pointer",fontSize:11,color:"#A8FF3E",fontFamily:"inherit",fontWeight:700,flexShrink:0}}>
-                              ▶ Play
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Team Leaderboard */}
-              {isTeamTab && currentSessions && currentSessions.length > 0 && (function() {
-                var rankings = computeRankings(currentSessions, orgUsers);
-                if (rankings.length === 0) return null;
-                return (
-                  <div style={{marginBottom:20}}>
-                    <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Team Leaderboard</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                      {rankings.map(function(entry, idx) {
-                        var isMe = String(entry.userId) === String(authUser.id);
-                        var rn = idx + 1;
-                        var rc = rn === 1 ? "#FFD700" : rn === 2 ? "#C0C0C0" : rn === 3 ? "#CD7F32" : "rgba(255,255,255,.3)";
-                        return (
-                          <div key={entry.userId} style={{background:isMe?"rgba(168,255,62,.07)":"rgba(255,255,255,.04)",border:"1px solid "+(isMe?"rgba(168,255,62,.3)":"rgba(255,255,255,.07)"),borderRadius:12,padding:"9px 13px",display:"flex",alignItems:"center",gap:10}}>
-                            <div style={{fontSize:13,fontWeight:900,color:rc,minWidth:22,textAlign:"center"}}>#{rn}</div>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:12,fontWeight:isMe?700:600,color:isMe?SESS_COLOR:"rgba(255,255,255,.8)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                {entry.displayName}{isMe ? " (you)" : ""}
-                              </div>
-                              <div style={{fontSize:9,color:"rgba(255,255,255,.35)",marginTop:1}}>
-                                {entry.total} session{entry.total!==1?"s":""}
-                                {entry.live > 0 ? " · "+entry.live+" live" : ""}
-                              </div>
-                            </div>
-                            <div style={{fontSize:12,fontWeight:700,color:entry.winRate!==null?"#66BB6A":"rgba(255,255,255,.25)"}}>
-                              {entry.winRate !== null ? entry.winRate+"%" : "—"}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
+                <span style={{fontSize:14,color:"#66BB6A",background:"rgba(102,187,106,.12)",border:"1px solid rgba(102,187,106,.3)",padding:"4px 11px",borderRadius:99,flexShrink:0,fontWeight:700}}>{stats.topClose.count}×</span>
+              </div>
             </div>
           )}
         </div>
+      </section>
+    );
+  }
 
-        {/* ── Right column: analytics ── */}
-        <div style={{width:340,minWidth:340,overflowY:"auto",padding:"18px 18px",flexShrink:0}}>
+  var kpis = [
+    { v: stats ? stats.total : (isLoading ? "…" : 0),                         l:"Sessions",        sub: stats ? stats.live + " live · " + stats.practice + " practice" : null, c:"#fff" },
+    { v: stats && stats.winRate !== null ? stats.winRate + "%" : "—",          l:"Close rate",      sub: stats && stats.live > 0 ? stats.sold + " sold of " + stats.live + " live" : "Live calls only", c:"#66BB6A" },
+    { v: stats && stats.contactRate !== null ? stats.contactRate + "%" : "—",  l:"Contact rate",    sub: stats && stats.live > 0 ? stats.contacted + " reached" : null, c:SESS_COLOR },
+    { v: stats && stats.intPct !== null ? stats.intPct + "%" : "—",            l:"On intended path", sub: "Main-deck card visits", c:"#00B4FF" },
+    { v: stats && stats.avgSec !== null ? fmtSec(stats.avgSec) : "—",          l:"Avg session",     sub: stats ? stats.totalObjVisits + " objection cards used" : null, c:"#FFD54F" },
+  ];
 
-          {!isLoading && stats && (
-            <div>
-              {/* Live Funnel */}
-              {stats.live > 0 && (
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Live Funnel</div>
-                  <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"13px 15px"}}>
-                    <BarRow label="Contacted"      value={stats.contacted}     denom={stats.live}          color={SESS_COLOR}/>
-                    <BarRow label="Into discovery" value={stats.pastIntro}     denom={stats.contacted}     color="#00B4FF"/>
-                    <BarRow label="Reached close"  value={stats.reachedClose}  denom={stats.pastIntro}     color="#66BB6A"/>
-                    <BarRow label="Sold"           value={stats.sold}          denom={stats.reachedClose}  color="#A8FF3E"/>
-                  </div>
-                </div>
-              )}
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
 
-              {/* Objection Breakdown */}
-              {stats.allObjEntries.length > 0 && (
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Objection Usage</div>
-                  <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"13px 15px"}}>
-                    {stats.allObjEntries.slice(0, 6).map(function(e){
-                      return <BarRow key={e.label} label={e.label} value={e.count} denom={stats.allObjEntries[0].count} color={OBJ_COLOR}/>;
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* My Ranking — Me tab only */}
-              {!isTeamTab && myTeams.length > 0 && (function() {
-                var rankRows = myTeams.map(function(team) {
-                  var tSess = teamSessions[team.id];
-                  if (!tSess || tSess.length === 0) return null;
-                  var rankings = computeRankings(tSess, orgUsers);
-                  if (rankings.length < 2) return null;
-                  var myIdx = rankings.findIndex(function(r){ return String(r.userId) === String(authUser.id); });
-                  if (myIdx === -1) return null;
-                  var me = rankings[myIdx];
-                  return { team: team, rank: myIdx + 1, total: rankings.length, winRate: me.winRate, totalSess: me.total };
-                }).filter(Boolean);
-                if (rankRows.length === 0) return null;
-                return (
-                  <div style={{marginBottom:20}}>
-                    <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>My Ranking</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {rankRows.map(function(row) {
-                        var rc = row.rank === 1 ? "#FFD700" : row.rank === 2 ? "#C0C0C0" : row.rank === 3 ? "#CD7F32" : SESS_COLOR;
-                        return (
-                          <div key={row.team.id} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"11px 14px",display:"flex",alignItems:"center",gap:12}}>
-                            <div style={{fontSize:18,fontWeight:900,color:rc,minWidth:28,textAlign:"center"}}>#{row.rank}</div>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,.85)"}}>{row.team.name}</div>
-                              <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:2}}>
-                                {row.winRate !== null ? row.winRate+"% close" : "No live sessions"}
-                                {" · #"+row.rank+" of "+row.total}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Top Close Card */}
-              {stats.topClose && (
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Top Close Card</div>
-                  <div style={{background:"rgba(102,187,106,.07)",border:"1px solid rgba(102,187,106,.2)",borderRadius:14,padding:"13px 15px",display:"flex",alignItems:"center",gap:12}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,color:"#fff",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stats.topClose.title}</div>
-                      <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:3}}>Most reached close card</div>
-                    </div>
-                    <span style={{fontSize:12,color:"#66BB6A",background:"rgba(102,187,106,.12)",border:"1px solid rgba(102,187,106,.25)",padding:"4px 10px",borderRadius:99,flexShrink:0,fontWeight:700}}>{stats.topClose.count}×</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!isLoading && !stats && !isLoading && (
-            <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.2)",fontSize:12}}>
-              Analytics will appear once sessions are recorded.
-            </div>
-          )}
+      {/* ── Header: greeting + scope switcher ── */}
+      <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:compact?12:20,padding:compact?"14px "+padX+"px 0":"18px 24px 0",flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:compact?220:260}}>
+          <div style={{fontSize:compact?21:24,fontWeight:700,color:"#fff",fontFamily:"'Lora',Georgia,serif"}}>{greeting}, {firstName}</div>
+          <div style={{fontSize:compact?13:14,color:MUTED,marginTop:4}}>
+            {isTeamTab ? "Team view · " + (activeTeam ? activeTeam.name : "") : "Here's how your calls are going."}
+          </div>
         </div>
+        {myTeams.length > 0 && (
+          <div role="tablist" aria-label="Dashboard scope" style={{display:"flex",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.09)",borderRadius:12,padding:4,gap:2,flexWrap:"wrap"}}>
+            {[{ id:"me", label:"Me" }].concat(myTeams).map(function(t){
+              var on = activeSubTab === t.id;
+              var cnt = t.id === "me" ? (mySessions ? mySessions.length : null)
+                : (teamSessions[t.id] !== undefined ? teamSessions[t.id].length : null);
+              return (
+                <button key={t.id} role="tab" aria-selected={on} onClick={function(){ handleSubTab(t.id); }}
+                  style={{background:on?"rgba(168,255,62,.14)":"transparent",border:"1px solid "+(on?"rgba(168,255,62,.35)":"transparent"),borderRadius:9,cursor:"pointer",padding:"8px 14px",minHeight:compact?44:undefined,fontSize:14,fontWeight:on?700:500,color:on?SESS_COLOR:"rgba(255,255,255,.7)",fontFamily:"inherit",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:7}}>
+                  {t.label || t.name}
+                  {cnt !== null && <span style={{fontSize:12,fontWeight:600,color:on?"rgba(168,255,62,.75)":SUBTLE}}>{cnt}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── KPI strip ── */}
+      <div style={{flexShrink:0,display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:compact?10:14,padding:compact?"14px "+padX+"px":"18px 24px"}}>
+        {kpis.map(function(k) {
+          return (
+            <div key={k.l} style={{background:"rgba(255,255,255,.045)",border:"1px solid rgba(255,255,255,.08)",borderRadius:compact?12:14,padding:compact?"10px 12px":"14px 18px",minWidth:0}}>
+              <div style={{fontSize:compact?12:13,fontWeight:600,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{k.l}</div>
+              <div style={{fontSize:compact?22:28,fontWeight:700,color:k.c,lineHeight:1.15,marginTop:4}}>{k.v}</div>
+              {k.sub && <div style={{fontSize:compact?11:12,color:SUBTLE,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{k.sub}</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Panels ── */}
+      <div style={{flex:1,minHeight:0,overflowY:wide?"hidden":"auto",padding:compact?"0 "+padX+"px "+padX+"px":"0 24px 24px",display:"grid",gridTemplateColumns:cols,gridAutoRows:wide?"minmax(0,1fr)":"auto",gap:compact?12:16}}>
+        {isTeamTab ? renderLeaderboard() : renderRecent(false)}
+        {isTeamTab ? renderRecent(true) : renderDecks()}
+        {renderInsights()}
       </div>
     </div>
   );

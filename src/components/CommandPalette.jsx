@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useContext } from "react";
+import DesktopCtx from "../lib/DesktopCtx";
 import { apiGet } from "../lib/api";
 import { inputSt } from "../lib/styles";
 
@@ -6,7 +7,10 @@ import { inputSt } from "../lib/styles";
 // Global ⌘K search palette for desktop.
 // Searches: tabs, cards (from all decks), sessions.
 // Props: tabs, decks, onNavigateTab, onSwitchDeck, onClose
+// Tablet/touch: opened from the top-bar search button; sits higher (room for the
+// on-screen keyboard), hides the keyboard-hint footer, 44px clear button.
 export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClose }) {
+  var touch = !!useContext(DesktopCtx).isTouchPrimary;
   var [query,     setQuery]     = useState("");
   var [debQ,      setDebQ]      = useState("");
   var [selected,  setSelected]  = useState(0);
@@ -101,44 +105,45 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
         display:"flex",
         alignItems:"flex-start",
         justifyContent:"center",
-        paddingTop:"13vh"
+        paddingTop:touch ? "5vh" : "13vh"
       }}>
       <div style={{
-        width:560, maxWidth:"90vw",
+        width:680, maxWidth:"90vw",
         background:"#0a1830",
         border:"1px solid rgba(255,255,255,.12)",
         borderRadius:16,
         boxShadow:"0 32px 96px rgba(0,0,0,.9)",
         overflow:"hidden",
-        animation:"modalIn .12s ease both"
+        animation:"fadeIn .14s ease both"
       }}>
         {/* Search input */}
-        <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 18px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
-          <span style={{fontSize:16,color:"rgba(255,255,255,.25)",flexShrink:0}}>⌘</span>
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 20px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
+          <span aria-hidden="true" style={{fontSize:20,color:"rgba(255,255,255,.45)",flexShrink:0}}>⌕</span>
           <input
             ref={inputRef}
             value={query}
             onChange={function(e){ setQuery(e.target.value); }}
             onKeyDown={handleKeyDown}
             placeholder="Search tabs, cards, sessions…"
+            aria-label="Search tabs, cards and sessions"
             style={{
               flex:1, background:"none", border:"none", outline:"none",
-              fontSize:16, color:"#fff", fontFamily:"inherit",
+              fontSize:18, color:"#fff", fontFamily:"inherit",
               caretColor:"rgba(255,255,255,.7)"
             }}
           />
           {query && (
             <button onClick={function(){ setQuery(""); }}
-              style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.3)",fontSize:16,padding:"2px 6px",fontFamily:"inherit"}}>
+              style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.5)",fontSize:20,padding:"2px 6px",minWidth:touch?44:undefined,minHeight:touch?44:undefined,fontFamily:"inherit"}} aria-label="Clear search">
               ×
             </button>
           )}
         </div>
 
         {/* Results */}
-        <div style={{maxHeight:380,overflowY:"auto",padding:results.length > 0 ? "6px 0" : 0}}>
+        <div style={{maxHeight:"min(480px, 60vh)",overflowY:"auto",padding:results.length > 0 ? "6px 0" : 0}}>
           {totalCount === 0 && debQ.length > 0 && (
-            <div style={{textAlign:"center",padding:"28px 0",color:"rgba(255,255,255,.25)",fontSize:13}}>No results for "{debQ}"</div>
+            <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.5)",fontSize:15}}>No results for "{debQ}"</div>
           )}
           {totalCount === 0 && debQ.length === 0 && (
             <div style={{padding:"16px 0"}}>
@@ -155,17 +160,17 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
           })}
         </div>
 
-        {/* Keyboard hint */}
-        <div style={{display:"flex",gap:14,padding:"8px 18px",borderTop:"1px solid rgba(255,255,255,.06)",background:"rgba(0,0,0,.2)"}}>
+        {/* Keyboard hint (not on touch) */}
+        {!touch && <div style={{display:"flex",gap:18,padding:"10px 20px",borderTop:"1px solid rgba(255,255,255,.06)",background:"rgba(0,0,0,.2)"}}>
           {[["↑↓","Navigate"],["↵","Select"],["Esc","Close"]].map(function(pair) {
             return (
               <div key={pair[0]} style={{display:"flex",alignItems:"center",gap:5}}>
-                <span style={{fontSize:10,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",borderRadius:5,padding:"1px 6px",color:"rgba(255,255,255,.5)",fontFamily:"inherit"}}>{pair[0]}</span>
-                <span style={{fontSize:10,color:"rgba(255,255,255,.25)"}}>{pair[1]}</span>
+                <span style={{fontSize:12,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.14)",borderRadius:5,padding:"1px 7px",color:"rgba(255,255,255,.65)",fontFamily:"inherit"}}>{pair[0]}</span>
+                <span style={{fontSize:13,color:"rgba(255,255,255,.5)"}}>{pair[1]}</span>
               </div>
             );
           })}
-        </div>
+        </div>}
       </div>
     </div>
   );
@@ -175,7 +180,7 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
 function ResultSection({ section, selected, flatItems, onSelect }) {
   return (
     <div>
-      <div style={{fontSize:9,fontWeight:700,color:"rgba(255,255,255,.3)",letterSpacing:1.2,textTransform:"uppercase",padding:"7px 18px 4px"}}>{section.label}</div>
+      <div style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,.45)",letterSpacing:1.1,textTransform:"uppercase",padding:"10px 20px 6px"}}>{section.label}</div>
       {section.items.map(function(item) {
         var globalIdx = flatItems.indexOf(item);
         var isSelected = globalIdx === selected;
@@ -186,21 +191,22 @@ function ResultSection({ section, selected, flatItems, onSelect }) {
               display:"flex", alignItems:"center", gap:12,
               width:"100%", textAlign:"left",
               background:isSelected?"rgba(255,255,255,.09)":"transparent",
+              boxShadow:isSelected?"inset 3px 0 0 #4DB6AC":"none",
               border:"none",
-              padding:"9px 18px",
+              padding:"10px 20px", minHeight:48,
               cursor:"pointer", fontFamily:"inherit",
               transition:"background .1s",
               outline:"none"
             }}>
-            <span style={{fontSize:16,flexShrink:0,width:22,textAlign:"center",lineHeight:1}}>{item.icon}</span>
+            <span aria-hidden="true" style={{fontSize:18,flexShrink:0,width:24,textAlign:"center",lineHeight:1}}>{item.icon}</span>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+              <div style={{fontSize:15,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
               {item.subtitle && (
-                <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.subtitle}</div>
+                <div style={{fontSize:13,color:"rgba(255,255,255,.55)",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.subtitle}</div>
               )}
             </div>
             {isSelected && (
-              <span style={{fontSize:10,color:"rgba(255,255,255,.3)",flexShrink:0}}>↵</span>
+              <span style={{fontSize:13,color:"rgba(255,255,255,.5)",flexShrink:0}}>↵</span>
             )}
           </button>
         );

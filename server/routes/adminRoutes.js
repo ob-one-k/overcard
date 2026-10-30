@@ -4,17 +4,32 @@ const {
   getOrgUsers, createUser, updateUser, deleteUser, findUserById,
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, uid,
   setUserTeams, getUserTeams, setActiveToken,
+  transferOwnership, removeTeamAdminEverywhere, allInOrg,
+  createInvite, getOrgInvites, revokeInvite,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
-
-function validatePassword(pw) {
-  if (!pw || pw.length < 8) return "Password must be at least 8 characters";
-  if (!/[A-Z]/.test(pw)) return "Password must contain at least one uppercase letter";
-  if (!/[0-9]/.test(pw)) return "Password must contain at least one digit";
-  return null;
-}
+const { validatePassword, validateName, validatePhone, validateNewUser, cleanNewUser } = require("../validate");
 
 router.use(requireAdmin);
+
+// Role hierarchy: owner > admin > user. Admins manage users; only the owner manages admins.
+// Everyone may edit their own profile, but nobody changes their own role.
+function canManage(actor, target) {
+  if (actor.id === target.id) return true;
+  if (actor.role === "owner") return true;
+  return target.role === "user";
+}
+
+// Every user/team id in a request body must belong to the caller's org
+async function checkOrgIds(orgId, userIds, teamIds) {
+  return (await allInOrg("users", userIds, orgId)) && (await allInOrg("teams", teamIds, orgId));
+}
+function asArray(v) { return Array.isArray(v) ? v : (v ? [v] : []); }
+
+function stripSecrets(user) {
+  const { passwordHash: _p, activeToken: _t, ...safe } = user;
+  return safe;
+}
 
 // ─── USERS ────────────────────────────────────────────────────────────────────
 
@@ -25,37 +40,31 @@ router.get("/users", async function(req, res, next) {
   } catch (err) { next(err); }
 });
 
-// POST /api/admin/users
+// POST /api/admin/users  { firstName, lastName, email, phone, password, role, teamId, teamIds }
 router.post("/users", async function(req, res, next) {
-  const { email, displayName, role, teamId, teamIds, password } = req.body || {};
-  if (!email || !displayName || !password) {
-    return res.status(400).json({ error: "email, displayName, and password are required" });
-  }
+  const body = req.body || {};
+  const { role, teamId, teamIds } = body;
+  // The owner role is only ever assigned at org creation or by ownership transfer
   if (!["admin", "user"].includes(role)) {
     return res.status(400).json({ error: "role must be 'admin' or 'user'" });
   }
-  var pwErr = validatePassword(password);
-  if (pwErr) return res.status(400).json({ error: pwErr });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
-    return res.status(400).json({ error: "Invalid email format" });
-  }
-  if (displayName.length > 100) {
-    return res.status(400).json({ error: "Display name must be 100 characters or less" });
-  }
+  const vErr = validateNewUser(body);
+  if (vErr) return res.status(400).json({ error: vErr });
+  if (teamIds !== undefined && !Array.isArray(teamIds)) return res.status(400).json({ error: "teamIds must be an array" });
   try {
-    const user = await createUser({
+    if (!(await checkOrgIds(req.user.orgId, [], asArray(teamId).concat(teamIds || [])))) {
+      return res.status(400).json({ error: "Unknown team" });
+    }
+    const user = await createUser(Object.assign(cleanNewUser(body), {
       orgId:        req.user.orgId,
       teamId:       teamId || null,
-      email:        email.toLowerCase().trim(),
-      passwordHash: await hashPassword(password),
-      displayName:  displayName.trim(),
+      passwordHash: await hashPassword(body.password),
       role:         role,
-    });
+    }));
     if (teamIds !== undefined) {
       await setUserTeams(user.id, teamIds);
     }
-    const { passwordHash: _, ...safe } = user;
-    res.status(201).json(safe);
+    res.status(201).json(stripSecrets(user));
   } catch (err) {
     // PostgreSQL unique violation code
     if (err.code === "23505") {
@@ -65,27 +74,60 @@ router.post("/users", async function(req, res, next) {
   }
 });
 
-// PUT /api/admin/users/:id
+// PUT /api/admin/users/:id  { firstName, lastName, phone, role, teamId, teamIds }
 router.put("/users/:id", async function(req, res, next) {
   try {
     const target = await findUserById(req.params.id);
     if (!target || target.orgId !== req.user.orgId) {
       return res.status(404).json({ error: "User not found" });
     }
-    const { displayName, role, teamId, teamIds } = req.body || {};
+    if (!canManage(req.user, target)) {
+      return res.status(403).json({ error: "Only the owner can modify admins" });
+    }
+    const { firstName, lastName, phone, role, teamId, teamIds } = req.body || {};
     const fields = {};
-    if (displayName !== undefined) fields.displayName = displayName.trim();
-    if (role !== undefined) {
-      if (!["admin", "user"].includes(role)) return res.status(400).json({ error: "Invalid role" });
+    if (firstName !== undefined) {
+      var fErr = validateName(firstName, "First name");
+      if (fErr) return res.status(400).json({ error: fErr });
+      fields.firstName = firstName.trim();
+    }
+    if (lastName !== undefined) {
+      var lErr = validateName(lastName, "Last name");
+      if (lErr) return res.status(400).json({ error: lErr });
+      fields.lastName = lastName.trim();
+    }
+    if (phone !== undefined) {
+      var pErr = validatePhone(phone, false);
+      if (pErr) return res.status(400).json({ error: pErr });
+      fields.phone = phone ? phone.trim() : null;
+    }
+    if (role !== undefined && role !== target.role) {
+      if (!["admin", "user"].includes(role)) {
+        return res.status(400).json({ error: "Role must be 'admin' or 'user' (use transfer ownership to change the owner)" });
+      }
+      if (target.id === req.user.id) return res.status(400).json({ error: "You can't change your own role" });
+      if (target.role === "owner")   return res.status(403).json({ error: "The owner's role can only change by transferring ownership" });
+      // Promotion is open to any admin; demotion of an admin is owner-only (canManage already
+      // blocks non-owners from touching admins, this keeps the rule explicit)
+      if (target.role === "admin" && role === "user" && req.user.role !== "owner") {
+        return res.status(403).json({ error: "Only the owner can demote admins" });
+      }
       fields.role = role;
+    }
+    if (teamIds !== undefined && !Array.isArray(teamIds)) return res.status(400).json({ error: "teamIds must be an array" });
+    if (!(await checkOrgIds(req.user.orgId, [], asArray(teamId).concat(teamIds || [])))) {
+      return res.status(400).json({ error: "Unknown team" });
     }
     if (teamId !== undefined) fields.teamId = teamId || null;
     const updated = await updateUser(req.params.id, req.user.orgId, fields);
+    if (fields.role === "user") {
+      // A demoted admin no longer administers any team
+      await removeTeamAdminEverywhere(req.params.id);
+    }
     if (teamIds !== undefined) {
       await setUserTeams(req.params.id, teamIds);
     }
-    const { passwordHash: _, ...safe } = updated;
-    res.json(safe);
+    res.json(stripSecrets(updated));
   } catch (err) { next(err); }
 });
 
@@ -95,6 +137,14 @@ router.post("/users/:id/reset-password", async function(req, res, next) {
     const target = await findUserById(req.params.id);
     if (!target || target.orgId !== req.user.orgId) {
       return res.status(404).json({ error: "User not found" });
+    }
+    // Resetting your own password here would skip the current-password check — a stolen
+    // session could lock the real owner out for good
+    if (target.id === req.user.id) {
+      return res.status(400).json({ error: "You can't reset your own password here" });
+    }
+    if (!canManage(req.user, target)) {
+      return res.status(403).json({ error: "Only the owner can reset an admin's password" });
     }
     const { password } = req.body || {};
     var pwErr = validatePassword(password);
@@ -116,7 +166,77 @@ router.delete("/users/:id", async function(req, res, next) {
     if (target.id === req.user.id) {
       return res.status(400).json({ error: "Cannot delete your own account" });
     }
+    if (target.role === "owner") {
+      return res.status(403).json({ error: "The owner can't be deleted" });
+    }
+    if (!canManage(req.user, target)) {
+      return res.status(403).json({ error: "Only the owner can delete admins" });
+    }
     await deleteUser(req.params.id, req.user.orgId);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /api/admin/transfer-ownership  { userId } — owner only; the old owner becomes an admin
+router.post("/transfer-ownership", async function(req, res, next) {
+  try {
+    if (req.user.role !== "owner") {
+      return res.status(403).json({ error: "Only the owner can transfer ownership" });
+    }
+    const { userId } = req.body || {};
+    const target = userId ? await findUserById(userId) : null;
+    if (!target || target.orgId !== req.user.orgId) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    if (target.id === req.user.id) return res.status(400).json({ error: "You already own this organization" });
+    try {
+      await transferOwnership(req.user.orgId, req.user.id, target.id);
+    } catch (err) {
+      // Concurrent transfer: either we lost owner mid-request or the unique index caught a race
+      if (err.code === "NOT_OWNER" || err.code === "23505") return res.status(409).json({ error: "Ownership changed — reload and try again" });
+      throw err;
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ─── SHARE CODES ──────────────────────────────────────────────────────────────
+
+// GET /api/admin/invites
+router.get("/invites", async function(req, res, next) {
+  try {
+    res.json(await getOrgInvites(req.user.orgId));
+  } catch (err) { next(err); }
+});
+
+// POST /api/admin/invites  { expiresInDays?: 1..365 | null, maxUses?: 1..1000 | null }
+// Omitted expiresInDays defaults to 7 days; a never-expiring code needs an explicit null
+router.post("/invites", async function(req, res, next) {
+  try {
+    const body = req.body || {};
+    const expiresInDays = body.expiresInDays === undefined ? 7 : body.expiresInDays;
+    const maxUses = body.maxUses;
+    if (expiresInDays != null && !(Number.isInteger(expiresInDays) && expiresInDays >= 1 && expiresInDays <= 365)) {
+      return res.status(400).json({ error: "expiresInDays must be a whole number from 1 to 365" });
+    }
+    if (maxUses != null && !(Number.isInteger(maxUses) && maxUses >= 1 && maxUses <= 1000)) {
+      return res.status(400).json({ error: "maxUses must be a whole number from 1 to 1000" });
+    }
+    const invite = await createInvite({
+      orgId:     req.user.orgId,
+      createdBy: req.user.id,
+      expiresAt: expiresInDays ? Date.now() + expiresInDays * 24 * 60 * 60 * 1000 : null,
+      maxUses:   maxUses || null,
+    });
+    res.status(201).json(invite);
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/admin/invites/:id — revoke (kept for the history list)
+router.delete("/invites/:id", async function(req, res, next) {
+  try {
+    const ok = await revokeInvite(req.params.id, req.user.orgId);
+    if (!ok) return res.status(404).json({ error: "Share code not found" });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -137,8 +257,12 @@ router.post("/teams", async function(req, res, next) {
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "Team name is required" });
     }
-    if (!adminIds || !adminIds.length) {
+    if (!Array.isArray(adminIds) || !adminIds.length) {
       return res.status(400).json({ error: "At least one admin must be assigned to a team" });
+    }
+    if (memberIds != null && !Array.isArray(memberIds)) return res.status(400).json({ error: "memberIds must be an array" });
+    if (!(await checkOrgIds(req.user.orgId, adminIds.concat(memberIds || []), []))) {
+      return res.status(400).json({ error: "Unknown user" });
     }
     const team = await createTeam({ orgId: req.user.orgId, name: name.trim(), adminIds });
     if (memberIds !== undefined) {
@@ -160,8 +284,12 @@ router.put("/teams/:id", async function(req, res, next) {
       return res.status(404).json({ error: "Team not found" });
     }
     const { name, adminIds, memberIds } = req.body || {};
-    if (adminIds !== undefined && (!adminIds || !adminIds.length)) {
+    if (adminIds !== undefined && (!Array.isArray(adminIds) || !adminIds.length)) {
       return res.status(400).json({ error: "At least one admin must be assigned to a team" });
+    }
+    if (memberIds != null && !Array.isArray(memberIds)) return res.status(400).json({ error: "memberIds must be an array" });
+    if (!(await checkOrgIds(req.user.orgId, (adminIds || []).concat(memberIds || []), []))) {
+      return res.status(400).json({ error: "Unknown user" });
     }
     const updated = await updateTeam(req.params.id, req.user.orgId, { name, adminIds });
     if (memberIds !== undefined) {

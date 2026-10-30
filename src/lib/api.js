@@ -56,10 +56,17 @@ async function handle401(r) {
   var e = new Error("401"); e.status = 401; throw e;
 }
 
+// Throws an Error carrying the HTTP status and the server's { error } message when present
+async function apiError(r) {
+  var msg = "API " + r.status;
+  try { var body = await r.json(); if (body && body.error) msg = body.error; } catch (_) {}
+  var e = new Error(msg); e.status = r.status; throw e;
+}
+
 export async function apiGet(path) {
   const r = await fetchWithTimeout(API_BASE + path, { credentials:"include", headers: authHeaders() });
   if (r.status === 401) return handle401(r);
-  if (!r.ok) { var e = new Error("API " + r.status); e.status = r.status; throw e; }
+  if (!r.ok) return apiError(r);
   return r.json();
 }
 export async function apiPut(path, body) {
@@ -68,7 +75,7 @@ export async function apiPut(path, body) {
     body: JSON.stringify(body), credentials:"include"
   });
   if (r.status === 401) return handle401(r);
-  if (!r.ok) { var e = new Error("API " + r.status); e.status = r.status; throw e; }
+  if (!r.ok) return apiError(r);
   return r.json();
 }
 export async function apiPost(path, body) {
@@ -77,7 +84,7 @@ export async function apiPost(path, body) {
     body: JSON.stringify(body), credentials:"include"
   });
   if (r.status === 401) return handle401(r);
-  if (!r.ok) { var e = new Error("API " + r.status); e.status = r.status; throw e; }
+  if (!r.ok) return apiError(r);
   return r.json();
 }
 export async function apiDel(path) {
@@ -85,7 +92,7 @@ export async function apiDel(path) {
     method:"DELETE", headers: authHeaders(), credentials:"include"
   });
   if (r.status === 401) return handle401(r);
-  if (!r.ok) { var e = new Error("API " + r.status); e.status = r.status; throw e; }
+  if (!r.ok) return apiError(r);
   return r.json();
 }
 
@@ -101,4 +108,38 @@ export function apiPostWithRetry(path, body, attempts) {
     });
   }
   return attempt(1);
+}
+
+// ─── BINARY (session audio) ───────────────────────────────────────────────────
+// GET a binary resource as { blob, headers }. Uses the Authorization header (not just the cookie)
+// so cross-site deployments (Vercel → Render) work even when third-party cookies are blocked.
+export async function apiGetBlob(path) {
+  const r = await fetchWithTimeout(API_BASE + path, { credentials:"include", headers: authHeaders() }, 120000);
+  if (r.status === 401) return handle401(r);
+  if (!r.ok) return apiError(r);
+  return { blob: await r.blob(), headers: r.headers };
+}
+
+// PUT a Blob with upload progress (fetch can't report upload progress, XHR can).
+// onProgress receives 0..1. Resolves with the parsed JSON response.
+export function apiPutBlob(path, blob, onProgress) {
+  return new Promise(function(resolve, reject) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("PUT", API_BASE + path);
+    xhr.withCredentials = true;
+    xhr.timeout = 10 * 60 * 1000;
+    var h = authHeaders({ "Content-Type": blob.type || "application/octet-stream" });
+    Object.keys(h).forEach(function(k) { xhr.setRequestHeader(k, h[k]); });
+    if (onProgress) xhr.upload.onprogress = function(e) { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = function() {
+      var body = null;
+      try { body = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(body);
+      if (xhr.status === 401 && _onUnauth) _onUnauth();
+      var e = new Error((body && body.error) || ("API " + xhr.status)); e.status = xhr.status; reject(e);
+    };
+    xhr.onerror   = function() { reject(new Error("Network error")); };
+    xhr.ontimeout = function() { reject(new Error("Upload timed out")); };
+    xhr.send(blob);
+  });
 }

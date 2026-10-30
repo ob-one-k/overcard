@@ -5,6 +5,7 @@ import { TypeBadge, SectionHdr, IntendedBadge, Handle } from "./ui";
 import { TipCtx, OverviewEditor, RichPromptDisplay } from "./Tooltip";
 import { parseRichText, stripMarkup } from "../lib/richtext";
 import { INFL_MAP, uid } from "../lib/constants";
+import { getParents } from "../lib/cardGraph";
 
 // ─── RICH PROMPT EDITOR ───────────────────────────────────────────────────────
 // contentEditable-based editor — renders formatted text inline, no raw markup.
@@ -465,7 +466,13 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 }
 
 // ─── CARD EDITOR SHEET ────────────────────────────────────────────────────────
-export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo, inline, navDir }) {
+// staged      — rendered inside CardStage (desktop/tablet): the stage shows the
+//               parents, so the "Linked From" pills are hidden.
+// navRef      — (staged) ref the stage calls to navigate away; routed through the
+//               same save-then-navigate path as the "Linked From" pills.
+// onFormChange— (staged) receives the live form when its answers/type change so
+//               the stage can preview unsaved response links.
+export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedType, onSave, onDelete, onClose, onNavigateTo, onSaveAndNavigateTo, inline, navDir, staged, navRef, onFormChange }) {
   var isBlank = !card.prompt && !card.title;
   var [form, setForm] = useState({
     id: card.id || uid(),
@@ -503,9 +510,22 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
     return c.intendedPath && (c.answers || []).some(function(a){ return a.next === form.id; });
   });
   var canEnableIntended = isRootCard || hasIntendedParent;
-  var linkedFromCards = Object.values(allCards || {}).filter(function(c) {
-    return c.id !== form.id && (c.answers||[]).some(function(a){ return a.next === form.id; });
-  });
+  var linkedFromCards = getParents(allCards, form.id).map(function(p){ return p.card; });
+
+  // Stage hooks — keep the stage's view of this card in sync with unsaved edits,
+  // and let it navigate through save-then-navigate. An untouched new card is
+  // discarded rather than saved blank.
+  useEffect(function() {
+    if (onFormChange) onFormChange(form);
+  }, [form.answers, form.type]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (navRef) {
+    navRef.current = function(target, dir) {
+      var untouched = isBlank && !form.title.trim() && !stripMarkup(form.prompt).trim();
+      if (untouched && onNavigateTo) onNavigateTo(target, dir);
+      else if (onSaveAndNavigateTo) onSaveAndNavigateTo(form, target, dir);
+      else if (onNavigateTo) onNavigateTo(target, dir);
+    };
+  }
 
   // ── When inline=true: skip fixed overlay + backdrop + Handle; fill height directly ──
   // navDir drives the card-swap animation: "forward" | "back" | null (regular open)
@@ -542,7 +562,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
         </div>
         <div style={{overflowY:"auto",flex:1,padding:contentPad}}>
           {/* Linked From — cards that have an answer pointing to this card */}
-          {linkedFromCards.length > 0 && (
+          {!staged && linkedFromCards.length > 0 && (
             <div style={{marginBottom:14}}>
               <label style={labelSt()}>Linked From</label>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>

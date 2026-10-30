@@ -11,6 +11,7 @@ const authRoutes    = require("./routes/authRoutes");
 const deckRoutes    = require("./routes/deckRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
 const adminRoutes   = require("./routes/adminRoutes");
+const orgRoutes     = require("./routes/orgRoutes");
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -31,6 +32,8 @@ var corsOrigin = isDev
 app.use(cors({
   origin: corsOrigin,
   credentials: true,
+  // Lets the cross-origin (Vercel) client read the stored recording length
+  exposedHeaders: ["X-Audio-Duration-Ms", "Content-Range", "Accept-Ranges"],
 }));
 
 app.use(express.json({ limit: "10mb" }));
@@ -41,6 +44,7 @@ app.use("/api/auth",     authRoutes);
 app.use("/api/decks",    deckRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/admin",    adminRoutes);
+app.use("/api/org",      orgRoutes);
 
 app.get("/api/health", async function(req, res, next) {
   try {
@@ -71,6 +75,13 @@ if (fs.existsSync(DIST_DIR)) {
 
 // ─── CENTRAL ERROR HANDLER ───────────────────────────────────────────────────
 app.use(function(err, req, res, next) {
+  // body-parser errors (malformed JSON, payload too large) carry a 4xx status — pass it through
+  if (err && err.status >= 400 && err.status < 500 && err.expose) {
+    if (!res.headersSent) {
+      res.status(err.status).json({ error: err.status === 413 ? "Upload is too large" : "Invalid request body" });
+    }
+    return;
+  }
   console.error(err);
   if (!res.headersSent) {
     res.status(500).json({ error: "Internal server error" });

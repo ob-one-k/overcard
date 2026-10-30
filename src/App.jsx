@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR, uid } from "./lib/constants";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole } from "./lib/constants";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
@@ -10,6 +10,7 @@ import { PlayTab } from "./components/Play";
 import { SessionReview, SessionsTab, SessionAnalytics } from "./components/Sessions";
 import { CardsTab, ObjectionsTab } from "./components/Cards";
 import { DeckSwitcherSheet, LoginScreen, ProfileSheet, AdminPanel } from "./components/Panels";
+import { SignupScreen } from "./components/Signup";
 import { HomeTab } from "./components/Home";
 import { HomeDesktop } from "./components/desktop/HomeDesktop";
 import { CommandPalette } from "./components/CommandPalette";
@@ -50,6 +51,17 @@ export default function App() {
   var [serverDown,  setServerDown]  = useState(false); // backend unreachable / erroring during auth check
   var [slowServer,  setSlowServer]  = useState(false); // auth check taking long (e.g. free-tier cold start)
   var [authAttempt, setAuthAttempt] = useState(0);
+  // Invite links look like /?join=ABCD2345 — open straight into signup with the code filled in
+  var [joinCode]   = useState(function() {
+    try { return new URLSearchParams(window.location.search).get("join") || ""; } catch (_) { return ""; }
+  });
+  var [showSignup, setShowSignup] = useState(!!joinCode);
+
+  function handleLogin(u) {
+    setKickReason(null); setShowSignup(false); setAuthUser(u);
+    // Drop ?join= so a reload doesn't reopen signup
+    if (joinCode) { try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {} }
+  }
 
   // Only 401/403 mean "logged out". Network errors, timeouts and 5xx mean the server
   // is unavailable — show a retry screen instead of hanging or bouncing to login.
@@ -114,10 +126,18 @@ export default function App() {
       <button onClick={retryAuth} style={solidBtn("#1565C0")}>Retry</button>
     </div>
   );
+  if (!authUser && showSignup) return (
+    <SignupScreen
+      initialCode={joinCode}
+      onLogin={handleLogin}
+      onBack={function(){ setShowSignup(false); }}
+    />
+  );
   if (!authUser) return (
     <LoginScreen
       kickReason={kickReason}
-      onLogin={function(u){ setKickReason(null); setAuthUser(u); }}
+      onLogin={handleLogin}
+      onShowSignup={function(){ setShowSignup(true); }}
     />
   );
   return <MainApp authUser={authUser} onLogout={function(){ setStoredToken(null); setAuthUser(false); }}/>;
@@ -125,8 +145,14 @@ export default function App() {
 
 // ─── APP ────────────────────────────────────────────────────────────────────
 function MainApp({ authUser, onLogout }) {
-  var desktop     = useDesktop();
-  var TABS        = authUser.role === "admin" ? ADMIN_TABS : USER_TABS;
+  var layout      = useDesktop();
+  // Tablet = compact desktop: hand the context isDesktop:true so every
+  // `isDesktop ? <XDesktop/> : <XMobile/>` switch renders the desktop UI;
+  // compact-aware code reads desktop.compact / desktop.layout.
+  var desktop     = useMemo(function() {
+    return layout.layout === "tablet" ? Object.assign({}, layout, { isDesktop: true }) : layout;
+  }, [layout]);
+  var TABS        = isAdminRole(authUser.role) ? ADMIN_TABS : USER_TABS;
   var [decks,     setDecks]    = useState([]);
   var [activeId,  setActiveId] = useState("d1");
   var [tab,       setTab]      = useState(function() {
@@ -187,13 +213,13 @@ function MainApp({ authUser, onLogout }) {
   useEffect(function() {
     loadDecks();
     refreshOrgUsers();
-    if (authUser.role === "admin") {
+    if (isAdminRole(authUser.role)) {
       refreshOrgTeams();
     }
   }, []);
 
   function refreshOrgUsers() {
-    var url = authUser.role === "admin" ? "/admin/users" : "/sessions/org-users";
+    var url = isAdminRole(authUser.role) ? "/admin/users" : "/sessions/org-users";
     apiGet(url).then(function(u){ setOrgUsers(u); }).catch(function(){});
   }
   function refreshOrgTeams() {
@@ -306,6 +332,12 @@ function MainApp({ authUser, onLogout }) {
 
   // ── Tooltip context ───────────────────────────────────────────────────────────
   var [activeTip, setActiveTip] = useState(null);
+  // Empty-org state: an admin names the first deck before the main app can render
+  var [firstDeckName, setFirstDeckName] = useState("");
+  function signOut() {
+    apiPost("/auth/logout", {}).catch(function(){});
+    onLogout();
+  }
   var tipCtxVal = { activeTip, setActiveTip };
   function handleAppClick() { setActiveTip(null); }
 
@@ -333,12 +365,29 @@ function MainApp({ authUser, onLogout }) {
     );
   }
   if (!deck) {
+    var canCreate = isAdminRole(authUser.role);
     return (
-      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
-        <div style={{fontSize:48}}>⚠️</div>
-        <div style={{color:"rgba(255,255,255,.5)",fontSize:13,textAlign:"center",lineHeight:1.7}}>
-          No decks available.<br/>Ask your admin to create a deck.
-        </div>
+      <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"'Inter',sans-serif",padding:24,color:"#fff"}}>
+        <div style={{fontSize:48}}>{canCreate ? "🃏" : "⚠️"}</div>
+        {canCreate ? (
+          <form onSubmit={function(e){
+              e.preventDefault();
+              if (!firstDeckName.trim()) return;
+              addDeck({ name:firstDeckName.trim(), icon:"💼", color:"#F5A623", visibility:"public", accessList:[], rootCard:null, cards:{}, objStacks:[] });
+            }}
+            style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:12,textAlign:"center"}}>
+            <div style={{fontSize:20,fontWeight:700,fontFamily:"'Lora',serif"}}>Welcome{authUser.orgName ? " to " + authUser.orgName : ""}</div>
+            <div style={{color:"rgba(255,255,255,.5)",fontSize:14,lineHeight:1.6}}>Create your first sales deck to get started. You can invite your team from the Admin tab afterwards.</div>
+            <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound Pitch"
+              autoFocus style={inputSt({marginBottom:0})}/>
+            <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn("#A8FF3E")}>Create deck</button>
+          </form>
+        ) : (
+          <div style={{color:"rgba(255,255,255,.5)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
+            No decks available yet.<br/>Ask your admin to create a deck.
+          </div>
+        )}
+        <button onClick={signOut} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>Sign out</button>
       </div>
     );
   }
@@ -389,7 +438,7 @@ function MainApp({ authUser, onLogout }) {
           onUpsert={upsertCard}
           onDelete={deleteCard}
           onUpdateDeck={updateDeck}
-          readOnly={authUser.role !== "admin"}
+          readOnly={!isAdminRole(authUser.role)}
         />
       )}
       {tab==="objections" && (
@@ -397,10 +446,10 @@ function MainApp({ authUser, onLogout }) {
           key={deck.id+"-obj"}
           deck={deck}
           onUpdateDeck={updateDeck}
-          readOnly={authUser.role !== "admin"}
+          readOnly={!isAdminRole(authUser.role)}
         />
       )}
-      {tab==="admin" && authUser.role === "admin" && (
+      {tab==="admin" && isAdminRole(authUser.role) && (
         <AdminPanel
           authUser={authUser}
           orgUsers={orgUsers}
@@ -436,7 +485,7 @@ function MainApp({ authUser, onLogout }) {
           @keyframes pulse     {0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 5px transparent}100%{box-shadow:0 0 0 0 transparent}}
           button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
           button:not(:disabled):active{transform:scale(0.92)!important;filter:brightness(0.80);}
-          button:not(:disabled):hover{filter:brightness(1.12);}
+          @media (hover:hover){button:not(:disabled):hover{filter:brightness(1.12);}}
           button:disabled{opacity:0.45!important;cursor:not-allowed;}
           input,textarea,select{-webkit-appearance:none;}
           input::placeholder,textarea::placeholder{color:rgba(255,255,255,.22);}
@@ -507,7 +556,7 @@ function MainApp({ authUser, onLogout }) {
 
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <button onClick={function(){ setShowProfile(true); }}
-                style={{width:34,height:34,borderRadius:"50%",background:authUser.role==="admin"?"rgba(168,255,62,.12)":"rgba(255,255,255,.06)",border:"1px solid "+(authUser.role==="admin"?"rgba(168,255,62,.3)":"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,cursor:"pointer",color:authUser.role==="admin"?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700}}
+                style={{width:34,height:34,borderRadius:"50%",background:isAdminRole(authUser.role)?"rgba(168,255,62,.12)":"rgba(255,255,255,.06)",border:"1px solid "+(isAdminRole(authUser.role)?"rgba(168,255,62,.3)":"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,cursor:"pointer",color:isAdminRole(authUser.role)?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700}}
                 title="Profile">
                 {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
               </button>
@@ -541,7 +590,7 @@ function MainApp({ authUser, onLogout }) {
             onSelect={switchDeck}
             onAddDeck={addDeck}
             onClose={function(){setShowDS(false);}}
-            isAdmin={authUser.role === "admin"}
+            isAdmin={isAdminRole(authUser.role)}
             onEditDeck={editDeckMeta}
             orgUsers={orgUsers}
             orgTeams={orgTeams}

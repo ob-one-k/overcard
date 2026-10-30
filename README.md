@@ -6,6 +6,7 @@ A sales pitch deck training platform. Build structured call flows with branching
 
 - **Play Mode** — Navigate through pitch decks in live or practice sessions with real-time card flow, objection handling, breadcrumb navigation, and quick notes
 - **Session Recording** — Every session captures visit events, timing, card paths, notes, and outcome (sold/booked/abandoned/completed)
+- **Call Audio** — Optional audio recording from any input device (built-in, headset, USB, Bluetooth), plus the call's tab/system audio on desktop Chrome/Edge. Recordings are stored with the session, so managers can listen from any device: the full call start to finish, or one card's clip at a time
 - **Cards** — Create pitch, discovery, and close cards with rich-text prompts, inflection delivery cues, branching response paths, and intended path marking
 - **Objection Stacks** — Build reusable objection handling flows with custom icons, entry cards, and configurable post-resolution routing (return to current card or jump to a specific target)
 - **Session Review** — Four-tab analysis: overview stats, visit path timeline, notes transcript, and feedback thread
@@ -14,7 +15,9 @@ A sales pitch deck training platform. Build structured call flows with branching
 - **Feedback** — Admins and share recipients can leave card-specific or general feedback on sessions
 - **Tree Viewer** — Collapsible hierarchical card tree with per-node expand/collapse (▶/▼), intended path highlighting, loop-back detection, merge-point markers, orphan identification, and pinch/ctrl+scroll zoom
 - **Swimlane Viewer** — Horizontal type-based lane layout (pitch / discovery / close / objection) with bezier edge routing, compact mode at low zoom, and click-to-select/edit card interaction
-- **Admin Panel** — Manage users (create, edit, delete, password reset) and teams (create, edit, assign admins/members)
+- **Sign Up** — Employees join their organization with an admin-issued share code (or invite link `/?join=CODE`); new organizations are created with the server's master code, and the creator becomes the owner
+- **Admin Panel** — Manage users (create, edit, promote/demote, delete, password reset), teams, share codes, and organization details
+- **Roles** — Owner (one per org; edits org details, demotes admins, transfers ownership), Admin (decks, users, teams, share codes), User
 - **Deck Management** — Multiple decks per org with color, icon, and visibility settings (public/private with team/user access controls)
 - **Home Tab** — Performance dashboard showing win rates, average call duration, intended path adherence, top cards, top objections, and per-deck breakdowns with team sub-tabs
 - **Inflection System** — 20 delivery cues across 5 categories (pace, tone, attitude, rhetorical, personality) embedded in card prompts via rich-text markup
@@ -68,7 +71,7 @@ React 19 (Vite)  ──▶  Express REST API  ──▶  PostgreSQL (pg Pool)
 ```
 
 - **Frontend:** Modular React app. `src/App.jsx` is the shell; components in `src/components/` (9 files), shared code in `src/lib/` (4 files). All styling via JS objects — no CSS files.
-- **Backend:** Express with JWT cookie authentication, role-based authorization (admin/user), and PostgreSQL database via async `pg` Pool.
+- **Backend:** Express with JWT cookie authentication, role-based authorization (owner/admin/user), and PostgreSQL database via async `pg` Pool.
 - **Dev proxy:** Vite proxies `/api/*` to Express on port 3001 during development.
 - **Production:** Express serves the built `dist/` directory and handles API routes on a single port.
 
@@ -102,22 +105,25 @@ overcard/
 │   ├── index.js            # Express app, middleware, route mounting
 │   ├── db.js               # PostgreSQL schema init, pool, query functions
 │   ├── auth.js             # JWT, bcrypt, cookie, auth middleware
+│   ├── validate.js         # Input validation (names, email, phone, password, org fields)
 │   ├── seed.js             # Database seeder with demo data
 │   └── routes/
-│       ├── authRoutes.js   # Login, logout, refresh, me
+│       ├── authRoutes.js   # Login, logout, refresh, me, signup, create-org
+│       ├── orgRoutes.js    # Organization profile (read: members, edit: owner)
 │       ├── deckRoutes.js   # Deck CRUD + access control
 │       ├── sessionRoutes.js # Sessions, feedback, sharing
-│       └── adminRoutes.js  # User and team management
+│       └── adminRoutes.js  # Users, roles, ownership transfer, share codes, teams
 └── render.yaml             # Render Blueprint (web service + PostgreSQL)
 ```
 
 ## Database
 
-PostgreSQL database with 10 tables supporting multi-tenant organization structure:
+PostgreSQL database with 11 tables supporting multi-tenant organization structure:
 
-- **orgs** — Organizations
+- **orgs** — Organizations (name, industry, website, phone, address)
+- **org_invites** — Share codes for joining an org (expiry, max uses, revocation)
 - **teams** — Teams per org
-- **users** — User accounts with roles (admin/user)
+- **users** — User accounts (first/last name, email, phone) with roles (owner/admin/user; one owner per org)
 - **team_admins** / **user_teams** — Team membership and admin assignments
 - **decks** — Sales pitch decks with JSONB card and objection data
 - **deck_access** — Visibility controls for private decks
@@ -129,9 +135,10 @@ Schema is auto-initialized on server startup via `initSchema()`. JSONB columns a
 
 ## Authentication
 
-JWT tokens stored in HttpOnly cookies. Two roles:
+JWT tokens stored in HttpOnly cookies. Three roles:
 
-- **Admin** — Full access: create/edit/delete decks, manage users and teams, view all org sessions
+- **Owner** — Everything an admin can do, plus: edit organization details, demote admins, manage other admins, transfer ownership. Exactly one per org (the org's creator).
+- **Admin** — Create/edit/delete decks, manage users and teams, promote users to admin, generate share codes, view all org sessions
 - **User** — Play sessions, view cards and objections (read-only), share sessions, leave feedback on shared sessions
 
 Dev login screen provides an org picker and user quick-select for easy testing.
@@ -142,12 +149,13 @@ Dev login screen provides an org picker and user quick-select for easy testing.
 
 | Group | Endpoints |
 |-------|-----------|
-| Auth | login, logout, refresh, me |
+| Auth | login, logout, refresh, me, signup (share code), create-org (master code), invite preview |
+| Org | get profile, update (owner) |
 | Decks | list, create, update, delete, get/set access |
 | Sessions | list (filterable), upsert, delete |
 | Feedback | list, create, update, delete per session |
 | Shares | create, list, revoke per session |
-| Admin | user CRUD + password reset, team CRUD |
+| Admin | user CRUD + password reset, transfer ownership, share codes, team CRUD |
 | Health | server status check |
 
 See `CLAUDE.md` for the complete endpoint reference.
@@ -187,6 +195,7 @@ OverCard ships a `render.yaml` Blueprint that provisions a Node.js web service a
 | `JWT_SECRET` | Yes | Auto-generated by Render | App exits without it in production |
 | `NODE_ENV` | Yes | Set to `production` in render.yaml | Enables secure cookies, helmet CSP |
 | `CORS_ORIGIN` | Yes | Set manually in dashboard | Your Vercel frontend URL |
+| `MASTER_CODE` | For org sign-up | Set manually in dashboard | Secret required to create a new organization. If unset, org creation is disabled (share-code signup still works). |
 | `PORT` | No | Render sets automatically | Default: 3000 |
 
 ### Local Production Run

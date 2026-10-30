@@ -10,6 +10,7 @@ import { stripMarkup } from "../lib/richtext";
 import DesktopCtx from "../lib/DesktopCtx";
 import { CardsDesktop } from "./desktop/CardsDesktop";
 import { ObjectionsDesktop } from "./desktop/ObjectionsDesktop";
+import { CardStage } from "./CardStage";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
 // Desktop and mobile layouts are separate components so switching across the
@@ -401,6 +402,31 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
           </div>
         )}
 
+        {/* Desktop/tablet (inline): an open card is shown on the CardStage in place of the list */}
+        {inline && editCard && (
+          <CardStage
+            card={editCard}
+            cards={form.cards || {}}
+            rootCard={form.rootCard}
+            navDir={editNavDir}
+            accent={OBJ_COLOR}
+            lockedType="objection"
+            onNavigate={function(c,dir){setEditNavDir(dir||null);setEditCard(c);}}
+            onBack={function(){setEditCard(null);setEditNavDir(null);}}
+            backLabel="Stack cards"
+            renderCenter={function(c, api) {
+              return (
+                <CardEditorSheet key={c.id} card={c} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
+                  inline={true} staged={true} navDir={null} navRef={api.navRef} onFormChange={api.onFormChange}
+                  onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);setEditNavDir(null);}}
+                  onNavigateTo={function(t,dir){setEditNavDir(dir||null);setEditCard(t);}}
+                  onSaveAndNavigateTo={upsertCardAndNavigate}/>
+              );
+            }}
+          />
+        )}
+
+        {!(inline && editCard) && <>
         <div style={{padding:"10px 14px 8px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
           <div style={{display:"flex",alignItems:"center",gap:7}}>
             <div style={{display:"flex",background:"rgba(255,255,255,.05)",borderRadius:10,padding:2,gap:1,flexShrink:0}}>
@@ -460,6 +486,7 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
             </div>
           </div>
         )}
+        </>}
 
         <div style={{borderTop:"1px solid rgba(255,255,255,.07)"}}>
           {/* After-resolution target */}
@@ -498,7 +525,7 @@ export function ObjStackEditor({ stack, onSave, onDelete, onClose, initialEditCa
         </div>
       </div>
 
-      {editCard && <CardEditorSheet key={editCard.id} card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
+      {editCard && !inline && <CardEditorSheet key={editCard.id} card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
         navDir={editNavDir}
         onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);setEditNavDir(null);}}
         onNavigateTo={function(c,dir){setEditNavDir(dir||null);setEditCard(c);}}

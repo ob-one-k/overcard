@@ -277,6 +277,19 @@ function generateUserSessions(user, persona, deckConfigs, orgId) {
 
 // ─── SEED HELPERS ─────────────────────────────────────────────────────────────
 // Compute a deterministic hash of an object for change detection
+function splitName(displayName) {
+  var i = displayName.indexOf(" ");
+  return i === -1 ? { first: displayName, last: "" } : { first: displayName.slice(0, i), last: displayName.slice(i + 1) };
+}
+
+// An org can have only one owner — if someone else already owns it (e.g. after an ownership
+// transfer), seed the account as a plain admin instead of violating the unique index
+async function seedRole(orgId, userId, role) {
+  if (role !== "owner") return role;
+  var other = await pool.query('SELECT 1 FROM users WHERE "orgId"=$1 AND role=\'owner\' AND id<>$2', [orgId, userId]);
+  return other.rows.length ? "admin" : "owner";
+}
+
 function seedHash(obj) {
   return crypto.createHash("md5").update(JSON.stringify(obj)).digest("hex");
 }
@@ -391,18 +404,20 @@ for (var i = 0; i < TEAMS.length; i++) {
 
 // ─── ADMINS ───────────────────────────────────────────────────────────────────
 const ADMINS = [
-  { id: "u_alex",   email: "alex@apexsales.com",   displayName: "Alex Mercer",   teamAdmin: "team_alpha" },
+  { id: "u_alex",   email: "alex@apexsales.com",   displayName: "Alex Mercer",   teamAdmin: "team_alpha", role: "owner" },
   { id: "u_jordan", email: "jordan@apexsales.com",  displayName: "Jordan Rivera", teamAdmin: "team_beta"  },
   { id: "u_sam",    email: "sam@apexsales.com",     displayName: "Sam Patel",     teamAdmin: "team_gamma" },
 ];
 for (var i = 0; i < ADMINS.length; i++) {
   var a = ADMINS[i];
   var aStatus = await seedUpsert("users", a.id,
-    { email: a.email, displayName: a.displayName, role: "admin", teamId: null },
+    { email: a.email, displayName: a.displayName, role: a.role || "admin", teamId: null },
     async function() {
+      var role = await seedRole(ORG_ID, a.id, a.role || "admin");
+      var nm   = splitName(a.displayName);
       await pool.query(
-        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6) ON CONFLICT (id) DO UPDATE SET "teamId"=NULL,email=$3,"displayName"=$5,role=\'admin\'',
-        [a.id, ORG_ID, a.email, PW_HASH, a.displayName, now]
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,$7,$8,$9,$6) ON CONFLICT (id) DO UPDATE SET "teamId"=NULL,email=$3,"displayName"=$5,"firstName"=$7,"lastName"=$8,role=$9',
+        [a.id, ORG_ID, a.email, PW_HASH, a.displayName, now, nm.first, nm.last, role]
       );
     },
     async function() {
@@ -435,8 +450,8 @@ for (var i = 0; i < USERS.length; i++) {
     { email: u.email, displayName: u.displayName, role: "user", teamId: u.teamId },
     async function() {
       await pool.query(
-        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7) ON CONFLICT (id) DO UPDATE SET "teamId"=$3,email=$4,"displayName"=$6,role=\'user\'',
-        [u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, now]
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$8,$9,\'user\',$7) ON CONFLICT (id) DO UPDATE SET "teamId"=$3,email=$4,"displayName"=$6,"firstName"=$8,"lastName"=$9,role=\'user\'',
+        [u.id, ORG_ID, u.teamId, u.email, PW_HASH, u.displayName, now, splitName(u.displayName).first, splitName(u.displayName).last]
       );
     },
     async function() {
@@ -737,17 +752,19 @@ for (var i = 0; i < M_TEAMS.length; i++) {
 }
 
 var M_ADMINS = [
-  { id: "u_casey", email: "casey@meridiangroup.com", displayName: "Casey Wright", teamAdmin: "team_north" },
+  { id: "u_casey", email: "casey@meridiangroup.com", displayName: "Casey Wright", teamAdmin: "team_north", role: "owner" },
   { id: "u_riley", email: "riley@meridiangroup.com", displayName: "Riley Stone",  teamAdmin: "team_south" },
 ];
 for (var i = 0; i < M_ADMINS.length; i++) {
   var a = M_ADMINS[i];
   await seedUpsert("users", a.id,
-    { email: a.email, displayName: a.displayName, role: "admin", teamId: null },
+    { email: a.email, displayName: a.displayName, role: a.role || "admin", teamId: null },
     async function() {
+      var role = await seedRole(ORG2_ID, a.id, a.role || "admin");
+      var nm   = splitName(a.displayName);
       await pool.query(
-        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,\'admin\',$6) ON CONFLICT (id) DO UPDATE SET "teamId"=NULL,email=$3,"displayName"=$5,role=\'admin\'',
-        [a.id, ORG2_ID, a.email, PW_HASH, a.displayName, m_now]
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",role,"createdAt") VALUES ($1,$2,NULL,$3,$4,$5,$7,$8,$9,$6) ON CONFLICT (id) DO UPDATE SET "teamId"=NULL,email=$3,"displayName"=$5,"firstName"=$7,"lastName"=$8,role=$9',
+        [a.id, ORG2_ID, a.email, PW_HASH, a.displayName, m_now, nm.first, nm.last, role]
       );
     },
     async function() {
@@ -771,8 +788,8 @@ for (var i = 0; i < M_USERS.length; i++) {
     { email: u.email, displayName: u.displayName, role: "user", teamId: u.teamId },
     async function() {
       await pool.query(
-        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,\'user\',$7) ON CONFLICT (id) DO UPDATE SET "teamId"=$3,email=$4,"displayName"=$6,role=\'user\'',
-        [u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, m_now]
+        'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$8,$9,\'user\',$7) ON CONFLICT (id) DO UPDATE SET "teamId"=$3,email=$4,"displayName"=$6,"firstName"=$8,"lastName"=$9,role=\'user\'',
+        [u.id, ORG2_ID, u.teamId, u.email, PW_HASH, u.displayName, m_now, splitName(u.displayName).first, splitName(u.displayName).last]
       );
     },
     async function() {

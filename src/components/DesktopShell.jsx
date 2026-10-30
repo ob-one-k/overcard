@@ -1,12 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
-import { SESS_COLOR } from "../lib/constants";
+import DesktopCtx from "../lib/DesktopCtx";
+import { isAdminRole, roleMeta } from "../lib/constants";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 
 // ─── DESKTOP SHELL ────────────────────────────────────────────────────────────
 // Root layout wrapper for desktop. Renders the sidebar + top bar + content area.
 // Top bar is tab-aware: shows tab icon + title, context zone, ⌘K, save status, profile.
+// Tablet (desktop.compact): 72px icon rail + ☰ drawer, a tighter top bar with
+// 44px touch targets, and an icon-only search button.
 export function DesktopShell({
   tabs, tab, onTabClick,
   deck, decks,
@@ -19,6 +22,9 @@ export function DesktopShell({
   tabContextData,
   children
 }) {
+  var desktop = useContext(DesktopCtx);
+  var compact = !!desktop.compact;
+  var touch   = !!desktop.isTouchPrimary;
   var [collapsed, setCollapsed] = useState(function() {
     return lsGet("overcard_sidebar_collapsed") === "true";
   });
@@ -38,9 +44,11 @@ export function DesktopShell({
         if (onOpenCommandPalette) onOpenCommandPalette();
         return;
       }
-      // Tab 1–N shortcuts: skip when typing
+      // Tab 1–N shortcuts: skip when typing, and during a session (digits pick answers then)
       var tag = e.target && e.target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.target && e.target.isContentEditable) return;
+      if (sessionActive) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       var idx = parseInt(e.key, 10);
       if (idx >= 1 && idx <= tabs.length) {
@@ -49,7 +57,7 @@ export function DesktopShell({
     }
     document.addEventListener("keydown", onKey);
     return function() { document.removeEventListener("keydown", onKey); };
-  }, [tabs, onTabClick, onOpenCommandPalette]);
+  }, [tabs, onTabClick, onOpenCommandPalette, sessionActive]);
 
   var tabAccentMap = {};
   tabs.forEach(function(t) { tabAccentMap[t.id] = t.accent; });
@@ -58,6 +66,9 @@ export function DesktopShell({
   var isMac      = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
   var cmdLabel   = isMac ? "⌘K" : "Ctrl+K";
   var ctx        = tabContextData || {};
+  var isAdmin    = isAdminRole(authUser.role);
+  var rm         = roleMeta(authUser.role);
+  var metaSt     = {fontSize:compact?12:13,color:"rgba(255,255,255,.55)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"};
 
   // ── Tab-aware context zone content ──────────────────────────────────────────
   function renderContextZone() {
@@ -67,15 +78,15 @@ export function DesktopShell({
       if (sessionActive && d.sessionName) {
         return (
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background:"#A8FF3E",animation:"savePulse 1.2s ease infinite",flexShrink:0}}/>
-            <span style={{fontSize:11,fontWeight:700,color:"#A8FF3E",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:240}}>{d.sessionName}</span>
+            <div style={{width:8,height:8,borderRadius:"50%",background:"#A8FF3E",animation:"savePulse 1.2s ease infinite",flexShrink:0}}/>
+            <span style={{fontSize:compact?14:15,fontWeight:700,color:"#A8FF3E",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:compact?260:420}}>{d.sessionName}</span>
             {d.startTs && <ElapsedTimer startTs={d.startTs}/>}
           </div>
         );
       }
       if (deck) {
         return (
-          <span style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>
+          <span style={metaSt}>
             {Object.keys(deck.cards||{}).length} cards · {(deck.objStacks||[]).length} stacks
           </span>
         );
@@ -88,7 +99,7 @@ export function DesktopShell({
       var ic = d.intendedCount;
       if (cc == null) return null;
       return (
-        <span style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>
+        <span style={metaSt}>
           {cc} card{cc!==1?"s":""}{ic != null ? " · " + ic + " intended" : ""}
         </span>
       );
@@ -99,7 +110,7 @@ export function DesktopShell({
       var hc = d.healthyCount;
       if (sc == null) return null;
       return (
-        <span style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>
+        <span style={metaSt}>
           {sc} stack{sc!==1?"s":""}
           {hc != null ? " · " + hc + " configured" : ""}
         </span>
@@ -109,7 +120,7 @@ export function DesktopShell({
     if (tab === "sessions") {
       var fc = d.filteredCount;
       if (fc != null) {
-        return <span style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>{fc} session{fc!==1?"s":""}</span>;
+        return <span style={metaSt}>{fc} session{fc!==1?"s":""}</span>;
       }
       return null;
     }
@@ -117,7 +128,7 @@ export function DesktopShell({
     if (tab === "home") {
       if (d.sessions != null) {
         return (
-          <span style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>
+          <span style={metaSt}>
             {d.sessions} session{d.sessions!==1?"s":""}
             {d.closeRate != null ? " · " + d.closeRate + "% close" : ""}
           </span>
@@ -127,7 +138,7 @@ export function DesktopShell({
     }
 
     if (tab === "admin") {
-      return <span style={{fontSize:11,color:"rgba(168,255,62,.25)",fontWeight:600,letterSpacing:.5}}>Admin Panel</span>;
+      return <span style={metaSt}>Users, teams and organisation settings</span>;
     }
 
     return null;
@@ -155,6 +166,8 @@ export function DesktopShell({
         onOpenProfile={onOpenProfile}
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
+        compact={compact}
+        touch={touch}
       />
 
       {/* ── Main content area ── */}
@@ -162,27 +175,27 @@ export function DesktopShell({
 
         {/* Top bar */}
         <div style={{
-          height:48, flexShrink:0,
-          borderBottom:"1px solid rgba(255,255,255,.06)",
+          height:compact?56:60, flexShrink:0,
+          borderBottom:"1px solid rgba(255,255,255,.07)",
           background:"rgba(8,25,55,.35)",
           backdropFilter:"blur(16px)",
           display:"flex", alignItems:"center",
-          padding:"0 16px",
-          gap:10
+          padding:compact?"0 12px 0 14px":"0 20px 0 22px",
+          gap:compact?10:14
         }}>
           {/* Tab accent bar */}
-          <div style={{width:3,height:22,borderRadius:99,background:tabAccent,flexShrink:0}}/>
+          <div style={{width:4,height:compact?22:26,borderRadius:99,background:tabAccent,flexShrink:0}}/>
 
           {/* Tab icon + title */}
           {activeTab && (
-            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-              <span style={{fontSize:14,lineHeight:1}}>{activeTab.icon}</span>
-              <span style={{fontSize:14,fontWeight:700,color:"rgba(255,255,255,.85)"}}>{activeTab.label}</span>
+            <div style={{display:"flex",alignItems:"center",gap:9,flexShrink:0}}>
+              <span aria-hidden="true" style={{fontSize:compact?18:20,lineHeight:1}}>{activeTab.icon}</span>
+              <h1 style={{margin:0,fontSize:compact?18:21,fontWeight:700,color:"#fff",letterSpacing:-.2}}>{activeTab.label}</h1>
             </div>
           )}
 
           {/* Context zone — tab-aware info */}
-          <div style={{flex:1,minWidth:0,overflow:"hidden",paddingLeft:4}}>
+          <div style={{flex:1,minWidth:0,overflow:"hidden",paddingLeft:6,borderLeft:"1px solid rgba(255,255,255,.1)",marginLeft:4,display:"flex",alignItems:"center",minHeight:24}}>
             {renderContextZone()}
           </div>
 
@@ -191,55 +204,76 @@ export function DesktopShell({
             <div style={{
               background:"rgba(239,83,80,.14)",
               border:"1px solid rgba(239,83,80,.25)",
-              borderRadius:99, padding:"3px 9px",
-              fontSize:10, color:"#EF5350",
+              borderRadius:99, padding:"4px 11px",
+              fontSize:13, fontWeight:600, color:"#EF5350",
               whiteSpace:"nowrap", flexShrink:0
             }}>
               ⚠ offline
             </div>
           )}
 
-          {/* ⌘K command palette trigger */}
-          {onOpenCommandPalette && (
+          {/* ⌘K command palette trigger — icon-only 44px button on tablet */}
+          {onOpenCommandPalette && compact && (
             <button
               onClick={onOpenCommandPalette}
+              title="Search tabs, cards and sessions"
+              aria-label="Search tabs, cards and sessions"
+              style={{
+                width:44, height:44, flexShrink:0,
+                background:"rgba(255,255,255,.06)",
+                border:"1px solid rgba(255,255,255,.1)",
+                borderRadius:12, cursor:"pointer",
+                color:"rgba(255,255,255,.7)", fontSize:18,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontFamily:"inherit"
+              }}>
+              <span aria-hidden="true">⌕</span>
+            </button>
+          )}
+          {onOpenCommandPalette && !compact && (
+            <button
+              onClick={onOpenCommandPalette}
+              title="Search tabs, cards and sessions"
               style={{
                 background:"rgba(255,255,255,.06)",
                 border:"1px solid rgba(255,255,255,.1)",
-                borderRadius:8, padding:"4px 10px",
-                cursor:"pointer", fontSize:11,
-                color:"rgba(255,255,255,.35)",
-                display:"flex", alignItems:"center", gap:5,
+                borderRadius:10, padding:"7px 10px 7px 13px",
+                cursor:"pointer", fontSize:13,
+                color:"rgba(255,255,255,.55)",
+                display:"flex", alignItems:"center", gap:10, minWidth:220,
                 fontFamily:"inherit", flexShrink:0
               }}>
-              <span style={{fontSize:12}}>⌘</span>
-              <span>{cmdLabel}</span>
+              <span aria-hidden="true" style={{fontSize:14}}>⌕</span>
+              <span style={{flex:1,textAlign:"left"}}>Search…</span>
+              <span style={{fontSize:11,fontWeight:600,border:"1px solid rgba(255,255,255,.16)",borderRadius:6,padding:"2px 7px",color:"rgba(255,255,255,.55)"}}>{cmdLabel}</span>
             </button>
           )}
 
           {/* Divider */}
-          <div style={dividerV(18)}/>
+          {!compact && <div style={dividerV(24)}/>}
 
           {/* Save status */}
-          <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+          <div role="status" style={{display:"flex",alignItems:"center",gap:7,flexShrink:0}}>
             <div style={{
-              width:6,height:6,borderRadius:"50%",
+              width:8,height:8,borderRadius:"50%",
               background:saveColor,
               animation:saveStatus==="saving"?"savePulse 1s ease infinite":undefined
             }}/>
-            <span style={{fontSize:10,color:"rgba(255,255,255,.25)",letterSpacing:.3}}>{saveLabel}</span>
+            <span style={{fontSize:compact?12:13,color:"rgba(255,255,255,.55)"}}>{saveLabel}</span>
           </div>
 
           {/* Profile avatar */}
           <button
             onClick={onOpenProfile}
+            title={(authUser.displayName || "Profile") + " · " + rm.label}
+            aria-label="Open profile"
             style={{
-              width:30,height:30,borderRadius:"50%",
-              background:authUser.role==="admin"?"rgba(168,255,62,.12)":"rgba(255,255,255,.07)",
-              border:"1px solid "+(authUser.role==="admin"?"rgba(168,255,62,.3)":"rgba(255,255,255,.12)"),
+              width:compact?44:36,height:compact?44:36,borderRadius:"50%",
+              background:isAdmin?rm.bg:"rgba(255,255,255,.07)",
+              border:"1.5px solid "+(isAdmin?rm.border:"rgba(255,255,255,.14)"),
               display:"flex",alignItems:"center",justifyContent:"center",
-              fontSize:12,fontWeight:700,cursor:"pointer",
-              color:authUser.role==="admin"?SESS_COLOR:"rgba(255,255,255,.82)",
+              fontSize:14,fontWeight:700,cursor:"pointer",
+              color:isAdmin?rm.color:"rgba(255,255,255,.85)",
               fontFamily:"inherit",flexShrink:0
             }}>
             {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
@@ -269,7 +303,7 @@ function ElapsedTimer({ startTs }) {
   var ss = elapsed % 60;
   var str = mm + ":" + (ss < 10 ? "0" : "") + ss;
   return (
-    <span style={{fontSize:10,color:"rgba(168,255,62,.6)",fontFeatureSettings:'"tnum"',letterSpacing:.5,background:"rgba(168,255,62,.08)",borderRadius:99,padding:"2px 7px",flexShrink:0}}>
+    <span style={{fontSize:13,fontWeight:600,color:"rgba(168,255,62,.85)",fontFeatureSettings:'"tnum"',letterSpacing:.5,background:"rgba(168,255,62,.1)",borderRadius:99,padding:"2px 9px",flexShrink:0}}>
       {str}
     </span>
   );

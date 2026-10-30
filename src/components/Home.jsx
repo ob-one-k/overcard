@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR } from "../lib/constants";
+import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole } from "../lib/constants";
 import { apiGet } from "../lib/api";
 import { SectionHdr, StatBox, BarRow } from "./ui";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "./Sessions";
@@ -158,7 +158,7 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
   // 2. Users with teams array from new backend: use it
   // 3. Users with only teamId/teamName (old backend or fallback): construct from that
   var myTeams;
-  if (authUser.role === "admin" && orgTeams && orgTeams.length > 0) {
+  if (isAdminRole(authUser.role) && orgTeams && orgTeams.length > 0) {
     myTeams = orgTeams.map(function(t){ return { id: t.id, name: t.name }; });
   } else if (authUser.teams && authUser.teams.length > 0) {
     myTeams = authUser.teams;

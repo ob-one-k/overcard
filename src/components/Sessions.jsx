@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, SESS_COLOR, STYPE, OBJ_COLOR } from "../lib/constants";
+import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker } from "./ui";
 import { RichPromptDisplay } from "./Tooltip";
-import { AudioPlayer } from "./AudioPlayer";
+import { useSessionAudio, AudioMiniBar, AudioPlayback, UploadNotice, wallClockToAudioMs, segColor } from "./AudioPlayer";
 import { deleteAudioBlob } from "../lib/audioStore";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
@@ -120,7 +120,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {selectedUsers.map(function(u){
                 return (
-                  <span key={u.id} style={{display:"inline-flex",alignItems:"center",gap:4,background:u.role==="admin"?"rgba(168,255,62,.12)":"rgba(0,180,255,.1)",border:"1px solid "+(u.role==="admin"?"rgba(168,255,62,.3)":"rgba(0,180,255,.25)"),borderRadius:99,padding:"3px 8px",fontSize:11,color:u.role==="admin"?SESS_COLOR:"#00B4FF"}}>
+                  <span key={u.id} style={{display:"inline-flex",alignItems:"center",gap:4,background:isAdminRole(u.role)?"rgba(168,255,62,.12)":"rgba(0,180,255,.1)",border:"1px solid "+(isAdminRole(u.role)?"rgba(168,255,62,.3)":"rgba(0,180,255,.25)"),borderRadius:99,padding:"3px 8px",fontSize:11,color:isAdminRole(u.role)?SESS_COLOR:"#00B4FF"}}>
                     {u.displayName}
                     <button onClick={function(){toggleUser(u.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"inherit",opacity:.6,fontSize:12,padding:"0 0 0 2px",fontFamily:"inherit",lineHeight:1}}>×</button>
                   </span>
@@ -139,12 +139,12 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
                 return (
                   <button key={u.id} onClick={function(){toggleUser(u.id);}}
                     style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",padding:"9px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                    <div style={{width:26,height:26,borderRadius:"50%",background:u.role==="admin"?"rgba(168,255,62,.15)":"rgba(0,180,255,.12)",border:"1px solid "+(u.role==="admin"?"rgba(168,255,62,.3)":"rgba(0,180,255,.2)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:u.role==="admin"?SESS_COLOR:"#00B4FF",flexShrink:0}}>
+                    <div style={{width:26,height:26,borderRadius:"50%",background:isAdminRole(u.role)?"rgba(168,255,62,.15)":"rgba(0,180,255,.12)",border:"1px solid "+(isAdminRole(u.role)?"rgba(168,255,62,.3)":"rgba(0,180,255,.2)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:isAdminRole(u.role)?SESS_COLOR:"#00B4FF",flexShrink:0}}>
                       {(u.displayName || "?")[0].toUpperCase()}
                     </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.displayName}</div>
-                      <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{u.role==="admin"?"admin":u.email}</div>
+                      <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{isAdminRole(u.role)?u.role:u.email}</div>
                     </div>
                     <span style={{fontSize:16,color:"rgba(255,255,255,.2)",flexShrink:0}}>+</span>
                   </button>
@@ -225,9 +225,32 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   var [showShare, setShowShare] = useState(false);
   var [pathCardIdx, setPathCardIdx] = useState(null);
   var [reviewShares, setReviewShares] = useState(null);
-  var audioSeekRef = useRef(null); // used by Path tab "▶ Segment" button
+  // Desktop renders the same review at a larger type scale; mobile sizes are unchanged
+  var desktop = useContext(DesktopCtx);
+  // Tablet (compact) uses one step less than desktop; touch gets 44px targets on the controls below
+  function fz(n) {
+    if (!desktop || !desktop.isDesktop) return n;
+    if (desktop.compact) return n <= 9 ? n + 2 : n + 1;
+    return n <= 9 ? n + 3 : n + 2;
+  }
+  var touchMin = desktop && desktop.isTouchPrimary ? 44 : undefined;
+  // One audio player shared by every tab (mini-bar, Playback, Path clips, Notes "hear this")
+  var audio = useSessionAudio(session);
+  var audioSize = desktop && desktop.isDesktop ? "lg" : undefined;
+  // Visit → its audio segment (segId is the visit's ts; older sessions match on start offset)
+  function segForVisit(x) {
+    if (audio.state !== "ready") return null;
+    for (var si = 0; si < audio.segments.length; si++) {
+      var sg = audio.segments[si];
+      if (sg.segId === x.ts || (x.audioStartMs != null && sg.startMs === x.audioStartMs && sg.cardId === x.cardId)) return sg;
+    }
+    return null;
+  }
+  function noteAudioMs(note) {
+    return audio.state === "ready" ? wallClockToAudioMs(note.ts, audio.segments) : null;
+  }
 
-  var isAdmin = !!(authUser && authUser.role === "admin");
+  var isAdmin = !!(authUser && isAdminRole(authUser.role));
   var isOwner = !!(authUser && session.userId === authUser.id);
 
   // Load shares for display in overview (owner or admin only)
@@ -238,7 +261,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
       .catch(function(){ setReviewShares([]); });
   }, [session.id]);
 
-  var st = STYPE[session.sessionType||"live"] || STYPE.live;
+  var st = STYPE[session.mode||session.sessionType||"live"] || STYPE.live;
   var v = sessionVisits(session), n = sessionNotes(session), d = sessionDurSec(session);
   var pv = v.filter(function(x){return !x.isObjCard;}), ov = v.filter(function(x){return x.isObjCard;});
   var iv = v.filter(function(x){return x.intendedPath;});
@@ -329,28 +352,31 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",borderLeft:"3px solid "+st.color,display:"flex",alignItems:"center",gap:9,flexShrink:0}}>
-        <button onClick={onBack} style={Object.assign({},iconBtn(),{padding:"5px 8px"})}>←</button>
+        <button onClick={onBack} aria-label="Back" style={Object.assign({},iconBtn(),{padding:"5px 8px",minWidth:touchMin,minHeight:touchMin})}>←</button>
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap",marginBottom:1}}>
-            <span style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.name}</span>
-            {session.sold && <span style={{fontSize:9,fontWeight:700,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>sold</span>}
-            <span style={{fontSize:9,fontWeight:700,color:st.color,background:st.bg,border:"1px solid "+st.border,padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>{st.label}</span>
-            {session._shared && <span style={{fontSize:9,color:"rgba(255,255,255,.35)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 7px",borderRadius:99}}>shared</span>}
+            <span style={{fontSize:fz(13),fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.name}</span>
+            {session.sold && <span style={{fontSize:fz(9),fontWeight:700,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>sold</span>}
+            <span style={{fontSize:fz(9),fontWeight:700,color:st.color,background:st.bg,border:"1px solid "+st.border,padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>{st.label}</span>
+            {session._shared && <span style={{fontSize:fz(9),color:"rgba(255,255,255,.35)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 7px",borderRadius:99}}>shared</span>}
           </div>
-          {session._shared && session._shareFromName && <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginBottom:1}}>From: {session._shareFromName}{session._shareContext ? " · "+session._shareContext : ""}</div>}
-          {session.description && <div style={{fontSize:10,color:"rgba(255,255,255,.32)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.description}</div>}
-          <div style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtDateTime(session.startTs)}</div>
+          {session._shared && session._shareFromName && <div style={{fontSize:fz(9),color:"rgba(255,255,255,.28)",marginBottom:1}}>From: {session._shareFromName}{session._shareContext ? " · "+session._shareContext : ""}</div>}
+          {session.description && <div style={{fontSize:fz(10),color:"rgba(255,255,255,.32)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.description}</div>}
+          <div style={{fontSize:fz(9),color:"rgba(255,255,255,.25)"}}>
+            {session.userName && <span style={{color:"rgba(255,255,255,.55)",fontWeight:600}}>👤 {session.userName} · </span>}
+            {fmtDateTime(session.startTs)}
+          </div>
         </div>
         {(isOwner || isAdmin) && (
           <div style={{display:"flex",gap:5,alignItems:"center",flexShrink:0}}>
             {reviewShares && reviewShares.length > 0 && (
               <button onClick={function(){setShowShare(true);}}
-                style={{background:"rgba(0,180,255,.12)",border:"1px solid rgba(0,180,255,.3)",borderRadius:99,padding:"4px 9px",fontSize:10,color:"#00B4FF",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+                style={{background:"rgba(0,180,255,.12)",border:"1px solid rgba(0,180,255,.3)",borderRadius:99,padding:"4px 9px",fontSize:fz(10),color:"#00B4FF",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
                 <span>👥</span><span>{reviewShares.length}</span>
               </button>
             )}
             <button onClick={function(){setShowShare(true);}}
-              style={ghostSm({fontSize:10,padding:"5px 10px"})}>Share</button>
+              style={ghostSm({fontSize:fz(10),padding:"5px 10px",minHeight:touchMin})}>Share</button>
           </div>
         )}
       </div>
@@ -361,15 +387,20 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
           var isPlaybackTab = t[0]==="playback";
           return (
             <button key={t[0]} onClick={function(){setTab(t[0]);if(isFbTab){setFeedbackSeenOnce(true);if(onMarkFeedbackSeen)onMarkFeedbackSeen(session.id);}}}
-              style={{flex:1,background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),padding:"9px 2px",cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:on?700:400,color:on?SESS_COLOR:"rgba(255,255,255,.35)",transition:"all .15s",position:"relative"}}>
+              style={{flex:1,minHeight:touchMin,background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),padding:"9px 2px",cursor:"pointer",fontFamily:"inherit",fontSize:fz(10),fontWeight:on?700:400,color:on?SESS_COLOR:"rgba(255,255,255,.35)",transition:"all .15s",position:"relative"}}>
               {t[1]}
               {isFbTab && showFbBadge && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:"#EF5350",display:"inline-block"}}/>}
-              {isPlaybackTab && session.audioSegments && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:SESS_COLOR,display:"inline-block"}}/>}
+              {isPlaybackTab && (audio.state === "ready" || session.hasAudio) && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:SESS_COLOR,display:"inline-block"}}/>}
             </button>
           );
         })}
       </div>
       {showShare && <ShareModal session={session} orgUsers={orgUsers} orgTeams={orgTeams} authUser={authUser} onClose={function(){setShowShare(false);}}/>}
+      {audio.element}
+      <AudioMiniBar ctl={audio} size={audioSize}/>
+      {tab !== "playback" && audio.upload && audio.upload.state !== "done" && (
+        <div style={{padding:"8px 14px 0",flexShrink:0}}><UploadNotice ctl={audio} size={audioSize}/></div>
+      )}
       <div style={{flex:1,overflowY:"auto",padding:"14px 14px 0"}}>
         {/* OVERVIEW */}
         {tab==="overview" && (
@@ -381,16 +412,16 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
             </div>
             <div style={{background:session.sold?"rgba(102,187,106,.08)":"rgba(255,255,255,.05)",border:"1px solid "+(session.sold?"rgba(102,187,106,.22)":"rgba(255,255,255,.07)"),borderRadius:12,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:13,fontWeight:700,color:session.sold?"#66BB6A":"rgba(255,255,255,.45)",marginBottom:2}}>{session.sold?"✓ Sold":"✗ Not sold"}</div>
-                {session.sold && session.soldCardTitle && <div style={{fontSize:10,color:"rgba(255,255,255,.32)"}}>Closed on: {session.soldCardTitle}</div>}
-                {!session.sold && lastPitch && <div style={{fontSize:10,color:"rgba(255,255,255,.28)"}}>Last card: {lastPitch.cardTitle}</div>}
+                <div style={{fontSize:fz(13),fontWeight:700,color:session.sold?"#66BB6A":"rgba(255,255,255,.45)",marginBottom:2}}>{session.sold?"✓ Sold":"✗ Not sold"}</div>
+                {session.sold && session.soldCardTitle && <div style={{fontSize:fz(10),color:"rgba(255,255,255,.32)"}}>Closed on: {session.soldCardTitle}</div>}
+                {!session.sold && lastPitch && <div style={{fontSize:fz(10),color:"rgba(255,255,255,.28)"}}>Last card: {lastPitch.cardTitle}</div>}
               </div>
-              <span style={{fontSize:10,fontWeight:700,color:reachedClose?"#66BB6A":"rgba(255,255,255,.3)",background:reachedClose?"rgba(102,187,106,.1)":"rgba(255,255,255,.05)",padding:"2px 9px",borderRadius:99,border:"1px solid "+(reachedClose?"rgba(102,187,106,.25)":"rgba(255,255,255,.07)")}}>{reachedClose?"Reached close":"No close"}</span>
+              <span style={{fontSize:fz(10),fontWeight:700,color:reachedClose?"#66BB6A":"rgba(255,255,255,.3)",background:reachedClose?"rgba(102,187,106,.1)":"rgba(255,255,255,.05)",padding:"2px 9px",borderRadius:99,border:"1px solid "+(reachedClose?"rgba(102,187,106,.25)":"rgba(255,255,255,.07)")}}>{reachedClose?"Reached close":"No close"}</span>
             </div>
             <div style={{background:"rgba(102,187,106,.06)",border:"1px solid rgba(102,187,106,.15)",borderRadius:12,padding:"12px 14px",marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:12,fontWeight:700,color:"#66BB6A"}}>★ Intended Path</span><span style={{fontSize:12,color:"#66BB6A"}}>{intPct}%</span></div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}><span style={{fontSize:fz(12),fontWeight:700,color:"#66BB6A"}}>★ Intended Path</span><span style={{fontSize:fz(12),color:"#66BB6A"}}>{intPct}%</span></div>
               <div style={{height:5,background:"rgba(255,255,255,.07)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",background:"#66BB6A",borderRadius:99,width:intPct+"%",transition:"width .4s"}}/></div>
-              <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:5}}>{iv.length} of {v.length} card visits on intended path</div>
+              <div style={{fontSize:fz(9),color:"rgba(255,255,255,.28)",marginTop:5}}>{iv.length} of {v.length} card visits on intended path</div>
             </div>
             {Object.keys(objStacks).length > 0 && (
               <div style={{marginBottom:12}}>
@@ -398,8 +429,8 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"11px 13px"}}>
                   {Object.entries(objStacks).map(function(entry, i, arr) {
                     return <div key={entry[0]} style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:i<arr.length-1?8:0,marginBottom:i<arr.length-1?8:0,borderBottom:i<arr.length-1?"1px solid rgba(255,255,255,.05)":"none"}}>
-                      <span style={{fontSize:12,color:"rgba(255,255,255,.65)"}}>{entry[0]}</span>
-                      <span style={{fontSize:10,fontWeight:700,color:OBJ_COLOR,background:"rgba(239,83,80,.1)",padding:"2px 8px",borderRadius:99}}>{entry[1]} card{entry[1]>1?"s":""}</span>
+                      <span style={{fontSize:fz(12),color:"rgba(255,255,255,.65)"}}>{entry[0]}</span>
+                      <span style={{fontSize:fz(10),fontWeight:700,color:OBJ_COLOR,background:"rgba(239,83,80,.1)",padding:"2px 8px",borderRadius:99}}>{entry[1]} card{entry[1]>1?"s":""}</span>
                     </div>;
                   })}
                 </div>
@@ -412,8 +443,8 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                   {top3.map(function(c, i) { var m=TM[c.type]||TM.pitch; var pct=Math.round(c.ms/maxMs*100); return (
                     <div key={c.title} style={{marginBottom:i<top3.length-1?10:0}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                        <div style={{display:"flex",alignItems:"center",gap:5}}><span style={{fontSize:10,color:m.color}}>■</span><span style={{fontSize:12,color:i===0?"#fff":"rgba(255,255,255,.65)",fontWeight:i===0?700:400}}>{c.title}</span></div>
-                        <span style={{fontSize:11,color:"rgba(255,255,255,.4)"}}>{fmtMs(c.ms)}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}><span style={{fontSize:fz(10),color:m.color}}>■</span><span style={{fontSize:fz(12),color:i===0?"#fff":"rgba(255,255,255,.65)",fontWeight:i===0?700:400}}>{c.title}</span></div>
+                        <span style={{fontSize:fz(11),color:"rgba(255,255,255,.4)"}}>{fmtMs(c.ms)}</span>
                       </div>
                       <div style={{height:4,background:"rgba(255,255,255,.07)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",background:m.color,borderRadius:99,width:pct+"%"}}/></div>
                     </div>
@@ -427,20 +458,20 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 {topObj && (
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:topVisitedStack?8:0}}>
                     <div>
-                      <div style={{fontSize:9,color:"rgba(239,83,80,.6)",textTransform:"uppercase",letterSpacing:.8,marginBottom:2}}>Most time in</div>
-                      <span style={{fontSize:12,color:"#fff"}}>{topObj.title}</span>
+                      <div style={{fontSize:fz(9),color:"rgba(239,83,80,.6)",textTransform:"uppercase",letterSpacing:.8,marginBottom:2}}>Most time in</div>
+                      <span style={{fontSize:fz(12),color:"#fff"}}>{topObj.title}</span>
                     </div>
-                    <span style={{fontSize:12,color:OBJ_COLOR,flexShrink:0}}>{fmtMs(topObj.ms)}</span>
+                    <span style={{fontSize:fz(12),color:OBJ_COLOR,flexShrink:0}}>{fmtMs(topObj.ms)}</span>
                   </div>
                 )}
                 {topObj && topVisitedStack && <div style={{height:1,background:"rgba(239,83,80,.15)",margin:"8px 0"}}/>}
                 {topVisitedStack && (
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <div>
-                      <div style={{fontSize:9,color:"rgba(239,83,80,.6)",textTransform:"uppercase",letterSpacing:.8,marginBottom:2}}>Most visited stack</div>
-                      <span style={{fontSize:12,color:"#fff"}}>{topVisitedStack.label}</span>
+                      <div style={{fontSize:fz(9),color:"rgba(239,83,80,.6)",textTransform:"uppercase",letterSpacing:.8,marginBottom:2}}>Most visited stack</div>
+                      <span style={{fontSize:fz(12),color:"#fff"}}>{topVisitedStack.label}</span>
                     </div>
-                    <span style={{fontSize:11,color:OBJ_COLOR,background:"rgba(239,83,80,.12)",padding:"2px 8px",borderRadius:99,flexShrink:0}}>{topVisitedStack.count} visit{topVisitedStack.count!==1?"s":""}</span>
+                    <span style={{fontSize:fz(11),color:OBJ_COLOR,background:"rgba(239,83,80,.12)",padding:"2px 8px",borderRadius:99,flexShrink:0}}>{topVisitedStack.count} visit{topVisitedStack.count!==1?"s":""}</span>
                   </div>
                 )}
               </div>
@@ -449,16 +480,16 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
               <div style={{marginBottom:12}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <SectionHdr style={{margin:0}}>Notes ({n.length})</SectionHdr>
-                  <button onClick={function(){setTab("notes");}} style={ghostSm({fontSize:10,padding:"3px 9px"})}>See all</button>
+                  <button onClick={function(){setTab("notes");}} style={ghostSm({fontSize:fz(10),padding:"3px 9px"})}>See all</button>
                 </div>
                 {n.slice(0,2).map(function(note, i) {
                   return <div key={i} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.18)",borderRadius:11,padding:"10px 13px",marginBottom:7}}>
-                    <div style={{fontSize:10,fontWeight:700,color:SESS_COLOR,marginBottom:3}}>{note.cardTitle}</div>
-                    <div style={{fontSize:12,color:"rgba(255,255,255,.82)",lineHeight:1.5}}>{note.text}</div>
+                    <div style={{fontSize:fz(10),fontWeight:700,color:SESS_COLOR,marginBottom:3}}>{note.cardTitle}</div>
+                    <div style={{fontSize:fz(12),color:"rgba(255,255,255,.82)",lineHeight:1.5}}>{note.text}</div>
                   </div>;
                 })}
               </div>
-            ) : <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"12px 0",fontSize:12}}>No notes recorded</div>}
+            ) : <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"12px 0",fontSize:fz(12)}}>No notes recorded</div>}
             {/* ── Shared with (owner/admin only) ── */}
             {(isOwner || isAdmin) && reviewShares !== null && reviewShares.length > 0 && (
               <div style={{marginTop:12}}>
@@ -467,14 +498,14 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                   {reviewShares.map(function(sh, i){
                     return (
                       <div key={sh.id} style={{display:"flex",alignItems:"center",gap:9,padding:"9px 12px",borderBottom:i<reviewShares.length-1?"1px solid rgba(0,180,255,.1)":"none"}}>
-                        <div style={{width:26,height:26,borderRadius:"50%",background:"rgba(0,180,255,.15)",border:"1px solid rgba(0,180,255,.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#00B4FF",flexShrink:0}}>
+                        <div style={{width:26,height:26,borderRadius:"50%",background:"rgba(0,180,255,.15)",border:"1px solid rgba(0,180,255,.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:fz(11),fontWeight:700,color:"#00B4FF",flexShrink:0}}>
                           {(sh.toUserName||"?")[0].toUpperCase()}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sh.toUserName}</div>
-                          {sh.context && <div style={{fontSize:9,color:"rgba(255,255,255,.35)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sh.context}</div>}
+                          <div style={{fontSize:fz(12),fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sh.toUserName}</div>
+                          {sh.context && <div style={{fontSize:fz(9),color:"rgba(255,255,255,.35)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sh.context}</div>}
                         </div>
-                        <span style={{fontSize:9,color:"rgba(255,255,255,.25)",flexShrink:0}}>{fmtDate(sh.createdAt||sh.sharedAt||0)}</span>
+                        <span style={{fontSize:fz(9),color:"rgba(255,255,255,.25)",flexShrink:0}}>{fmtDate(sh.createdAt||sh.sharedAt||0)}</span>
                       </div>
                     );
                   })}
@@ -482,15 +513,15 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
               </div>
             )}
             {(isOwner || isAdmin) && reviewShares !== null && reviewShares.length === 0 && (
-              <div style={{marginTop:12,textAlign:"center",color:"rgba(255,255,255,.2)",fontSize:11,padding:"8px 0"}}>Not shared with anyone yet.</div>
+              <div style={{marginTop:12,textAlign:"center",color:"rgba(255,255,255,.2)",fontSize:fz(11),padding:"8px 0"}}>Not shared with anyone yet.</div>
             )}
           </div>
         )}
         {/* PATH */}
         {tab==="path" && (
           <div>
-            <SectionHdr>{v.length} card visits · <span style={{fontWeight:400,color:"rgba(255,255,255,.3)",fontSize:9}}>tap a card for details</span></SectionHdr>
-            {v.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:12}}>No visits recorded.</div>}
+            <SectionHdr>{v.length} card visits · <span style={{fontWeight:400,color:"rgba(255,255,255,.3)",fontSize:fz(9)}}>tap a card for details</span></SectionHdr>
+            {v.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:fz(12)}}>No visits recorded.</div>}
             {v.map(function(x, i) {
               var m = TM[x.cardType]||TM.pitch;
               var isSelected = pathCardIdx === i;
@@ -501,7 +532,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                   <div onClick={function(){setPathCardIdx(isSelected ? null : i);}}
                     style={{display:"flex",gap:9,cursor:"pointer",borderRadius:9,padding:"3px 5px 3px 2px",background:isSelected?"rgba(255,255,255,.06)":"transparent",transition:"background .12s"}}>
                     <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0}}>
-                      <div style={{width:22,height:22,borderRadius:"50%",background:x.isObjCard?"rgba(239,83,80,.16)":m.color+"1a",border:"1.5px solid "+(x.isObjCard?OBJ_COLOR:m.color),display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:x.isObjCard?OBJ_COLOR:m.color,boxShadow:isSelected?"0 0 0 2px "+(x.isObjCard?OBJ_COLOR:m.color)+"44":"none",transition:"box-shadow .12s"}}>
+                      <div style={{width:22,height:22,borderRadius:"50%",background:x.isObjCard?"rgba(239,83,80,.16)":m.color+"1a",border:"1.5px solid "+(x.isObjCard?OBJ_COLOR:m.color),display:"flex",alignItems:"center",justifyContent:"center",fontSize:fz(9),color:x.isObjCard?OBJ_COLOR:m.color,boxShadow:isSelected?"0 0 0 2px "+(x.isObjCard?OBJ_COLOR:m.color)+"44":"none",transition:"box-shadow .12s"}}>
                         {x.isObjCard?"!":m.icon}
                       </div>
                       {i<v.length-1 && <div style={{width:1,background:"rgba(255,255,255,.07)",flex:1,minHeight:6,margin:"1px auto"}}/>}
@@ -510,15 +541,30 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:5,paddingBottom:i<v.length-1?5:0}}>
                         <div>
                           <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-                            <span style={{fontSize:12,color:"#fff",fontWeight:(i===0||i===v.length-1)?700:400}}>{x.cardTitle}</span>
-                            {x.intendedPath && <span style={{fontSize:8,color:"#66BB6A",background:"rgba(102,187,106,.12)",padding:"1px 4px",borderRadius:99}}>★</span>}
-                            {x.isObjCard && x.stackLabel && <span style={{fontSize:9,color:OBJ_COLOR,background:"rgba(239,83,80,.1)",padding:"1px 5px",borderRadius:99}}>{x.stackLabel}</span>}
-                            {i===v.length-1 && <span style={{fontSize:8,color:"rgba(255,255,255,.4)",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 5px",borderRadius:99}}>ended here</span>}
-                            {(cardNotes.length>0||cardFeedback.length>0) && <span style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>{cardNotes.length>0?"📝":""}{cardFeedback.length>0?"💬":""}</span>}
+                            <span style={{fontSize:fz(12),color:"#fff",fontWeight:(i===0||i===v.length-1)?700:400}}>{x.cardTitle}</span>
+                            {x.intendedPath && <span style={{fontSize:fz(8),color:"#66BB6A",background:"rgba(102,187,106,.12)",padding:"1px 4px",borderRadius:99}}>★</span>}
+                            {x.isObjCard && x.stackLabel && <span style={{fontSize:fz(9),color:OBJ_COLOR,background:"rgba(239,83,80,.1)",padding:"1px 5px",borderRadius:99}}>{x.stackLabel}</span>}
+                            {i===v.length-1 && <span style={{fontSize:fz(8),color:"rgba(255,255,255,.4)",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 5px",borderRadius:99}}>ended here</span>}
+                            {(cardNotes.length>0||cardFeedback.length>0) && <span style={{fontSize:fz(9),color:"rgba(255,255,255,.28)"}}>{cardNotes.length>0?"📝":""}{cardFeedback.length>0?"💬":""}</span>}
                           </div>
-                          <div style={{fontSize:9,color:"rgba(255,255,255,.22)"}}>{fmtTime(x.ts)}</div>
+                          <div style={{fontSize:fz(9),color:"rgba(255,255,255,.22)"}}>{fmtTime(x.ts)}</div>
                         </div>
-                        <span style={{fontSize:10,color:"rgba(255,255,255,.32)",flexShrink:0,background:"rgba(255,255,255,.05)",padding:"2px 6px",borderRadius:99}}>{fmtMs(x.durationMs||0)}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+                          {(function() {
+                            var sg = segForVisit(x);
+                            if (!sg) return null;
+                            var isClip = audio.clip && audio.clip.segId === sg.segId;
+                            var c = segColor(sg);
+                            return (
+                              <button onClick={function(e){ e.stopPropagation(); if (isClip && audio.playing) audio.toggle(); else audio.playClip(sg); }}
+                                title="Play only this card's audio" aria-label={"Play audio for " + x.cardTitle}
+                                style={{background:isClip?c:"transparent",border:"1px solid "+c+"66",color:isClip?"#000":c,borderRadius:99,fontSize:fz(9),fontWeight:700,padding:"2px 7px",cursor:"pointer",fontFamily:"inherit"}}>
+                                {isClip && audio.playing ? "❚❚" : "▶"}
+                              </button>
+                            );
+                          })()}
+                          <span style={{fontSize:fz(10),color:"rgba(255,255,255,.32)",background:"rgba(255,255,255,.05)",padding:"2px 6px",borderRadius:99}}>{fmtMs(x.durationMs||0)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -528,66 +574,66 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                       {/* Stats row */}
                       <div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
                         <div style={{background:"rgba(255,255,255,.08)",borderRadius:8,padding:"5px 11px",textAlign:"center"}}>
-                          <div style={{fontSize:14,fontWeight:700,color:"#fff"}}>{fmtMs(x.durationMs||0)}</div>
-                          <div style={{fontSize:8,color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>Time spent</div>
+                          <div style={{fontSize:fz(14),fontWeight:700,color:"#fff"}}>{fmtMs(x.durationMs||0)}</div>
+                          <div style={{fontSize:fz(8),color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>Time spent</div>
                         </div>
                         <div style={{background:m.color+"18",borderRadius:8,padding:"5px 11px",textAlign:"center"}}>
-                          <div style={{fontSize:14,fontWeight:700,color:m.color}}>{m.icon}</div>
-                          <div style={{fontSize:8,color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>{m.label}</div>
+                          <div style={{fontSize:fz(14),fontWeight:700,color:m.color}}>{m.icon}</div>
+                          <div style={{fontSize:fz(8),color:"rgba(255,255,255,.35)",textTransform:"uppercase",letterSpacing:.5}}>{m.label}</div>
                         </div>
-                        {session.audioSegments && (function() {
-                          var seg = (session.audioSegments||[]).find(function(s){ return s.segmentIndex === i; });
+                        {(function() {
+                          var seg = segForVisit(x);
                           if (!seg) return null;
                           return (
-                            <button
-                              onClick={function() {
-                                setTab("playback");
-                                setTimeout(function() {
-                                  if (audioSeekRef.current) audioSeekRef.current(seg.startMs);
-                                }, 150);
-                              }}
-                              style={Object.assign({}, ghostSm({color:SESS_COLOR,borderColor:"rgba(168,255,62,.3)",fontSize:11}), {display:"flex",alignItems:"center",gap:5,padding:"5px 11px"})}>
-                              ▶ Segment
-                            </button>
+                            <>
+                              <button onClick={function(){ audio.playClip(seg); }}
+                                style={Object.assign({}, ghostSm({color:SESS_COLOR,borderColor:"rgba(168,255,62,.3)",fontSize:fz(11)}), {display:"flex",alignItems:"center",gap:5,padding:"5px 11px"})}>
+                                ▶ This card only
+                              </button>
+                              <button onClick={function(){ audio.playFrom(seg.startMs); }}
+                                style={Object.assign({}, ghostSm({fontSize:fz(11)}), {padding:"5px 11px"})}>
+                                Play call from here
+                              </button>
+                            </>
                           );
                         })()}
                       </div>
                       {/* Flow: came from / led to */}
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
                         <div style={{background:"rgba(255,255,255,.05)",borderRadius:8,padding:"7px 9px"}}>
-                          <div style={{fontSize:8,color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>← Came from</div>
-                          <div style={{fontSize:11,color:i>0?"rgba(255,255,255,.75)":"rgba(255,255,255,.28)",fontStyle:i===0?"italic":"normal",lineHeight:1.3}}>{i>0?v[i-1].cardTitle:"Start of session"}</div>
+                          <div style={{fontSize:fz(8),color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>← Came from</div>
+                          <div style={{fontSize:fz(11),color:i>0?"rgba(255,255,255,.75)":"rgba(255,255,255,.28)",fontStyle:i===0?"italic":"normal",lineHeight:1.3}}>{i>0?v[i-1].cardTitle:"Start of session"}</div>
                         </div>
                         <div style={{background:"rgba(255,255,255,.05)",borderRadius:8,padding:"7px 9px"}}>
-                          <div style={{fontSize:8,color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Led to →</div>
-                          <div style={{fontSize:11,color:i<v.length-1?"rgba(255,255,255,.75)":"rgba(255,255,255,.28)",fontStyle:i===v.length-1?"italic":"normal",lineHeight:1.3}}>{i<v.length-1?v[i+1].cardTitle:"End of session"}</div>
+                          <div style={{fontSize:fz(8),color:"rgba(255,255,255,.28)",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>Led to →</div>
+                          <div style={{fontSize:fz(11),color:i<v.length-1?"rgba(255,255,255,.75)":"rgba(255,255,255,.28)",fontStyle:i===v.length-1?"italic":"normal",lineHeight:1.3}}>{i<v.length-1?v[i+1].cardTitle:"End of session"}</div>
                         </div>
                       </div>
                       {/* Notes on this card */}
                       {cardNotes.length > 0 && (
                         <div style={{marginBottom:8}}>
-                          <div style={{fontSize:8,color:SESS_COLOR,textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>📝 Notes ({cardNotes.length})</div>
+                          <div style={{fontSize:fz(8),color:SESS_COLOR,textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>📝 Notes ({cardNotes.length})</div>
                           {cardNotes.map(function(note, ni){
-                            return <div key={ni} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.15)",borderRadius:8,padding:"7px 9px",marginBottom:5,fontSize:11,color:"rgba(255,255,255,.8)",lineHeight:1.5}}>{note.text}</div>;
+                            return <div key={ni} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.15)",borderRadius:8,padding:"7px 9px",marginBottom:5,fontSize:fz(11),color:"rgba(255,255,255,.8)",lineHeight:1.5}}>{note.text}</div>;
                           })}
                         </div>
                       )}
                       {/* Feedback on this card */}
                       {cardFeedback.length > 0 && (
                         <div>
-                          <div style={{fontSize:8,color:"#00B4FF",textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>💬 Feedback ({cardFeedback.length})</div>
+                          <div style={{fontSize:fz(8),color:"#00B4FF",textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>💬 Feedback ({cardFeedback.length})</div>
                           {cardFeedback.map(function(fb, fi){
                             return (
                               <div key={fi} style={{background:"rgba(0,180,255,.06)",border:"1px solid rgba(0,180,255,.15)",borderRadius:8,padding:"7px 9px",marginBottom:5}}>
-                                <div style={{fontSize:10,fontWeight:700,color:"#00B4FF",marginBottom:3}}>{fb.authorName}</div>
-                                <div style={{fontSize:11,color:"rgba(255,255,255,.75)",lineHeight:1.5}}>{fb.text}</div>
+                                <div style={{fontSize:fz(10),fontWeight:700,color:"#00B4FF",marginBottom:3}}>{fb.authorName}</div>
+                                <div style={{fontSize:fz(11),color:"rgba(255,255,255,.75)",lineHeight:1.5}}>{fb.text}</div>
                               </div>
                             );
                           })}
                         </div>
                       )}
                       {cardNotes.length === 0 && cardFeedback.length === 0 && (
-                        <div style={{fontSize:10,color:"rgba(255,255,255,.22)",fontStyle:"italic"}}>No notes or feedback on this card.</div>
+                        <div style={{fontSize:fz(10),color:"rgba(255,255,255,.22)",fontStyle:"italic"}}>No notes or feedback on this card.</div>
                       )}
                     </div>
                   )}
@@ -598,7 +644,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
         )}
         {/* PLAYBACK */}
         {tab==="playback" && (
-          <AudioPlayer session={session} seekRef={audioSeekRef} />
+          <AudioPlayback ctl={audio} size={audioSize} canDownload={isOwner || isAdmin} sessionName={session.name}/>
         )}
         {/* NOTES */}
         {tab==="notes" && (function() {
@@ -623,19 +669,25 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
           return (
             <div>
               <SectionHdr>{n.length} note{n.length!==1?"s":""}</SectionHdr>
-              {n.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:12}}>No notes in this session.</div>}
+              {n.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:fz(12)}}>No notes in this session.</div>}
 
               {/* Call notes section */}
               {callNotes.length > 0 && (
                 <div style={{marginBottom: hasObjNotes ? 18 : 0}}>
-                  {hasObjNotes && <div style={{fontSize:9,fontWeight:700,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:1.1,marginBottom:8}}>Call Notes ({callNotes.length})</div>}
+                  {hasObjNotes && <div style={{fontSize:fz(9),fontWeight:700,color:"rgba(255,255,255,.3)",textTransform:"uppercase",letterSpacing:1.1,marginBottom:8}}>Call Notes ({callNotes.length})</div>}
                   {callNotes.map(function(note, i) { return (
                     <div key={i} style={{background:"rgba(168,255,62,.07)",border:"1px solid rgba(168,255,62,.18)",borderRadius:11,padding:"11px 13px",marginBottom:9}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                        <span style={{fontSize:11,fontWeight:700,color:SESS_COLOR}}>{note.cardTitle}</span>
-                        <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+                        <span style={{fontSize:fz(11),fontWeight:700,color:SESS_COLOR}}>{note.cardTitle}</span>
+                        <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                          {noteAudioMs(note) !== null && (
+                            <button onClick={function(){ audio.playFrom(Math.max(0, noteAudioMs(note) - 3000)); }} title="Hear the moment this note was taken"
+                              style={{background:"none",border:"1px solid rgba(168,255,62,.3)",color:SESS_COLOR,borderRadius:99,fontSize:fz(9),padding:"1px 7px",cursor:"pointer",fontFamily:"inherit"}}>▶ hear this</button>
+                          )}
+                          <span style={{fontSize:fz(9),color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+                        </span>
                       </div>
-                      <div style={{fontSize:13,color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
+                      <div style={{fontSize:fz(13),color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
                     </div>
                   );})}
                 </div>
@@ -647,16 +699,22 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 return (
                   <div key={label} style={{marginBottom:18}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-                      <span style={{fontSize:9,fontWeight:700,color:OBJ_COLOR,textTransform:"uppercase",letterSpacing:1.1}}>🛡️ {label}</span>
-                      <span style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>({stackNotes.length} note{stackNotes.length!==1?"s":""})</span>
+                      <span style={{fontSize:fz(9),fontWeight:700,color:OBJ_COLOR,textTransform:"uppercase",letterSpacing:1.1}}>🛡️ {label}</span>
+                      <span style={{fontSize:fz(9),color:"rgba(255,255,255,.28)"}}>({stackNotes.length} note{stackNotes.length!==1?"s":""})</span>
                     </div>
                     {stackNotes.map(function(note, i) { return (
                       <div key={i} style={{background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.2)",borderRadius:11,padding:"11px 13px",marginBottom:9}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
-                          <span style={{fontSize:11,fontWeight:700,color:OBJ_COLOR}}>{note.cardTitle}</span>
-                          <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+                          <span style={{fontSize:fz(11),fontWeight:700,color:OBJ_COLOR}}>{note.cardTitle}</span>
+                          <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                          {noteAudioMs(note) !== null && (
+                            <button onClick={function(){ audio.playFrom(Math.max(0, noteAudioMs(note) - 3000)); }} title="Hear the moment this note was taken"
+                              style={{background:"none",border:"1px solid rgba(168,255,62,.3)",color:SESS_COLOR,borderRadius:99,fontSize:fz(9),padding:"1px 7px",cursor:"pointer",fontFamily:"inherit"}}>▶ hear this</button>
+                          )}
+                          <span style={{fontSize:fz(9),color:"rgba(255,255,255,.25)"}}>{fmtTime(note.ts)}</span>
+                        </span>
                         </div>
-                        <div style={{fontSize:13,color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
+                        <div style={{fontSize:fz(13),color:"rgba(255,255,255,.85)",lineHeight:1.5}}>{note.text}</div>
                       </div>
                     );})}
                   </div>
@@ -669,8 +727,8 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
         {tab==="feedback" && (
           <div>
             <SectionHdr>{(feedback||[]).length} feedback item{(feedback||[]).length!==1?"s":""}</SectionHdr>
-            {feedback===null && <div style={{textAlign:"center",color:"rgba(255,255,255,.3)",padding:"24px 0",fontSize:12}}>Loading…</div>}
-            {feedback!==null && feedback.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:12}}>No feedback yet.</div>}
+            {feedback===null && <div style={{textAlign:"center",color:"rgba(255,255,255,.3)",padding:"24px 0",fontSize:fz(12)}}>Loading…</div>}
+            {feedback!==null && feedback.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"24px 0",fontSize:fz(12)}}>No feedback yet.</div>}
             {(feedback||[]).map(function(fb) {
               var cardType = fb.cardId ? (visitedCards.find(function(c){return c.id===fb.cardId;})||{type:"pitch"}).type : null;
               var ctm = cardType ? (TM[cardType]||TM.pitch) : null;
@@ -680,47 +738,47 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 <div key={fb.id} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.09)",borderRadius:12,padding:"12px 13px",marginBottom:9}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <span style={{fontSize:11,fontWeight:700,color:SESS_COLOR}}>{fb.authorName}</span>
+                      <span style={{fontSize:fz(11),fontWeight:700,color:SESS_COLOR}}>{fb.authorName}</span>
                       {fb.cardId && ctm && (
-                        <span style={{fontSize:9,background:ctm.color+"22",border:"1px solid "+ctm.color+"44",color:ctm.color,padding:"1px 7px",borderRadius:99}}>{fb.cardTitle}</span>
+                        <span style={{fontSize:fz(9),background:ctm.color+"22",border:"1px solid "+ctm.color+"44",color:ctm.color,padding:"1px 7px",borderRadius:99}}>{fb.cardTitle}</span>
                       )}
-                      {!fb.cardId && <span style={{fontSize:9,color:"rgba(255,255,255,.28)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.08)",padding:"1px 7px",borderRadius:99}}>General</span>}
+                      {!fb.cardId && <span style={{fontSize:fz(9),color:"rgba(255,255,255,.28)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.08)",padding:"1px 7px",borderRadius:99}}>General</span>}
                     </div>
                     <div style={{display:"flex",gap:4,flexShrink:0}}>
-                      <span style={{fontSize:9,color:"rgba(255,255,255,.22)"}}>{fmtDateTime(fb.updatedAt)}</span>
+                      <span style={{fontSize:fz(9),color:"rgba(255,255,255,.22)"}}>{fmtDateTime(fb.updatedAt)}</span>
                       {canWriteFeedback && isMine && !isEditing && (
                         <button onClick={function(){setFbEditId(fb.id);setFbEditText(fb.text);}}
-                          style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.3)",fontSize:11,padding:"0 3px",fontFamily:"inherit"}}>✎</button>
+                          style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.3)",fontSize:fz(11),padding:"0 3px",fontFamily:"inherit"}}>✎</button>
                       )}
                       {(isAdmin || (canWriteFeedback && isMine)) ? (
                         <button onClick={function(){deleteFeedbackItem(fb.id);}}
-                          style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,83,80,.4)",fontSize:11,padding:"0 3px",fontFamily:"inherit"}}>🗑</button>
+                          style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,83,80,.4)",fontSize:fz(11),padding:"0 3px",fontFamily:"inherit"}}>🗑</button>
                       ) : null}
                     </div>
                   </div>
                   {isEditing ? (
                     <div>
                       <textarea value={fbEditText} onChange={function(e){setFbEditText(e.target.value);}} rows={2}
-                        style={Object.assign({},inputSt({resize:"none",fontSize:12,lineHeight:1.5}),{marginBottom:6,minHeight:48})}/>
+                        style={Object.assign({},inputSt({resize:"none",fontSize:fz(12),lineHeight:1.5}),{marginBottom:6,minHeight:48})}/>
                       <div style={{display:"flex",gap:6}}>
-                        <button onClick={function(){setFbEditId(null);setFbEditText("");}} style={Object.assign({},ghostBtn(),{flex:1,padding:"6px",fontSize:11})}>Cancel</button>
-                        <button onClick={function(){saveFbEdit(fb.id);}} style={Object.assign({},solidBtn(SESS_COLOR),{flex:2,padding:"6px",fontSize:11})}>Save</button>
+                        <button onClick={function(){setFbEditId(null);setFbEditText("");}} style={Object.assign({},ghostBtn(),{flex:1,padding:"6px",fontSize:fz(11)})}>Cancel</button>
+                        <button onClick={function(){saveFbEdit(fb.id);}} style={Object.assign({},solidBtn(SESS_COLOR),{flex:2,padding:"6px",fontSize:fz(11)})}>Save</button>
                       </div>
                     </div>
                   ) : (
-                    <div style={{fontSize:13,color:"rgba(255,255,255,.82)",lineHeight:1.55,whiteSpace:"pre-wrap"}}>{fb.text}</div>
+                    <div style={{fontSize:fz(13),color:"rgba(255,255,255,.82)",lineHeight:1.55,whiteSpace:"pre-wrap"}}>{fb.text}</div>
                   )}
                 </div>
               );
             })}
             {canWriteFeedback && (
               <div style={{background:"rgba(168,255,62,.06)",border:"1px solid rgba(168,255,62,.18)",borderRadius:12,padding:"12px 13px",marginBottom:12}}>
-                <div style={{fontSize:11,fontWeight:700,color:SESS_COLOR,marginBottom:8}}>Add feedback</div>
+                <div style={{fontSize:fz(11),fontWeight:700,color:SESS_COLOR,marginBottom:8}}>Add feedback</div>
                 {visitedCards.length > 0 && (
                   <div style={{marginBottom:8}}>
-                    <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginBottom:3,textTransform:"uppercase",letterSpacing:.6}}>Link to card (optional)</div>
+                    <div style={{fontSize:fz(9),color:"rgba(255,255,255,.3)",marginBottom:3,textTransform:"uppercase",letterSpacing:.6}}>Link to card (optional)</div>
                     <select value={fbCardId} onChange={function(e){setFbCardId(e.target.value);}}
-                      style={{width:"100%",background:"#081428",border:"1px solid rgba(168,255,62,.25)",borderRadius:8,padding:"7px 10px",color:"rgba(255,255,255,.7)",fontSize:11,fontFamily:"inherit",outline:"none",appearance:"none"}}>
+                      style={{width:"100%",background:"#081428",border:"1px solid rgba(168,255,62,.25)",borderRadius:8,padding:"7px 10px",color:"rgba(255,255,255,.7)",fontSize:fz(11),fontFamily:"inherit",outline:"none",appearance:"none"}}>
                       <option value="">General feedback</option>
                       {visitedCards.map(function(c){
                         return <option key={c.id} value={c.id}>{c.title}</option>;
@@ -730,7 +788,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                 )}
                 <textarea value={fbText} onChange={function(e){setFbText(e.target.value);}}
                   placeholder="Leave feedback on this session…" rows={3}
-                  style={Object.assign({},inputSt({resize:"none",fontSize:12,lineHeight:1.5}),{marginBottom:8,minHeight:58})}/>
+                  style={Object.assign({},inputSt({resize:"none",fontSize:fz(12),lineHeight:1.5}),{marginBottom:8,minHeight:58})}/>
                 <button onClick={submitFeedback} disabled={fbSubmitting||!fbText.trim()}
                   style={Object.assign({},solidBtn(SESS_COLOR),{width:"100%",opacity:(!fbText.trim()||fbSubmitting)?0.45:1})}>
                   {fbSubmitting?"Submitting…":"Submit feedback"}
@@ -782,7 +840,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     });
   }
 
-  var isAdmin      = !!(authUser && authUser.role === "admin");
+  var isAdmin      = !!(authUser && isAdminRole(authUser.role));
   var isAdminScope = !!(isAdmin && viewScope && viewScope !== "self");
 
   // Auto-open review if portaled from Play
@@ -932,6 +990,11 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     return sorted;
   }
 
+  // API sends userName on every session; fall back to the org user list for older payloads
+  function sessionOwnerName(s) {
+    return s.userName || (userMap[s.userId] && userMap[s.userId].displayName) || null;
+  }
+
   function renderSessionRow(s) {
     var st = STYPE[s.mode||"live"] || STYPE.live;
     var d = sessionDurSec(s), v = sessionVisits(s), n = sessionNotes(s), ov = v.filter(function(x){return x.isObjCard;});
@@ -950,8 +1013,14 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
               {s._shared && <span style={{fontSize:9,color:"rgba(255,255,255,.32)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 7px",borderRadius:99}}>shared</span>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+              {sessionOwnerName(s) && (
+                <span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,fontWeight:600,color:"rgba(255,255,255,.7)"}}>
+                  <span style={{width:15,height:15,borderRadius:"50%",background:"rgba(0,180,255,.15)",border:"1px solid rgba(0,180,255,.3)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:700,color:"#00B4FF"}}>{sessionOwnerName(s)[0].toUpperCase()}</span>
+                  {sessionOwnerName(s)}{authUser && s.userId === authUser.id ? " (you)" : ""}
+                </span>
+              )}
               <span style={{fontSize:9,fontWeight:700,color:st.color,background:st.bg,border:"1px solid "+st.border,padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>{st.label}</span>
-              {s._shared && s._shareFromName && <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>by {s._shareFromName}</span>}
+              {s._shared && s._shareFromName && s._shareFromName !== sessionOwnerName(s) && <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>shared by {s._shareFromName}</span>}
               <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{fmtDateTime(s.startTs)}</span>
               {s.deckName && <span style={{fontSize:9,color:"rgba(255,255,255,.18)",background:"rgba(255,255,255,.04)",padding:"1px 6px",borderRadius:99,border:"1px solid rgba(255,255,255,.07)"}}>{s.deckName}</span>}
             </div>

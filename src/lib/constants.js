@@ -11,6 +11,16 @@ export var TM = {
   close:     { label:"Close",     color:"#66BB6A", glow:"rgba(102,187,106,.22)", icon:"🤝" },
   objection: { label:"Objection", color:"#EF5350", glow:"rgba(239,83,80,.22)",   icon:"🛡️" },
 };
+// ─── ROLES ────────────────────────────────────────────────────────────────────
+// owner = the org's single super-admin; it has every admin power plus org settings and admin demotion
+export var ROLE_META = {
+  owner: { label:"Owner", color:"#FFB300", bg:"rgba(255,179,0,.15)",  border:"rgba(255,179,0,.35)" },
+  admin: { label:"Admin", color:"#A8FF3E", bg:"rgba(168,255,62,.15)", border:"rgba(168,255,62,.3)" },
+  user:  { label:"User",  color:"#00B4FF", bg:"rgba(0,180,255,.1)",   border:"rgba(0,180,255,.2)" },
+};
+export function isAdminRole(role) { return role === "admin" || role === "owner"; }
+export function roleMeta(role) { return ROLE_META[role] || ROLE_META.user; }
+
 export var OBJ_COLOR  = "#EF5350";
 export var SESS_COLOR = "#A8FF3E";
 export var STYPE = {

@@ -88,11 +88,26 @@ async function requireAuth(req, res, next) {
   }
 }
 
+// The owner is an admin with extra powers (org settings, demoting admins, ownership transfer)
+function isAdminRole(role) {
+  return role === "admin" || role === "owner";
+}
+
 function requireAdmin(req, res, next) {
   requireAuth(req, res, function(err) {
     if (err) return next(err);
-    if (req.user.role !== "admin") {
+    if (!isAdminRole(req.user.role)) {
       return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  });
+}
+
+function requireOwner(req, res, next) {
+  requireAuth(req, res, function(err) {
+    if (err) return next(err);
+    if (req.user.role !== "owner") {
+      return res.status(403).json({ error: "Only the organization owner can do this" });
     }
     next();
   });
@@ -100,5 +115,5 @@ function requireAdmin(req, res, next) {
 
 module.exports = {
   jwtSign, jwtVerify, hashPassword, checkPassword,
-  setCookie, clearCookie, requireAuth, requireAdmin, COOKIE_NAME,
+  setCookie, clearCookie, requireAuth, requireAdmin, requireOwner, isAdminRole, COOKIE_NAME,
 };

@@ -1,9 +1,14 @@
 const express   = require("express");
 const rateLimit = require("express-rate-limit");
-const { randomUUID } = require("crypto");
+const { randomUUID, createHash, timingSafeEqual } = require("crypto");
 const router    = express.Router();
-const { findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches } = require("../db");
-const { jwtSign, checkPassword, setCookie, clearCookie, requireAuth } = require("../auth");
+const {
+  findUserByEmail, updateLastLogin, findUserById, getTeamById, getUserTeams, getAdminTeamIds,
+  setActiveToken, clearActiveTokenIfMatches, findOrgById,
+  findUsableInvite, signupWithInvite, createOrgWithOwner,
+} = require("../db");
+const { jwtSign, checkPassword, hashPassword, setCookie, clearCookie, requireAuth, isAdminRole } = require("../auth");
+const { validateNewUser, cleanNewUser, validateOrg, cleanOrg } = require("../validate");
 
 var loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -13,11 +18,40 @@ var loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Signup endpoints share one limiter — share codes and the master code must not be brute-forceable
+var signupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Hash both sides so timingSafeEqual gets equal-length buffers and the code length doesn't leak
+function masterCodeMatches(input) {
+  var expected = process.env.MASTER_CODE;
+  if (!expected || typeof input !== "string" || !input) return false;
+  var a = createHash("sha256").update(input).digest();
+  var b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+// Issue a fresh single-session token and the auth cookie; returns the login response body
+async function startSession(res, user) {
+  const sessionToken = randomUUID();
+  await setActiveToken(user.id, sessionToken);
+  await updateLastLogin(user.id);
+  const token = jwtSign({ sub: user.id, role: user.role, orgId: user.orgId, sid: sessionToken });
+  setCookie(res, token);
+  // Include _token in response body for mobile/Safari ITP fallback (stored in localStorage)
+  return Object.assign(await buildUserResponse(user), { _token: token });
+}
+
 async function buildUserResponse(user) {
   const team    = user.teamId ? await getTeamById(user.teamId) : null;
   const teamIds = await getUserTeams(user.id);
   // For admin users: also include teams they administer so sub-tabs are immediate
-  if (user.role === "admin") {
+  if (isAdminRole(user.role)) {
     const adminTeamIds = await getAdminTeamIds(user.id);
     adminTeamIds.forEach(function(tid) {
       if (teamIds.indexOf(tid) === -1) teamIds.push(tid);
@@ -26,10 +60,15 @@ async function buildUserResponse(user) {
   const teams   = (await Promise.all(
     teamIds.map(function(tid) { return getTeamById(tid); })
   )).filter(Boolean).map(function(t) { return { id: t.id, name: t.name }; });
+  const org = await findOrgById(user.orgId);
   return {
     id:          user.id,
     email:       user.email,
     displayName: user.displayName,
+    firstName:   user.firstName || null,
+    lastName:    user.lastName  || null,
+    phone:       user.phone     || null,
+    orgName:     org ? org.name : null,
     role:        user.role,
     orgId:       user.orgId,
     teamId:      user.teamId,
@@ -58,16 +97,64 @@ router.post("/login", loginLimiter, async function(req, res, next) {
       return res.status(409).json({ error: "already_logged_in" });
     }
 
-    // Generate a new session token — invalidates any existing session on other devices
-    const sessionToken = randomUUID();
-    await setActiveToken(user.id, sessionToken);
-    await updateLastLogin(user.id);
+    // A new session token invalidates any existing session on other devices
+    res.json(await startSession(res, user));
+  } catch (err) { next(err); }
+});
 
-    const token = jwtSign({ sub: user.id, role: user.role, orgId: user.orgId, sid: sessionToken });
-    setCookie(res, token);
+// GET /api/auth/invite/:code — preview which org a share code joins (signup form)
+router.get("/invite/:code", signupLimiter, async function(req, res, next) {
+  try {
+    const invite = await findUsableInvite(req.params.code);
+    if (!invite) return res.status(404).json({ error: "Invalid or expired share code" });
+    res.json({ orgName: invite.orgName });
+  } catch (err) { next(err); }
+});
 
-    // Include _token in response body for mobile/Safari ITP fallback (stored in localStorage)
-    res.json(Object.assign(await buildUserResponse(user), { _token: token }));
+// POST /api/auth/signup — join an existing org with an admin-issued share code (role: user)
+router.post("/signup", signupLimiter, async function(req, res, next) {
+  try {
+    const body = req.body || {};
+    if (!body.code || typeof body.code !== "string") return res.status(400).json({ error: "Share code is required" });
+    const vErr = validateNewUser(body);
+    if (vErr) return res.status(400).json({ error: vErr });
+
+    const fields = Object.assign(cleanNewUser(body), { passwordHash: await hashPassword(body.password) });
+    var user;
+    try {
+      user = await signupWithInvite(body.code, fields);
+    } catch (err) {
+      if (err.code === "23505") return res.status(409).json({ error: "An account with this email already exists" });
+      throw err;
+    }
+    if (!user) return res.status(404).json({ error: "Invalid or expired share code" });
+    res.status(201).json(await startSession(res, user));
+  } catch (err) { next(err); }
+});
+
+// POST /api/auth/create-org — create a new organization (requires MASTER_CODE); creator becomes owner
+router.post("/create-org", signupLimiter, async function(req, res, next) {
+  try {
+    if (!process.env.MASTER_CODE) {
+      return res.status(503).json({ error: "Organization sign-up is not enabled on this server" });
+    }
+    const body = req.body || {};
+    if (!masterCodeMatches(body.masterCode)) return res.status(403).json({ error: "Invalid master code" });
+    const org  = body.org || {};
+    const oErr = validateOrg(org, true);
+    if (oErr) return res.status(400).json({ error: oErr });
+    const vErr = validateNewUser(body);
+    if (vErr) return res.status(400).json({ error: vErr });
+
+    const owner = Object.assign(cleanNewUser(body), { passwordHash: await hashPassword(body.password) });
+    var result;
+    try {
+      result = await createOrgWithOwner(cleanOrg(org), owner);
+    } catch (err) {
+      if (err.code === "23505") return res.status(409).json({ error: "An account with this email already exists" });
+      throw err;
+    }
+    res.status(201).json(await startSession(res, result.user));
   } catch (err) { next(err); }
 });
 

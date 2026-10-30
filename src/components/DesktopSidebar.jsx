@@ -1,11 +1,15 @@
 import { useState, useEffect } from "react";
-import { SESS_COLOR } from "../lib/constants";
+import { isAdminRole, roleMeta } from "../lib/constants";
 
 // ─── DESKTOP SIDEBAR ──────────────────────────────────────────────────────────
 // Left sidebar navigation for desktop layout.
-// Section A (top): Logo + deck indicator + save status
-// Section B (mid): Tab nav items with active state, hover, session lock
-// Section C (bot): User profile row + collapse toggle
+// Section A (top): Logo + deck switcher + save status
+// Section B (mid): Tab nav items with active state, hover, keyboard hint, session lock
+// Section C (bot): User block (avatar, name, role badge) + collapse toggle
+//
+// Tablet (compact): always a 72px icon rail. A ☰ button at the top opens a
+// slide-over drawer with the full labelled navigation. No hover-only
+// affordances on touch; every control is >= 44px.
 export function DesktopSidebar({
   tabs, tab, onTabClick,
   deck, decks,
@@ -14,187 +18,292 @@ export function DesktopSidebar({
   saveStatus, saveLabel,
   serverOk,
   onOpenDeckSwitcher, onOpenProfile,
-  collapsed, onToggleCollapse
+  collapsed, onToggleCollapse,
+  compact, touch
 }) {
-  var [hovered, setHovered] = useState(null);
+  var [hovered,    setHovered]    = useState(null);
+  var [drawerOpen, setDrawerOpen] = useState(false);
 
-  var saveColor = saveStatus === "saving"
+  // Close the drawer with Escape; also drop it if we leave tablet mode
+  useEffect(function() {
+    if (!drawerOpen) return;
+    function onKey(e) { if (e.key === "Escape") setDrawerOpen(false); }
+    document.addEventListener("keydown", onKey);
+    return function() { document.removeEventListener("keydown", onKey); };
+  }, [drawerOpen]);
+  useEffect(function() { if (!compact) setDrawerOpen(false); }, [compact]);
+
+  var saveColor = !serverOk
+    ? "#EF5350"
+    : saveStatus === "saving"
     ? "#FFD54F"
     : saveStatus === "error"
     ? "#EF5350"
-    : "rgba(102,187,106,.8)";
+    : "rgba(102,187,106,.9)";
 
   var saveDot = saveStatus === "saving"
     ? { animation:"savePulse 1s ease infinite" }
     : {};
 
-  var sidebarW = collapsed ? 60 : 240;
+  var role     = authUser.role;
+  var rm       = roleMeta(role);
+  var isAdmin  = isAdminRole(role);
+  var deckCount = (decks || []).length;
 
-  return (
-    <div style={{
-      width: sidebarW,
-      minWidth: sidebarW,
-      height: "100%",
-      display: "flex",
-      flexDirection: "column",
-      background: "rgba(4,10,28,.98)",
-      borderRight: "1px solid rgba(255,255,255,.06)",
-      transition: "width .2s cubic-bezier(.22,1,.36,1), min-width .2s cubic-bezier(.22,1,.36,1)",
-      overflow: "hidden",
-      flexShrink: 0,
-      zIndex: 10
-    }}>
+  // ── Nav body ────────────────────────────────────────────────────────────────
+  // mode: "desktop" (collapsible sidebar), "rail" (tablet icon rail),
+  //       "drawer" (tablet slide-over with labels)
+  function renderNav(isCollapsed, mode) {
+    var inDrawer = mode === "drawer";
+    var isRail   = mode === "rail";
+    var hoverOk  = !touch;                 // hover affordances only with a mouse
+    var showKeys = !touch && !compact;     // 1–N shortcut hints are a desktop thing
+    function after(fn) {
+      return function() { if (inDrawer) setDrawerOpen(false); if (fn) fn(); };
+    }
 
-      {/* ── Section A: Logo + Deck + Save status ── */}
-      <div style={{padding: collapsed ? "16px 10px 14px" : "16px 14px 14px", borderBottom:"1px solid rgba(255,255,255,.06)", flexShrink:0}}>
-        {/* Logo row */}
-        <div style={{display:"flex",alignItems:"center",gap:collapsed?0:9,marginBottom:12,justifyContent:collapsed?"center":"flex-start"}}>
-          <div style={{width:32,height:32,borderRadius:10,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:900,color:"#fff",flexShrink:0}}>O</div>
-          {!collapsed && <span style={{fontSize:14,fontWeight:800,color:"#fff",letterSpacing:-.3}}>OverCard</span>}
+    return (
+      <>
+        {/* ── Section A: Logo + Deck switcher + Save status ── */}
+        <div style={{padding: isCollapsed ? "16px 12px 14px" : "18px 16px 16px", borderBottom:"1px solid rgba(255,255,255,.07)", flexShrink:0}}>
+          {/* Logo row (tablet rail/drawer: ☰ / ✕ toggle) */}
+          <div style={{display:"flex",alignItems:"center",gap:isCollapsed?0:11,marginBottom:isRail?12:16,justifyContent:isCollapsed?"center":"flex-start"}}>
+            {isRail ? (
+              <button
+                onClick={function(){ setDrawerOpen(true); }}
+                aria-label="Open navigation menu"
+                aria-expanded={drawerOpen}
+                style={{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",color:"#fff",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                <span aria-hidden="true">☰</span>
+              </button>
+            ) : (
+              <>
+                <div style={{width:36,height:36,borderRadius:11,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:19,fontWeight:900,color:"#fff",flexShrink:0}}>O</div>
+                {!isCollapsed && <span style={{fontSize:18,fontWeight:800,color:"#fff",letterSpacing:-.3,flex:inDrawer?1:undefined}}>OverCard</span>}
+                {inDrawer && (
+                  <button
+                    onClick={function(){ setDrawerOpen(false); }}
+                    aria-label="Close navigation menu"
+                    style={{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.8)",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                    <span aria-hidden="true">✕</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Deck switcher */}
+          {!isCollapsed && (
+            <div style={{fontSize:12,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:"rgba(255,255,255,.45)",marginBottom:7,paddingLeft:2}}>Active deck</div>
+          )}
+          <button
+            onClick={after(onOpenDeckSwitcher)}
+            title={isCollapsed ? (deck ? deck.name + " — switch deck" : "Switch deck") : "Switch deck"}
+            aria-label={deck ? "Active deck: " + deck.name + ". Switch deck" : "Switch deck"}
+            style={{
+              display:"flex", alignItems:"center", gap:isCollapsed?0:11,
+              background:"rgba(255,255,255,.06)", border:"1px solid " + (deck ? deck.color + "40" : "rgba(255,255,255,.12)"),
+              borderRadius:12, padding: isCollapsed ? "8px" : "10px 12px",
+              minHeight: compact ? 48 : undefined,
+              cursor:"pointer", fontFamily:"inherit", width:"100%",
+              justifyContent: isCollapsed ? "center" : "flex-start",
+              transition:"background .12s"
+            }}>
+            {deck && (
+              <div style={{width:32,height:32,borderRadius:9,background:deck.color+"22",border:"1.5px solid "+deck.color+"66",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>
+                {deck.icon}
+              </div>
+            )}
+            {!isCollapsed && deck && (
+              <>
+                <div style={{flex:1,minWidth:0,textAlign:"left"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{deck.name}</div>
+                  <div style={{fontSize:12,color:"rgba(255,255,255,.5)",marginTop:1}}>{deckCount} deck{deckCount!==1?"s":""} available</div>
+                </div>
+                <span aria-hidden="true" style={{fontSize:14,color:"rgba(255,255,255,.45)"}}>⇅</span>
+              </>
+            )}
+          </button>
+
+          {/* Save status */}
+          {!isCollapsed && (
+            <div role="status" style={{display:"flex",alignItems:"center",gap:7,marginTop:11,paddingLeft:2}}>
+              <div style={Object.assign({},{width:7,height:7,borderRadius:"50%",background:saveColor,flexShrink:0},saveDot)}/>
+              <span style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{serverOk ? saveLabel : "Server offline"}</span>
+            </div>
+          )}
         </div>
 
-        {/* Deck switcher pill */}
-        <button
-          onClick={onOpenDeckSwitcher}
-          title={collapsed ? (deck ? deck.name : "Switch Deck") : undefined}
-          style={{
-            display:"flex", alignItems:"center", gap:collapsed?0:9,
-            background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.1)",
-            borderRadius:11, padding: collapsed ? "7px" : "7px 10px",
-            cursor:"pointer", fontFamily:"inherit", width:"100%",
-            justifyContent: collapsed ? "center" : "flex-start",
-            transition:"background .12s"
-          }}>
-          {deck && (
-            <div style={{width:24,height:24,borderRadius:7,background:deck.color+"22",border:"1.5px solid "+deck.color+"55",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>
-              {deck.icon}
-            </div>
+        {/* ── Section B: Tab navigation ── */}
+        <div style={{flex:1,overflowY:"auto",overflowX:"hidden",padding: isCollapsed ? "12px 10px" : "14px 12px"}}>
+          {!isCollapsed && (
+            <div style={{fontSize:12,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:"rgba(255,255,255,.45)",margin:"0 0 8px 6px"}}>Navigate</div>
           )}
-          {!collapsed && deck && (
-            <>
-              <div style={{flex:1,minWidth:0,textAlign:"left"}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{deck.name}</div>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.28)"}}>{decks.length} deck{decks.length!==1?"s":""}</div>
-              </div>
-              <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>⌄</span>
-            </>
-          )}
-        </button>
+          {tabs.map(function(t, idx) {
+            var active = tab === t.id;
+            var isHov  = hoverOk && hovered === t.id;
+            var locked = sessionActive && t.id !== "play";
+            var accent = t.accent;
 
-        {/* Save status dot */}
-        {!collapsed && (
-          <div style={{display:"flex",alignItems:"center",gap:5,marginTop:8}}>
-            <div style={Object.assign({},{width:6,height:6,borderRadius:"50%",background:saveColor,flexShrink:0},saveDot)}/>
-            <span style={{fontSize:9,color:"rgba(255,255,255,.3)",letterSpacing:.3}}>{serverOk ? saveLabel : "Server offline"}</span>
+            return (
+              <button
+                key={t.id}
+                onClick={function(){ if (!locked) { onTabClick(t.id); if (inDrawer) setDrawerOpen(false); } }}
+                onMouseEnter={hoverOk ? function(){ setHovered(t.id); } : undefined}
+                onMouseLeave={hoverOk ? function(){ setHovered(null); } : undefined}
+                aria-current={active ? "page" : undefined}
+                aria-disabled={locked || undefined}
+                aria-label={isCollapsed ? t.label + (locked ? " (finish your session first)" : "") : undefined}
+                title={locked ? "Finish your session first" : (isCollapsed ? t.label + (showKeys ? " (" + (idx + 1) + ")" : "") : undefined)}
+                style={{
+                  display:"flex", alignItems:"center",
+                  gap: isCollapsed ? 0 : 12,
+                  width:"100%", minHeight: compact ? 50 : 44,
+                  border:"none",
+                  borderRadius:10, padding: isCollapsed ? "10px 8px" : "10px 12px",
+                  cursor: locked ? "not-allowed" : "pointer",
+                  fontFamily:"inherit", textAlign:"left",
+                  position:"relative", marginBottom: compact ? 4 : 3,
+                  background: active
+                    ? accent + "1c"
+                    : isHov && !locked
+                    ? "rgba(255,255,255,.06)"
+                    : "transparent",
+                  boxShadow: active ? "inset 3px 0 0 " + accent : "none",
+                  opacity: locked ? 0.45 : 1,
+                  transition:"background .12s, opacity .12s",
+                  justifyContent: isCollapsed ? "center" : "flex-start"
+                }}>
+                <span aria-hidden="true" style={{fontSize:compact?21:19,flexShrink:0,lineHeight:1,width:22,textAlign:"center"}}>{t.icon}</span>
+                {!isCollapsed && (
+                  <span style={{fontSize:15,fontWeight:active?700:500,color:active?accent:"rgba(255,255,255,.78)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {t.label}
+                  </span>
+                )}
+                {t.id === "play" && sessionActive && (
+                  <span aria-label="Session in progress" style={{width:8,height:8,borderRadius:"50%",background:"#A8FF3E",flexShrink:0,animation:"savePulse 1.2s ease infinite",position:isCollapsed?"absolute":"static",top:8,right:8}}/>
+                )}
+                {locked && !isCollapsed && (
+                  <span aria-hidden="true" style={{fontSize:12,color:"rgba(255,255,255,.35)",flexShrink:0}}>🔒</span>
+                )}
+                {showKeys && !locked && !isCollapsed && !(t.id === "play" && sessionActive) && (isHov || active) && (
+                  <span aria-hidden="true" style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.4)",border:"1px solid rgba(255,255,255,.14)",borderRadius:5,padding:"1px 6px",flexShrink:0}}>{idx + 1}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── Section C: User block + collapse toggle ── */}
+        <div style={{borderTop:"1px solid rgba(255,255,255,.07)",padding: isCollapsed ? "12px 10px" : "12px 12px",flexShrink:0}}>
+          <button
+            onClick={after(onOpenProfile)}
+            title={isCollapsed ? (authUser.displayName || "Profile") + " · " + rm.label : "Open profile"}
+            aria-label={isCollapsed ? "Open profile" : undefined}
+            style={{
+              display:"flex", alignItems:"center",
+              gap: isCollapsed ? 0 : 11,
+              width:"100%", background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.07)",
+              borderRadius:12, padding: isCollapsed ? "8px" : "10px 10px",
+              cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+              transition:"background .12s",
+              justifyContent: isCollapsed ? "center" : "flex-start"
+            }}>
+            <div style={{
+              width:38, height:38, borderRadius:"50%",
+              background: isAdmin ? rm.bg : "rgba(255,255,255,.08)",
+              border:"1.5px solid " + (isAdmin ? rm.border : "rgba(255,255,255,.18)"),
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontSize:15,fontWeight:700,
+              color: isAdmin ? rm.color : "rgba(255,255,255,.85)",
+              flexShrink:0
+            }}>
+              {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
+            </div>
+            {!isCollapsed && (
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {authUser.displayName || authUser.email}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,minWidth:0}}>
+                  <span style={{fontSize:11,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:rm.color,background:rm.bg,border:"1px solid "+rm.border,borderRadius:99,padding:"1px 8px",flexShrink:0}}>{rm.label}</span>
+                  {authUser.teamName && (
+                    <span style={{fontSize:12,color:"rgba(255,255,255,.45)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{authUser.teamName}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </button>
+
+          {/* Collapse toggle — desktop only (the tablet rail is always collapsed) */}
+          {mode === "desktop" && (
+            <button
+              onClick={onToggleCollapse}
+              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              style={{
+                display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                width:"100%",background:"none",border:"none",
+                borderRadius:8,padding:"8px",marginTop:6,
+                cursor:"pointer",color:"rgba(255,255,255,.45)",fontSize:13,
+                fontFamily:"inherit",transition:"background .12s"
+              }}>
+              <span aria-hidden="true" style={{fontSize:15}}>{isCollapsed ? "»" : "«"}</span>
+              {!isCollapsed && <span>Collapse</span>}
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  var navBase = {
+    height: "100%",
+    display: "flex",
+    flexDirection: "column",
+    background: "rgba(4,10,28,.98)",
+    borderRight: "1px solid rgba(255,255,255,.07)",
+    overflow: "hidden",
+    flexShrink: 0
+  };
+
+  // ── Tablet: icon rail + slide-over drawer ───────────────────────────────────
+  if (compact) {
+    return (
+      <>
+        <nav aria-label="Main navigation" style={Object.assign({}, navBase, { width:72, minWidth:72, zIndex:10 })}>
+          {renderNav(true, "rail")}
+        </nav>
+        {drawerOpen && (
+          <div
+            onClick={function(e){ if (e.target === e.currentTarget) setDrawerOpen(false); }}
+            style={{position:"fixed",inset:0,zIndex:900,background:"rgba(0,0,0,.55)",animation:"fadeIn .16s ease both"}}>
+            <nav aria-label="Main navigation (expanded)" role="dialog" aria-modal="true"
+              style={Object.assign({}, navBase, {
+                position:"absolute", top:0, left:0, bottom:0,
+                width:288, maxWidth:"85vw",
+                boxShadow:"12px 0 48px rgba(0,0,0,.6)",
+                animation:"drawerIn .2s cubic-bezier(.22,1,.36,1) both"
+              })}>
+              <style>{"@keyframes drawerIn{from{transform:translateX(-100%)}to{transform:none}}"}</style>
+              {renderNav(false, "drawer")}
+            </nav>
           </div>
         )}
-      </div>
+      </>
+    );
+  }
 
-      {/* ── Section B: Tab navigation ── */}
-      <div style={{flex:1,overflowY:"auto",overflowX:"hidden",padding: collapsed ? "10px 8px" : "10px 8px"}}>
-        {tabs.map(function(t) {
-          var active = tab === t.id;
-          var isHov  = hovered === t.id;
-          var locked = sessionActive && t.id !== "play";
-          var accent = t.accent;
-
-          return (
-            <button
-              key={t.id}
-              onClick={function(){ if (!locked) onTabClick(t.id); }}
-              onMouseEnter={function(){ setHovered(t.id); }}
-              onMouseLeave={function(){ setHovered(null); }}
-              title={collapsed ? t.label : (locked ? "Finish your session first" : undefined)}
-              style={{
-                display:"flex", alignItems:"center",
-                gap: collapsed ? 0 : 10,
-                width:"100%", border:"none",
-                borderRadius:10, padding: collapsed ? "9px 8px" : "9px 10px",
-                cursor: locked ? "not-allowed" : "pointer",
-                fontFamily:"inherit", textAlign:"left",
-                position:"relative", marginBottom:2,
-                background: active
-                  ? accent + "18"
-                  : isHov && !locked
-                  ? "rgba(255,255,255,.05)"
-                  : "transparent",
-                borderLeft: active ? "3px solid " + accent : "3px solid transparent",
-                opacity: locked ? 0.45 : 1,
-                transition:"background .12s, opacity .12s",
-                justifyContent: collapsed ? "center" : "flex-start"
-              }}>
-              {/* Icon */}
-              <span style={{fontSize:17,flexShrink:0,lineHeight:1}}>{t.icon}</span>
-              {/* Label */}
-              {!collapsed && (
-                <span style={{fontSize:13,fontWeight:active?700:500,color:active?accent:"rgba(255,255,255,.65)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  {t.label}
-                </span>
-              )}
-              {/* Session active pulse on Play */}
-              {t.id === "play" && sessionActive && (
-                <span style={{width:7,height:7,borderRadius:"50%",background:"#A8FF3E",flexShrink:0,animation:"savePulse 1.2s ease infinite",marginLeft:collapsed?0:2}}/>
-              )}
-              {/* Lock icon */}
-              {locked && !collapsed && (
-                <span style={{fontSize:10,color:"rgba(255,255,255,.25)",flexShrink:0}}>🔒</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ── Section C: User profile + collapse toggle ── */}
-      <div style={{borderTop:"1px solid rgba(255,255,255,.06)",padding: collapsed ? "12px 8px" : "12px 10px",flexShrink:0}}>
-        {/* Profile row */}
-        <button
-          onClick={onOpenProfile}
-          title={collapsed ? (authUser.displayName || "Profile") : undefined}
-          style={{
-            display:"flex", alignItems:"center",
-            gap: collapsed ? 0 : 9,
-            width:"100%", background:"none", border:"none",
-            borderRadius:10, padding: collapsed ? "7px" : "7px 6px",
-            cursor:"pointer", fontFamily:"inherit", textAlign:"left",
-            transition:"background .12s",
-            justifyContent: collapsed ? "center" : "flex-start"
-          }}>
-          {/* Avatar */}
-          <div style={{
-            width:32, height:32, borderRadius:"50%",
-            background: authUser.role==="admin" ? "rgba(168,255,62,.15)" : "rgba(255,255,255,.08)",
-            border:"1px solid "+(authUser.role==="admin"?"rgba(168,255,62,.35)":"rgba(255,255,255,.15)"),
-            display:"flex",alignItems:"center",justifyContent:"center",
-            fontSize:13,fontWeight:700,
-            color: authUser.role==="admin" ? SESS_COLOR : "rgba(255,255,255,.82)",
-            flexShrink:0
-          }}>
-            {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
-          </div>
-          {!collapsed && (
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                {authUser.displayName || authUser.email}
-              </div>
-              <div style={{fontSize:9,color:"rgba(255,255,255,.3)",textTransform:"capitalize"}}>{authUser.role}</div>
-            </div>
-          )}
-        </button>
-
-        {/* Collapse toggle */}
-        <button
-          onClick={onToggleCollapse}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          style={{
-            display:"flex",alignItems:"center",justifyContent:"center",
-            width:"100%",background:"none",border:"none",
-            borderRadius:8,padding:"6px",marginTop:4,
-            cursor:"pointer",color:"rgba(255,255,255,.25)",fontSize:13,
-            fontFamily:"inherit",transition:"background .12s"
-          }}>
-          {collapsed ? "›" : "‹"}
-        </button>
-      </div>
-    </div>
+  // ── Desktop: collapsible sidebar ────────────────────────────────────────────
+  var sidebarW = collapsed ? 72 : 256;
+  return (
+    <nav aria-label="Main navigation" style={Object.assign({}, navBase, {
+      width: sidebarW,
+      minWidth: sidebarW,
+      transition: "width .2s cubic-bezier(.22,1,.36,1), min-width .2s cubic-bezier(.22,1,.36,1)",
+      zIndex: 10
+    })}>
+      {renderNav(collapsed, "desktop")}
+    </nav>
   );
 }

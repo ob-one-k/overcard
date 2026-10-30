@@ -1,4 +1,5 @@
 const { Pool, types } = require("pg");
+const crypto = require("crypto");
 
 // Parse BIGINT (int8, oid 20) columns as JS numbers instead of strings
 types.setTypeParser(20, function(val) { return parseInt(val, 10); });
@@ -153,6 +154,70 @@ async function initSchema() {
     // Migration: add audioSegments for per-card audio recording metadata
     await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "audioSegments" JSONB`);
 
+    // Migration: user profile fields (signup collects first/last name + phone; displayName stays the
+    // canonical "First Last" string used everywhere else)
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "firstName" TEXT`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "lastName"  TEXT`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone       TEXT`);
+    await client.query(`UPDATE users SET
+      "firstName" = split_part("displayName", ' ', 1),
+      "lastName"  = CASE WHEN position(' ' in "displayName") > 0
+                         THEN substring("displayName" from position(' ' in "displayName") + 1) ELSE '' END
+      WHERE "firstName" IS NULL`);
+
+    // Migration: owner role — exactly one owner per org, enforced by a partial unique index
+    // Only swap the CHECK when it predates 'owner' — re-adding it every boot would take an
+    // ACCESS EXCLUSIVE lock on users and rescan the table on each deploy
+    const roleCheck = await client.query(
+      "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'users_role_check' AND conrelid = 'users'::regclass"
+    );
+    if (!roleCheck.rows[0] || roleCheck.rows[0].def.indexOf("owner") === -1) {
+      await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+      await client.query(`ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner','admin','user'))`);
+    }
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_org_owner ON users("orgId") WHERE role = 'owner'`);
+    // Orgs created before the owner role existed: promote their earliest admin
+    const promoted = await client.query(`UPDATE users SET role = 'owner' WHERE id IN (
+      SELECT DISTINCT ON ("orgId") id FROM users
+      WHERE role = 'admin' AND "orgId" NOT IN (SELECT "orgId" FROM users WHERE role = 'owner')
+      ORDER BY "orgId", "createdAt", id
+    ) RETURNING id, "orgId"`);
+    promoted.rows.forEach(function(r) { console.log("Owner migration: promoted " + r.id + " to owner of " + r.orgId); });
+
+    // Migration: organization profile fields (editable by the owner)
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS industry    TEXT`);
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS website     TEXT`);
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS phone       TEXT`);
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS address     TEXT`);
+    await client.query(`ALTER TABLE orgs ADD COLUMN IF NOT EXISTS "updatedAt" BIGINT`);
+
+    // Share codes — admins hand these to employees so they can sign up into the org
+    await client.query(`CREATE TABLE IF NOT EXISTS org_invites (
+      id          TEXT PRIMARY KEY,
+      "orgId"     TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      code        TEXT NOT NULL UNIQUE,
+      "createdBy" TEXT REFERENCES users(id) ON DELETE SET NULL,
+      "createdAt" BIGINT NOT NULL,
+      "expiresAt" BIGINT,
+      "maxUses"   INTEGER,
+      uses        INTEGER NOT NULL DEFAULT 0,
+      "revokedAt" BIGINT
+    )`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_org_invites_orgId ON org_invites("orgId")`);
+
+    // Session audio — stored apart from sessions so list queries (SELECT *) never pull blobs
+    await client.query(`CREATE TABLE IF NOT EXISTS session_audio (
+      "sessionId"  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      "orgId"      TEXT NOT NULL,
+      "mimeType"   TEXT NOT NULL,
+      "durationMs" BIGINT,
+      "sizeBytes"  INTEGER NOT NULL,
+      data         BYTEA NOT NULL,
+      "createdAt"  BIGINT NOT NULL
+    )`);
+    await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "hasAudio"        BOOLEAN NOT NULL DEFAULT false`);
+    await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS "audioDurationMs" BIGINT`);
+
     // Seed manifest — tracks which records were seeded and their last-seeded content hash
     // Enables smart re-seeding: refresh unmodified seed records, preserve user edits
     await client.query(`CREATE TABLE IF NOT EXISTS seed_manifest (
@@ -285,7 +350,7 @@ async function setUserTeams(userId, teamIds) {
 
 async function getOrgUsers(orgId) {
   const { rows } = await pool.query(
-    'SELECT id,"orgId","teamId",email,"displayName",role,"createdAt","lastLoginAt" FROM users WHERE "orgId" = $1 ORDER BY "displayName"',
+    'SELECT id,"orgId","teamId",email,"displayName","firstName","lastName",phone,role,"createdAt","lastLoginAt" FROM users WHERE "orgId" = $1 ORDER BY "displayName"',
     [orgId]
   );
   var result = [];
@@ -296,18 +361,36 @@ async function getOrgUsers(orgId) {
   return result;
 }
 
-async function createUser({ id, orgId, teamId, email, passwordHash, displayName, role }) {
+// db is the pool or a transaction client, so signup can create the user atomically with the org/invite
+async function createUser({ id, orgId, teamId, email, passwordHash, firstName, lastName, phone, role }, db) {
   const now   = Date.now();
   const newId = id || uid("u");
-  await pool.query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName",role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-    [newId, orgId, teamId || null, email, passwordHash, displayName, role, now]
+  await (db || pool).query(
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",phone,role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+    [newId, orgId, teamId || null, email, passwordHash, fullName(firstName, lastName), firstName, lastName, phone || null, role, now]
   );
-  return findUserByEmail(email);
+  const { rows } = await (db || pool).query("SELECT * FROM users WHERE id = $1", [newId]);
+  return rows[0];
+}
+
+function fullName(firstName, lastName) {
+  return [firstName, lastName].filter(Boolean).join(" ");
 }
 
 async function updateUser(id, orgId, fields) {
-  const allowed = ["teamId", "displayName", "role", "passwordHash"];
+  const allowed = ["teamId", "displayName", "firstName", "lastName", "phone", "role", "passwordHash"];
+  if (fields.firstName !== undefined || fields.lastName !== undefined) {
+    // Keep displayName in sync with the name parts
+    const cur = await findUserById(id);
+    if (cur) {
+      fields = Object.assign({}, fields, {
+        displayName: fullName(
+          fields.firstName !== undefined ? fields.firstName : cur.firstName,
+          fields.lastName  !== undefined ? fields.lastName  : cur.lastName
+        ),
+      });
+    }
+  }
   const sets = [], vals = [];
   var p = 1;
   allowed.forEach(function(k) {
@@ -336,10 +419,156 @@ async function findOrgById(id) {
   return rows[0] || null;
 }
 
-async function createOrg({ id, name }) {
-  const oid = id || uid("org_");
-  await pool.query('INSERT INTO orgs (id,name,"createdAt") VALUES ($1,$2,$3)', [oid, name, Date.now()]);
-  return findOrgById(oid);
+var ORG_FIELDS = ["name", "industry", "website", "phone", "address"];
+
+async function createOrg(fields, db) {
+  const oid = fields.id || uid("org_");
+  const now = Date.now();
+  await (db || pool).query(
+    'INSERT INTO orgs (id,name,industry,website,phone,address,"createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$7)',
+    [oid, fields.name, fields.industry || null, fields.website || null, fields.phone || null, fields.address || null, now]
+  );
+  const { rows } = await (db || pool).query("SELECT * FROM orgs WHERE id = $1", [oid]);
+  return rows[0];
+}
+
+async function updateOrg(id, fields) {
+  const sets = [], vals = [];
+  var p = 1;
+  ORG_FIELDS.forEach(function(k) {
+    if (fields[k] !== undefined) {
+      sets.push(k + " = $" + p);
+      vals.push(fields[k]);
+      p++;
+    }
+  });
+  if (!sets.length) return findOrgById(id);
+  sets.push('"updatedAt" = $' + p); vals.push(Date.now()); p++;
+  vals.push(id);
+  await pool.query("UPDATE orgs SET " + sets.join(", ") + " WHERE id = $" + p, vals);
+  return findOrgById(id);
+}
+
+async function getOrgOwner(orgId) {
+  const { rows } = await pool.query(
+    'SELECT id,"displayName",email FROM users WHERE "orgId" = $1 AND role = \'owner\'', [orgId]
+  );
+  return rows[0] || null;
+}
+
+// Swap ownership atomically: the old owner becomes an admin first so the
+// one-owner-per-org unique index is never violated mid-transaction
+async function transferOwnership(orgId, fromUserId, toUserId) {
+  await withTransaction(async function(client) {
+    const demoted = await client.query('UPDATE users SET role = \'admin\' WHERE id = $1 AND "orgId" = $2 AND role = \'owner\'', [fromUserId, orgId]);
+    if (demoted.rowCount !== 1) { var e = new Error("Caller is no longer the owner"); e.code = "NOT_OWNER"; throw e; }
+    const r = await client.query('UPDATE users SET role = \'owner\' WHERE id = $1 AND "orgId" = $2', [toUserId, orgId]);
+    if (r.rowCount !== 1) throw new Error("Transfer target not found");
+  });
+}
+
+// True when every id (users or teams) belongs to orgId — guards team/membership writes
+// against cross-org ids. table is from a fixed whitelist, never user input.
+async function allInOrg(table, ids, orgId) {
+  if (["users", "teams"].indexOf(table) === -1) throw new Error("allInOrg: bad table");
+  var list = (ids || []).filter(Boolean);
+  if (!list.length) return true;
+  if (!list.every(function(id) { return typeof id === "string"; })) return false;
+  const { rows } = await pool.query(
+    "SELECT COUNT(DISTINCT id) AS n FROM " + table + ' WHERE id = ANY($1::text[]) AND "orgId" = $2',
+    [list, orgId]
+  );
+  return parseInt(rows[0].n, 10) === new Set(list).size;
+}
+
+// Removes a demoted admin from every team they administered
+async function removeTeamAdminEverywhere(userId) {
+  await pool.query('DELETE FROM team_admins WHERE "userId" = $1', [userId]);
+}
+
+// ─── SHARE CODES (org invites) ────────────────────────────────────────────────
+// Unambiguous alphabet (no 0/O/1/I/L) — 8 chars ≈ 40 bits, stored without the display dash
+var INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+function generateInviteCode() {
+  var out = "";
+  for (var i = 0; i < 8; i++) out += INVITE_ALPHABET[crypto.randomInt(INVITE_ALPHABET.length)];
+  return out;
+}
+
+function normalizeInviteCode(code) {
+  return String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+async function createInvite({ orgId, createdBy, expiresAt, maxUses }) {
+  // Retry on the (astronomically unlikely) unique collision
+  for (var attempt = 0; attempt < 5; attempt++) {
+    const id = uid("inv_");
+    const code = generateInviteCode();
+    try {
+      await pool.query(
+        'INSERT INTO org_invites (id,"orgId",code,"createdBy","createdAt","expiresAt","maxUses") VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [id, orgId, code, createdBy, Date.now(), expiresAt || null, maxUses || null]
+      );
+      const { rows } = await pool.query("SELECT * FROM org_invites WHERE id = $1", [id]);
+      return rows[0];
+    } catch (err) {
+      if (err.code !== "23505") throw err;
+    }
+  }
+  throw new Error("Could not generate a unique share code");
+}
+
+async function getOrgInvites(orgId) {
+  const { rows } = await pool.query(
+    'SELECT i.*, (SELECT "displayName" FROM users WHERE id = i."createdBy") AS "createdByName"' +
+    ' FROM org_invites i WHERE i."orgId" = $1 ORDER BY i."createdAt" DESC',
+    [orgId]
+  );
+  return rows;
+}
+
+async function revokeInvite(id, orgId) {
+  const r = await pool.query(
+    'UPDATE org_invites SET "revokedAt" = $1 WHERE id = $2 AND "orgId" = $3 AND "revokedAt" IS NULL',
+    [Date.now(), id, orgId]
+  );
+  return r.rowCount > 0;
+}
+
+var INVITE_USABLE_SQL = '"revokedAt" IS NULL AND ("expiresAt" IS NULL OR "expiresAt" > $2) AND ("maxUses" IS NULL OR uses < "maxUses")';
+
+// Read-only lookup for the signup form ("You're joining Apex Sales")
+async function findUsableInvite(code) {
+  const { rows } = await pool.query(
+    'SELECT i.id, i."orgId", o.name AS "orgName" FROM org_invites i JOIN orgs o ON o.id = i."orgId"' +
+    ' WHERE i.code = $1 AND i."revokedAt" IS NULL AND (i."expiresAt" IS NULL OR i."expiresAt" > $2)' +
+    ' AND (i."maxUses" IS NULL OR i.uses < i."maxUses")',
+    [normalizeInviteCode(code), Date.now()]
+  );
+  return rows[0] || null;
+}
+
+// Signup with a share code: claim one use of the code and create the user in one transaction,
+// so a failed insert (e.g. duplicate email) never burns a use. Returns null if the code is unusable.
+async function signupWithInvite(code, userFields) {
+  return withTransaction(async function(client) {
+    const claimed = await client.query(
+      'UPDATE org_invites SET uses = uses + 1 WHERE code = $1 AND ' + INVITE_USABLE_SQL + ' RETURNING "orgId"',
+      [normalizeInviteCode(code), Date.now()]
+    );
+    if (!claimed.rows[0]) return null;
+    return createUser(Object.assign({}, userFields, { orgId: claimed.rows[0].orgId, role: "user" }), client);
+  });
+}
+
+// Org creation (master code already verified): org + its owner in one transaction
+async function createOrgWithOwner(orgFields, ownerFields) {
+  return withTransaction(async function(client) {
+    const org  = await createOrg(orgFields, client);
+    const user = await createUser(Object.assign({}, ownerFields, { orgId: org.id, role: "owner" }), client);
+    return { org: org, user: user };
+  });
 }
 
 // ─── TEAMS ────────────────────────────────────────────────────────────────────
@@ -529,7 +758,8 @@ function buildSessionWhere(scope, orgId, userId, filters) {
 async function getSessions(scope, orgId, userId, filters) {
   const { where, vals } = buildSessionWhere(scope, orgId, userId, filters || {});
   const { rows } = await pool.query(
-    'SELECT * FROM sessions' + where + ' ORDER BY "startTs" DESC', vals
+    'SELECT *, (SELECT "displayName" FROM users WHERE users.id = sessions."userId") AS "userName"' +
+    ' FROM sessions' + where + ' ORDER BY "startTs" DESC', vals
   );
   const result = rows.map(parseSession);
 
@@ -553,7 +783,8 @@ async function getSessions(scope, orgId, userId, filters) {
     }
     const sharedSql =
       'SELECT s.*, ss.context AS "_shareContext", ss."fromUserId" AS "_shareFromUserId",' +
-      ' (SELECT "displayName" FROM users WHERE id = ss."fromUserId") AS "_shareFromName"' +
+      ' (SELECT "displayName" FROM users WHERE id = ss."fromUserId") AS "_shareFromName",' +
+      ' (SELECT "displayName" FROM users WHERE id = s."userId") AS "userName"' +
       ' FROM sessions s JOIN session_shares ss ON ss."sessionId" = s.id' +
       ' WHERE ' + sharedConds.join(" AND ");
     const { rows: sharedRows } = await pool.query(sharedSql, sharedVals);
@@ -614,13 +845,14 @@ async function upsertSession(session, userId, orgId) {
   const { rows } = await pool.query(`
     INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
       name,account,contact,mode,status,outcome,"startTs","endTs",sold,"soldCardId","soldCardTitle",
-      events,notes,metrics,"audioSegments")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      events,notes,metrics,"audioSegments","audioDurationMs")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
     ON CONFLICT (id) DO UPDATE SET
       "deckId"=$4,"deckName"=$5,"deckColor"=$6,"deckIcon"=$7,
       name=$8,account=$9,contact=$10,mode=$11,status=$12,outcome=$13,
       "startTs"=$14,"endTs"=$15,sold=$16,"soldCardId"=$17,"soldCardTitle"=$18,
-      events=$19,notes=$20,metrics=$21,"audioSegments"=$22
+      events=$19,notes=$20,metrics=$21,"audioSegments"=$22,
+      "audioDurationMs"=COALESCE($23, sessions."audioDurationMs")
     WHERE sessions."userId"=$3
     RETURNING *
   `, [
@@ -632,8 +864,40 @@ async function upsertSession(session, userId, orgId) {
     session.soldCardId || null, session.soldCardTitle || null,
     JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
     JSON.stringify(session.audioSegments || null),
+    Number.isFinite(session.audioDurationMs) ? Math.round(session.audioDurationMs) : null,
   ]);
   return rows[0] ? parseSession(rows[0]) : null;
+}
+
+// ─── SESSION AUDIO ────────────────────────────────────────────────────────────
+async function saveSessionAudio(sessionId, orgId, mimeType, durationMs, buf) {
+  await withTransaction(async function(client) {
+    await client.query(
+      'INSERT INTO session_audio ("sessionId","orgId","mimeType","durationMs","sizeBytes",data,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7)' +
+      ' ON CONFLICT ("sessionId") DO UPDATE SET "mimeType"=$3,"durationMs"=$4,"sizeBytes"=$5,data=$6,"createdAt"=$7',
+      [sessionId, orgId, mimeType, durationMs, buf.length, buf, Date.now()]
+    );
+    await client.query(
+      'UPDATE sessions SET "hasAudio" = true, "audioDurationMs" = COALESCE($2, "audioDurationMs") WHERE id = $1',
+      [sessionId, durationMs]
+    );
+  });
+}
+
+async function getSessionAudioMeta(sessionId) {
+  const { rows } = await pool.query(
+    'SELECT "mimeType","durationMs","sizeBytes" FROM session_audio WHERE "sessionId" = $1', [sessionId]
+  );
+  return rows[0] || null;
+}
+
+// start is 0-based; bytea substring is 1-based
+async function getSessionAudioRange(sessionId, start, length) {
+  const { rows } = await pool.query(
+    'SELECT substring(data from $2 for $3) AS chunk FROM session_audio WHERE "sessionId" = $1',
+    [sessionId, start + 1, length]
+  );
+  return rows[0] ? rows[0].chunk : null;
 }
 
 async function deleteSession(id, userId) {
@@ -743,7 +1007,9 @@ module.exports = {
   // users
   findUserByEmail, findUserById, updateLastLogin, getOrgUsers, createUser, updateUser, deleteUser,
   // orgs
-  findOrgById, createOrg,
+  findOrgById, createOrg, updateOrg, getOrgOwner, transferOwnership, removeTeamAdminEverywhere, allInOrg, ORG_FIELDS,
+  // share codes + signup
+  createInvite, getOrgInvites, revokeInvite, findUsableInvite, signupWithInvite, createOrgWithOwner, normalizeInviteCode,
   // teams
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches,
@@ -752,6 +1018,7 @@ module.exports = {
   getDeckAccess, setDeckAccess,
   // sessions
   getSessions, getSessionById, upsertSession, deleteSession, insertSession,
+  saveSessionAudio, getSessionAudioMeta, getSessionAudioRange,
   // feedback
   getFeedback, createFeedback, updateFeedback, deleteFeedback, getFeedbackById,
   // shares

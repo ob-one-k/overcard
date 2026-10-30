@@ -1,14 +1,14 @@
 const express = require("express");
 const router  = express.Router();
 const { getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, uid, getDeckAccess, setDeckAccess, getUserTeams } = require("../db");
-const { requireAuth } = require("../auth");
+const { requireAuth, isAdminRole } = require("../auth");
 
 router.use(requireAuth);
 
 // GET /api/decks
 router.get("/", async function(req, res, next) {
   try {
-    if (req.user.role === "admin") {
+    if (isAdminRole(req.user.role)) {
       return res.json(await getOrgDecks(req.user.orgId));
     }
     // Regular users: filter by visibility/access
@@ -20,7 +20,7 @@ router.get("/", async function(req, res, next) {
 // POST /api/decks  (admin-only)
 router.post("/", async function(req, res, next) {
   try {
-    if (req.user.role !== "admin") {
+    if (!isAdminRole(req.user.role)) {
       return res.status(403).json({ error: "Only admins can create decks" });
     }
     const { name, color, icon, visibility, accessList } = req.body || {};
@@ -46,7 +46,7 @@ router.post("/", async function(req, res, next) {
 // PUT /api/decks/:id  (admin-only)
 router.put("/:id", async function(req, res, next) {
   try {
-    if (req.user.role !== "admin") {
+    if (!isAdminRole(req.user.role)) {
       return res.status(403).json({ error: "Only admins can edit decks" });
     }
     const existing = await getDeckById(req.params.id);
@@ -69,7 +69,7 @@ router.put("/:id", async function(req, res, next) {
 // GET /api/decks/:id/access  (admin-only)
 router.get("/:id/access", async function(req, res, next) {
   try {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    if (!isAdminRole(req.user.role)) return res.status(403).json({ error: "Admin only" });
     var deck = await getDeckById(req.params.id);
     if (!deck) return res.status(404).json({ error: "Deck not found" });
     if (deck.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
@@ -80,7 +80,7 @@ router.get("/:id/access", async function(req, res, next) {
 // PUT /api/decks/:id/access  (admin-only)
 router.put("/:id/access", async function(req, res, next) {
   try {
-    if (req.user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    if (!isAdminRole(req.user.role)) return res.status(403).json({ error: "Admin only" });
     var deck = await getDeckById(req.params.id);
     if (!deck) return res.status(404).json({ error: "Deck not found" });
     if (deck.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
@@ -92,7 +92,7 @@ router.put("/:id/access", async function(req, res, next) {
 // DELETE /api/decks/:id  (admin-only)
 router.delete("/:id", async function(req, res, next) {
   try {
-    if (req.user.role !== "admin") {
+    if (!isAdminRole(req.user.role)) {
       return res.status(403).json({ error: "Only admins can delete decks" });
     }
     const existing = await getDeckById(req.params.id);
