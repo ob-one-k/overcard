@@ -5,15 +5,21 @@ const {
   findUserByEmail, updateLastLogin, findUserById, getTeamNames, getUserTeams, getAdminTeamIds,
   setActiveToken, clearActiveTokenIfMatches, findOrgById,
   findUsableInvite, signupWithInvite, createOrgWithOwner,
+  findPasswordReset, usePasswordReset, setPasswordHash,
 } = require("../db");
 const realtime = require("../realtime");
 const { jwtSign, checkPassword, hashPassword, setCookie, clearCookie, requireAuth, isAdminRole } = require("../auth");
 const { limiter } = require("../limits");
-const { validateNewUser, cleanNewUser, validateOrg, cleanOrg } = require("../validate");
+const { validateNewUser, cleanNewUser, validateOrg, cleanOrg, validatePassword } = require("../validate");
 
 var loginLimiter  = limiter(15 * 60 * 1000, 10, "Too many login attempts, please try again later");
 // Signup endpoints share one limiter — share codes and the master code must not be brute-forceable
 var signupLimiter = limiter(15 * 60 * 1000, 10);
+// Reset links: tokens are 256-bit, so this only stops hammering
+var resetLimiter = limiter(15 * 60 * 1000, 20);
+// Changing your password re-checks the current one — limit guesses per account, not just per IP
+var changePwLimiter = limiter(15 * 60 * 1000, 10, "Too many attempts, please try again later",
+  function(req) { return "pw:" + req.user.id; });
 
 // Hash both sides so timingSafeEqual gets equal-length buffers and the code length doesn't leak
 function masterCodeMatches(input) {
@@ -27,9 +33,10 @@ function masterCodeMatches(input) {
 // Issue a fresh single-session token and the auth cookie; returns the login response body.
 // One device at a time: any other device signed in to this account is signed out now —
 // its in-progress run is saved as abandoned and its live stream told why.
-async function startSession(res, user) {
+//   opts.rotating — the same device is changing its own session (password change): no kick
+async function startSession(res, user, opts) {
   const sessionToken = randomUUID();
-  if (user.activeToken) await realtime.signOutDevices(user.id, "replaced");
+  if (user.activeToken && !(opts && opts.rotating)) await realtime.signOutDevices(user.id, "replaced");
   await setActiveToken(user.id, sessionToken);
   await updateLastLogin(user.id);
   const token = jwtSign({ sub: user.id, role: user.role, orgId: user.orgId, sid: sessionToken });
@@ -196,6 +203,51 @@ router.post("/refresh", requireAuth, async function(req, res, next) {
     const token = jwtSign({ sub: req.user.id, role: req.user.role, orgId: req.user.orgId, sid: req.authSid });
     setCookie(res, token);
     res.json({ ok: true, _token: token });
+  } catch (err) { next(err); }
+});
+
+// ─── PASSWORDS ────────────────────────────────────────────────────────────────
+
+// POST /api/auth/change-password { currentPassword, newPassword } — signed-in user.
+// This device stays signed in (new session id); anything else using the account is signed out.
+router.post("/change-password", requireAuth, changePwLimiter, async function(req, res, next) {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof currentPassword !== "string" || !currentPassword) return res.status(400).json({ error: "Enter your current password" });
+    const user = await findUserById(req.user.id);
+    if (!user || !(await checkPassword(currentPassword, user.passwordHash))) {
+      return res.status(403).json({ error: "Your current password is incorrect" });
+    }
+    var pwErr = validatePassword(newPassword);
+    if (pwErr) return res.status(400).json({ error: pwErr });
+    if (await checkPassword(newPassword, user.passwordHash)) return res.status(400).json({ error: "Choose a password you haven't used here" });
+    await setPasswordHash(user.id, await hashPassword(newPassword));
+    const body = await startSession(res, user, { rotating: true });
+    realtime.closeUser(user.id, "password", { keepSid: req.authSid });
+    res.json({ ok: true, _token: body._token });
+  } catch (err) { next(err); }
+});
+
+// GET /api/auth/reset/:token — preview a reset link (whose account it is for)
+router.get("/reset/:token", resetLimiter, async function(req, res, next) {
+  try {
+    const r = await findPasswordReset(req.params.token);
+    if (!r) return res.status(404).json({ error: "This reset link is invalid, has expired or was already used. Ask your admin for a new one." });
+    res.json({ firstName: r.firstName, email: r.email, orgName: r.orgName, expiresAt: r.expiresAt });
+  } catch (err) { next(err); }
+});
+
+// POST /api/auth/reset { token, password } — set a new password with a one-time link.
+// Every device signed in to the account is signed out; the user then signs in normally.
+router.post("/reset", resetLimiter, async function(req, res, next) {
+  try {
+    const { token, password } = req.body || {};
+    var pwErr = validatePassword(password);
+    if (pwErr) return res.status(400).json({ error: pwErr });
+    const userId = await usePasswordReset(String(token || ""), await hashPassword(password));
+    if (!userId) return res.status(404).json({ error: "This reset link is invalid, has expired or was already used. Ask your admin for a new one." });
+    await realtime.signOutDevices(userId, "password");
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

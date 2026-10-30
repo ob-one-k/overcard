@@ -24,6 +24,7 @@ var loaders = {
   cards:    function() { return import("./components/Cards"); },
   admin:    function() { return import("./components/AdminPanel"); },
   signup:   function() { return import("./components/Signup"); },
+  reset:    function() { return import("./components/ResetPassword"); },
   palette:  function() { return import("./components/CommandPalette"); },
 };
 function lazyNamed(key, name) {
@@ -36,6 +37,7 @@ var CardsTab       = lazyNamed("cards", "CardsTab");
 var ObjectionsTab  = lazyNamed("cards", "ObjectionsTab");
 var AdminPanel     = lazyNamed("admin", "AdminPanel");
 var SignupScreen   = lazyNamed("signup", "SignupScreen");
+var ResetPasswordScreen = lazyNamed("reset", "ResetPasswordScreen");
 var CommandPalette = lazyNamed("palette", "CommandPalette");
 function prefetchChunks(isAdmin, isDesktop) {
   var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home"].concat(isAdmin ? ["admin"] : []).concat(isDesktop ? ["palette"] : []);
@@ -88,6 +90,10 @@ export default function App() {
     try { return new URLSearchParams(window.location.search).get("join") || ""; } catch (_) { return ""; }
   });
   var [showSignup, setShowSignup] = useState(!!joinCode);
+  // Password reset links look like /?reset=TOKEN
+  var [resetToken, setResetToken] = useState(function() {
+    try { return new URLSearchParams(window.location.search).get("reset") || ""; } catch (_) { return ""; }
+  });
 
   function handleLogin(u) {
     clearCache(); setKickReason(null); setShowSignup(false); setAuthUser(syncBrand(u));
@@ -195,6 +201,15 @@ export default function App() {
   // Theme the app with the signed-in org's accent (reset to the default when signed out)
   setAccentColor(authUser ? authUser.orgAccent : null);
 
+  if (resetToken) return (
+    <Suspense fallback={<div style={{minHeight:"100vh",background:"#060d1a"}}/>}>
+    <ResetPasswordScreen token={resetToken} onDone={function() {
+      try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
+      setResetToken("");
+      retryAuth();   // a completed reset signed this account out everywhere — re-check
+    }}/>
+    </Suspense>
+  );
   if (!authUser && showSignup) return (
     <Suspense fallback={<div style={{minHeight:"100vh",background:"#060d1a"}}/>}>
     <SignupScreen

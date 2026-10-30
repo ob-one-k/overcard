@@ -5,7 +5,7 @@ const {
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, uid,
   setUserTeams, getUserTeams, setActiveToken,
   transferOwnership, removeTeamAdminEverywhere, allInOrg,
-  createInvite, getOrgInvites, revokeInvite,
+  createInvite, getOrgInvites, revokeInvite, createPasswordReset,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
 const realtime = require("../realtime");
@@ -131,6 +131,19 @@ router.put("/users/:id", async function(req, res, next) {
     // Their open app re-reads its profile (role/teams) and rejoins the right live channels
     realtime.refreshUser(req.params.id);
     res.json(stripSecrets(updated));
+  } catch (err) { next(err); }
+});
+
+// POST /api/admin/users/:id/reset-link — one-time link (1 hour) the user opens to choose a
+// new password. Same rules as resetting it directly. The raw token is returned once only.
+router.post("/users/:id/reset-link", async function(req, res, next) {
+  try {
+    const target = await findUserById(req.params.id);
+    if (!target || target.orgId !== req.user.orgId) return res.status(404).json({ error: "User not found" });
+    if (target.id === req.user.id) return res.status(400).json({ error: "Change your own password from your profile" });
+    if (target.role === "owner") return res.status(403).json({ error: "The owner resets their password from their profile" });
+    if (!canManage(req.user, target)) return res.status(403).json({ error: "Only the owner can reset an admin's password" });
+    res.json(await createPasswordReset(target.id, req.user.id));
   } catch (err) { next(err); }
 });
 

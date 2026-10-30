@@ -779,6 +779,58 @@ async function deleteDeck(id, orgId) {
   await pool.query('DELETE FROM decks WHERE id = $1 AND "orgId" = $2', [id, orgId]);
 }
 
+// ─── PASSWORD RESETS ──────────────────────────────────────────────────────────
+var RESET_TTL_MS = 60 * 60 * 1000;   // 1 hour
+
+function hashResetToken(token) { return crypto.createHash("sha256").update(String(token)).digest("hex"); }
+
+// Issue a one-time reset token for userId (createdBy: the admin, or null for the owner
+// recovery command). Earlier unused tokens for the user stop working. Returns the raw token
+// — it is never stored and can't be recovered later.
+async function createPasswordReset(userId, createdBy) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const now = Date.now();
+  await withTransaction(async function(client) {
+    await client.query('UPDATE password_resets SET "usedAt"=$1 WHERE "userId"=$2 AND "usedAt" IS NULL', [now, userId]);
+    await client.query(
+      'INSERT INTO password_resets (id,"userId","tokenHash","createdBy","createdAt","expiresAt") VALUES ($1,$2,$3,$4,$5,$6)',
+      [uid("pr"), userId, hashResetToken(token), createdBy || null, now, now + RESET_TTL_MS]
+    );
+  });
+  return { token: token, expiresAt: now + RESET_TTL_MS };
+}
+
+// The usable reset for a raw token, with who it is for — or null (unknown, used, expired)
+async function findPasswordReset(token) {
+  if (typeof token !== "string" || token.length < 20 || token.length > 100) return null;
+  const { rows } = await pool.query(
+    'SELECT r.id, r."userId", r."expiresAt", u."firstName", u.email, o.name AS "orgName"' +
+    ' FROM password_resets r JOIN users u ON u.id = r."userId" JOIN orgs o ON o.id = u."orgId"' +
+    ' WHERE r."tokenHash" = $1 AND r."usedAt" IS NULL AND r."expiresAt" > $2',
+    [hashResetToken(token), Date.now()]
+  );
+  return rows[0] || null;
+}
+
+// Spend the token and set the new password in one transaction. Signs the user out
+// everywhere (activeToken cleared). false when the token was already used / expired.
+async function usePasswordReset(token, passwordHash) {
+  return withTransaction(async function(client) {
+    const r = await client.query(
+      'UPDATE password_resets SET "usedAt"=$1 WHERE "tokenHash"=$2 AND "usedAt" IS NULL AND "expiresAt" > $1 RETURNING "userId"',
+      [Date.now(), hashResetToken(token)]
+    );
+    if (!r.rows[0]) return null;
+    const userId = r.rows[0].userId;
+    await client.query('UPDATE users SET "passwordHash"=$1, "activeToken"=NULL WHERE id=$2', [passwordHash, userId]);
+    return userId;
+  });
+}
+
+async function setPasswordHash(userId, passwordHash) {
+  await pool.query('UPDATE users SET "passwordHash"=$1 WHERE id=$2', [passwordHash, userId]);
+}
+
 // ─── SESSIONS ─────────────────────────────────────────────────────────────────
 function buildSessionWhere(scope, orgId, userId, filters) {
   const conds = [];
@@ -1209,6 +1261,8 @@ module.exports = {
   getTeamNames,
   getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
+  // passwords
+  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash,
   // sessions
   getSessions, getSessionById, upsertSession,
   startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, deleteSession, insertSession,

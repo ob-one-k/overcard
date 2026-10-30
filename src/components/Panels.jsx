@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
@@ -326,6 +326,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   var [selOrg,  setSelOrg]  = useState(null);   // null | DEV_ORGS entry
   var [showPicker, setShowPicker] = useState(false);
   var [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false);
+  var [forgotOpen, setForgotOpen] = useState(false);
 
   function pickOrg(org) {
     setSelOrg(org);
@@ -516,10 +517,22 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
           style={inp} autoFocus autoComplete="email"/>
       </div>
       <div>
-        <label style={lbl}>Password</label>
+        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8}}>
+          <label style={lbl}>Password</label>
+          <button type="button" onClick={function(){ setForgotOpen(!forgotOpen); }} aria-expanded={forgotOpen}
+            style={{background:"none",border:"none",color:"#00B4FF",cursor:"pointer",fontFamily:"inherit",fontSize:F.small - 1,fontWeight:600,padding:"2px 0"}}>
+            Forgot password?
+          </button>
+        </div>
         <input type="password" value={pass} onChange={function(e){setPass(e.target.value);}} placeholder="••••••••"
           style={inp} autoComplete="current-password"/>
       </div>
+      {forgotOpen && (
+        <div style={{background:"rgba(0,180,255,.07)",border:"1px solid rgba(0,180,255,.25)",borderRadius:12,padding:"12px 14px",fontSize:F.small - 1,color:"rgba(255,255,255,.75)",lineHeight:1.55}}>
+          Ask an admin in your organization for a <strong style={{color:"#fff"}}>password reset link</strong> (Admin → People → your name → Reset password). The link works once, for one hour, and lets you choose a new password.
+          <div style={{marginTop:6,color:"rgba(255,255,255,.5)"}}>Organization owners can get a reset link from whoever runs the OverCard server.</div>
+        </div>
+      )}
       <button type="submit" disabled={busy || alreadyLoggedIn}
         style={Object.assign({},solidBtn(SESS_COLOR),{marginTop:2,fontSize:F.btn,padding:F.btnPad,borderRadius:big ? 14 : 14,opacity:(busy||alreadyLoggedIn)?0.6:1})}>
         {busy ? "Signing in…" : "Sign In"}
@@ -584,6 +597,58 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
 }
 
 // ─── PROFILE SHEET ────────────────────────────────────────────────────────────
+// Change your own password (needs the current one). This device stays signed in with a
+// fresh session; anything else using the account is signed out.
+function ChangePassword() {
+  var [open, setOpen] = useState(false);
+  var [cur, setCur] = useState("");
+  var [pw, setPw] = useState("");
+  var [confirm, setConfirm] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [msg, setMsg] = useState(null);   // { ok, text }
+  function problem(p) {
+    if (!p || p.length < 8) return "Use at least 8 characters";
+    if (!/[A-Z]/.test(p)) return "Add an uppercase letter";
+    if (!/[0-9]/.test(p)) return "Add a digit";
+    return null;
+  }
+  function submit(e) {
+    e.preventDefault();
+    var p = problem(pw);
+    if (!cur) { setMsg({ text: "Enter your current password" }); return; }
+    if (p) { setMsg({ text: p }); return; }
+    if (pw !== confirm) { setMsg({ text: "The new passwords don't match" }); return; }
+    setBusy(true); setMsg(null);
+    apiPost("/auth/change-password", { currentPassword: cur, newPassword: pw })
+      .then(function(r) {
+        if (r && r._token) setStoredToken(r._token);
+        setCur(""); setPw(""); setConfirm(""); setOpen(false);
+        setMsg({ ok: true, text: "Password changed." });
+      })
+      .catch(function(err) { setMsg({ text: err.message || "Couldn't change the password" }); })
+      .finally(function() { setBusy(false); });
+  }
+  if (!open) return (
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <button onClick={function(){ setOpen(true); setMsg(null); }} style={Object.assign({}, ghostBtn(), {padding:"11px"})}>Change password</button>
+      {msg && msg.ok && <div role="status" style={{fontSize:12,color:"#66BB6A",textAlign:"center"}}>✓ {msg.text}</div>}
+    </div>
+  );
+  return (
+    <form onSubmit={submit} style={{display:"flex",flexDirection:"column",gap:10,background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:12}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>Change password</div>
+      <input type="password" autoComplete="current-password" placeholder="Current password" value={cur} onChange={function(e){ setCur(e.target.value); }} style={inputSt({marginBottom:0})}/>
+      <input type="password" autoComplete="new-password" placeholder="New password (8+, 1 uppercase, 1 digit)" value={pw} onChange={function(e){ setPw(e.target.value); }} style={inputSt({marginBottom:0})}/>
+      <input type="password" autoComplete="new-password" placeholder="Confirm new password" value={confirm} onChange={function(e){ setConfirm(e.target.value); }} style={inputSt({marginBottom:0})}/>
+      {msg && !msg.ok && <div role="alert" style={{fontSize:12,color:"#EF5350"}}>{msg.text}</div>}
+      <div style={{display:"flex",gap:8}}>
+        <button type="button" onClick={function(){ setOpen(false); setMsg(null); }} style={Object.assign({}, ghostBtn(), {flex:1})}>Cancel</button>
+        <button type="submit" disabled={busy} style={Object.assign({}, solidBtn("#1565C0"), {flex:2})}>{busy ? "Saving…" : "Update password"}</button>
+      </div>
+    </form>
+  );
+}
+
 export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
   var desktop = useContext(DesktopCtx);
   var [busy, setBusy] = useState(false);
@@ -617,6 +682,7 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
         {authUser.orgName && <span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:10,padding:"2px 10px 2px 3px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.55)",border:"1px solid rgba(255,255,255,.1)"}}><OrgMark authUser={authUser} size={18}/>{authUser.orgName}</span>}
         {teamName && <span style={{fontSize:10,padding:"3px 10px",borderRadius:99,background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.45)",border:"1px solid rgba(255,255,255,.1)"}}>{teamName}</span>}
       </div>
+      <ChangePassword/>
       <button onClick={logout} disabled={busy}
         style={Object.assign({},ghostBtn(),{padding:"11px",marginTop:4,color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>
         {busy ? "Signing out…" : "Sign Out"}
@@ -633,9 +699,9 @@ export function ProfileSheet({ authUser, teamName, onLogout, onClose }) {
   }
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
+    <div style={overlayFill(250)}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both",fontFamily:"inherit"}}>
+      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",padding:"0 0 32px",maxHeight:SHEET_MAX_H,overflowY:"auto",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both",fontFamily:"inherit"}}>
         <Handle/>
         <div style={{padding:"4px 20px 20px",borderBottom:"1px solid rgba(255,255,255,.07)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>Profile</div>

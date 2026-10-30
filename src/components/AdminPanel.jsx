@@ -3,7 +3,7 @@ import { cachedGet, peek, useCacheVersion } from "../lib/dataCache";
 import { LiveNow } from "./LiveMonitor";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
@@ -706,6 +706,95 @@ function RosterOverview({ users, teams, onOpen, onOpenSession }) {
   );
 }
 
+// ─── RESET PASSWORD DIALOG ────────────────────────────────────────────────────
+// Default: a one-time link (valid 1 hour) the admin sends the person, who then picks their
+// own password — the admin never knows it. Fallback: set a temporary password directly.
+// Either way the person is signed out of every device.
+function ResetPasswordDialog({ user, onClose, onDone }) {
+  var desktop = useContext(DesktopCtx);
+  var [link, setLink] = useState(null);       // { url, expiresAt }
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var [copied, setCopied] = useState(false);
+  var [manual, setManual] = useState(false);
+  var [pw, setPw] = useState("");
+
+  function makeLink() {
+    setBusy(true); setErr("");
+    apiPost("/admin/users/" + user.id + "/reset-link")
+      .then(function(r) { setLink({ url: window.location.origin + "/?reset=" + r.token, expiresAt: r.expiresAt }); })
+      .catch(function(e) { setErr(e.message || "Couldn't create a link"); })
+      .finally(function() { setBusy(false); });
+  }
+  function copy() {
+    try { navigator.clipboard.writeText(link.url).then(function() { setCopied(true); setTimeout(function(){ setCopied(false); }, 2000); }); } catch (_) {}
+  }
+  function setTemp(e) {
+    e.preventDefault();
+    if (pw.length < 8 || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw)) { setErr("Use 8+ characters with an uppercase letter and a digit"); return; }
+    setBusy(true); setErr("");
+    apiPost("/admin/users/" + user.id + "/reset-password", { password: pw })
+      .then(function() { onDone("Temporary password set for " + user.displayName); onClose(); })
+      .catch(function(e2) { setErr(e2.message || "Error resetting password"); })
+      .finally(function() { setBusy(false); });
+  }
+
+  var body = (
+    <div style={{padding:"18px 20px 22px",display:"flex",flexDirection:"column",gap:14}}>
+      {!link && !manual && (
+        <>
+          <div style={{fontSize:14,color:"rgba(255,255,255,.75)",lineHeight:1.6}}>
+            Create a one-time link and send it to <strong style={{color:"#fff"}}>{user.displayName}</strong>. They open it to choose a new password. It works once and expires after an hour; creating another link cancels this one.
+          </div>
+          <button onClick={makeLink} disabled={busy} style={solidBtn("#1565C0")}>{busy ? "Creating…" : "Create reset link"}</button>
+          <button onClick={function(){ setManual(true); setErr(""); }} style={{background:"none",border:"none",color:"rgba(255,255,255,.5)",fontSize:13,cursor:"pointer",fontFamily:"inherit",textDecoration:"underline"}}>Set a temporary password instead</button>
+        </>
+      )}
+      {link && (
+        <>
+          <div style={{fontSize:14,color:"rgba(255,255,255,.75)",lineHeight:1.6}}>
+            Send this link to {user.displayName} (for example by text or chat). It expires at <strong style={{color:"#fff"}}>{new Date(link.expiresAt).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}</strong>. Their current password keeps working until they use it.
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"stretch"}}>
+            <input readOnly value={link.url} onFocus={function(e){ e.target.select(); }} aria-label="Reset link"
+              style={inputSt({marginBottom:0,flex:1,fontSize:12,fontFamily:"monospace"})}/>
+            <button onClick={copy} style={Object.assign({}, solidBtn("#1565C0"), {flexShrink:0,padding:"0 16px"})}>{copied ? "✓ Copied" : "Copy"}</button>
+          </div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.45)",lineHeight:1.5}}>Only share it with {user.displayName} — anyone with the link can set the password.</div>
+          <button onClick={onClose} style={ghostBtn()}>Done</button>
+        </>
+      )}
+      {manual && !link && (
+        <form onSubmit={setTemp} style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:14,color:"rgba(255,255,255,.75)",lineHeight:1.6}}>Set a password for {user.displayName} and tell it to them privately. They're signed out of every device now.</div>
+          <input type="password" autoComplete="new-password" value={pw} onChange={function(e){ setPw(e.target.value); setErr(""); }}
+            placeholder="8+ characters, 1 uppercase, 1 digit" style={inputSt({marginBottom:0})}/>
+          <div style={{display:"flex",gap:8}}>
+            <button type="button" onClick={function(){ setManual(false); setErr(""); }} style={Object.assign({}, ghostBtn(), {flex:1})}>Back</button>
+            <button type="submit" disabled={busy} style={Object.assign({}, solidBtn("#EF5350"), {flex:2})}>{busy ? "Saving…" : "Set password"}</button>
+          </div>
+        </form>
+      )}
+      {err && <div role="alert" style={{fontSize:13,color:"#EF5350"}}>{err}</div>}
+    </div>
+  );
+  var title = "Reset password · " + user.displayName;
+  if (desktop && desktop.isDesktop) return <DesktopModal title={title} width={480} onClose={onClose}>{body}</DesktopModal>;
+  return (
+    <div style={overlayFill(320)}>
+      <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
+      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,overflowY:"auto",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+        <Handle/>
+        <div style={{padding:"0 20px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,fontSize:16,fontWeight:700,color:"#fff"}}>{title}</div>
+          <button onClick={onClose} aria-label="Close" style={iconBtn()}>✕</button>
+        </div>
+        {body}
+      </div>
+    </div>
+  );
+}
+
 var EMPTY_UF = { email:"", firstName:"", lastName:"", phone:"", role:"user", teamId:"", password:"" };
 
 export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRefreshTeams, onOrgUpdated, onOpenSession }) {
@@ -754,18 +843,10 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
      .catch(function(e){ setBusy(false); flash(e.message||"Error saving user", true); });
   }
 
-  function resetPassword(user) {
-    var pw = prompt("New password for " + user.displayName + " (8+ chars, 1 uppercase, 1 digit):");
-    if (!pw) return;
-    // Mirror the server's password policy so admins get a specific message
-    if (pw.length < 8 || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw)) {
-      flash("Password must be 8+ characters with an uppercase letter and a digit", true);
-      return;
-    }
-    apiPost("/admin/users/" + user.id + "/reset-password", { password: pw })
-      .then(function(){ flash("Password reset for " + user.displayName); })
-      .catch(function(e){ flash(e.message || "Error resetting password", true); });
-  }
+  // Opens the reset dialog: a one-time link (preferred) or a temporary password
+  var [resetFor, setResetFor] = useState(null);
+  function resetPassword(user) { setResetFor(user); }
+  var resetDialog = resetFor && <ResetPasswordDialog user={resetFor} onClose={function(){ setResetFor(null); }} onDone={flash}/>;
 
   function deleteUserConfirm(user) {
     if (!confirm("Delete " + user.displayName + "? This cannot be undone.")) return;
@@ -1130,6 +1211,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
 
     return (
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {resetDialog}
         <div style={{padding:compact?"10px 16px":"14px 24px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)",display:"flex",alignItems:"center",gap:compact?12:16}}>
           {renderSubTabBar({flex:"0 1 680px"})}
           {!stackedA && (
@@ -1178,6 +1260,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       </div>
 
       {msgBanner}
+      {resetDialog}
 
       {sub === "codes" && <ShareCodesPanel isDesktop={false}/>}
       {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={false} onOrgUpdated={onOrgUpdated}/>}
