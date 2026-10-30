@@ -1,6 +1,6 @@
 import { useState, useContext, useMemo } from "react";
 import { TM, OBJ_COLOR } from "../lib/constants";
-import { solidBtn, ghostBtn, iconBtn, inputSt, SHEET_MAX_H } from "../lib/styles";
+import { solidBtn, ghostBtn, iconBtn, inputSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { stripMarkup } from "../lib/richtext";
 import { collectBranch, cloneCards, cloneStack, liveStacks } from "../lib/deckOps";
 import { Handle } from "./ui";
@@ -161,7 +161,7 @@ export function ImportPicker({ mode, decks, currentDeckId, onImport, onClose }) 
   var title = mode === "stacks" ? "Copy objection stacks from another deck" : "Copy cards from another deck";
   if (desktop.isDesktop) return <DesktopModal title={title} width={640} onClose={onClose}>{body}</DesktopModal>;
   return (
-    <div style={{position:"fixed",inset:0,zIndex:320,display:"flex",flexDirection:"column"}}>
+    <div style={overlayFill(320)}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
       <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,height:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>

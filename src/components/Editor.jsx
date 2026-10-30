@@ -1,11 +1,33 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, INFLECTIONS, INFL_CATS, aid } from "../lib/constants";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, labelSt, inputSt, cardBg, SHEET_MAX_H } from "../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, labelSt, inputSt, cardBg, SHEET_MAX_H, overlayFill } from "../lib/styles";
+import { useKeyboardOpen, keyboardIsOpen, revealOnFocus, isCoarsePointer } from "../lib/useViewport";
 import { TypeBadge, SectionHdr, IntendedBadge, Handle } from "./ui";
 import { TipCtx, OverviewEditor, RichPromptDisplay } from "./Tooltip";
 import { parseRichText, stripMarkup } from "../lib/richtext";
 import { INFL_MAP, uid } from "../lib/constants";
 import { getParents } from "../lib/cardGraph";
+
+// ─── TOUCH-SAFE TOOLBAR BUTTONS ───────────────────────────────────────────────
+// Toolbar buttons must act without stealing focus/selection from the editor (or
+// iOS drops the selection and closes the keyboard). pointerdown is cancelled so
+// focus stays put; the action fires on pointerup only if the finger didn't move
+// (a scroll that ends on a button is not a tap). Keyboard activation still works.
+var tapStart = null;
+function tap(fn) {
+  return {
+    onPointerDown: function(e) { e.preventDefault(); tapStart = { x:e.clientX, y:e.clientY, id:e.pointerId }; },
+    onPointerUp: function(e) {
+      var st = tapStart; tapStart = null;
+      if (!st || st.id !== e.pointerId) return;
+      if (Math.abs(e.clientX - st.x) + Math.abs(e.clientY - st.y) > 10) return;
+      e.preventDefault(); fn();
+    },
+    onPointerCancel: function() { tapStart = null; },
+    onMouseDown: function(e) { e.preventDefault(); },
+    onClick: function(e) { if (e.detail === 0) fn(); },   // Enter/Space on a focused button
+  };
+}
 
 // ─── RICH PROMPT EDITOR ───────────────────────────────────────────────────────
 // contentEditable-based editor — renders formatted text inline, no raw markup.
@@ -19,6 +41,9 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   var [hasSel,       setHasSel]       = useState(false);
   var [cursorInFmt,  setCursorInFmt]  = useState(null); // { node, inf:string|null, isBold:bool }
   var [pickerMode,   setPickerMode]   = useState("new"); // "new" | "edit"
+  var showPickerRef  = useRef(false);
+  var lastRange      = useRef(null); // last non-empty selection inside the editor (touch can drop it before a toolbar tap)
+  var blurTimer      = useRef(null);
 
   // SECURITY NOTE: escH() is the XSS-prevention mechanism for the contentEditable
   // rich-text editor. All user content is passed through this function before being
@@ -69,6 +94,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 
   function handleInput() {
     var el = editorRef.current; if (!el) return;
+    lastRange.current = null;
     isInternal.current = true;
     onChange(elToMd(el));
     requestAnimationFrame(function() { isInternal.current = false; });
@@ -98,6 +124,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   function checkSel() {
     var sel = window.getSelection(), el = editorRef.current;
     var hasSel_ = !!(sel && !sel.isCollapsed && el && el.contains(sel.anchorNode));
+    if (hasSel_) lastRange.current = sel.getRangeAt(0).cloneRange();
     setHasSel(hasSel_);
     if (!hasSel_ && sel && sel.isCollapsed && el && el.contains(sel.anchorNode)) {
       setCursorInFmt(findFmtAncestor(sel.anchorNode));
@@ -105,6 +132,16 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
       setCursorInFmt(null);
     }
   }
+
+  // Touch selection handles don't fire mouseup/keyup — follow the document selection instead
+  useEffect(function() {
+    function onSelChange() {
+      var el = editorRef.current, sel = window.getSelection();
+      if (el && sel && sel.anchorNode && el.contains(sel.anchorNode)) checkSel();
+    }
+    document.addEventListener("selectionchange", onSelChange);
+    return function() { document.removeEventListener("selectionchange", onSelChange); clearTimeout(blurTimer.current); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleMouseUp(e) {
     // If user clicked directly on an <em data-inf> node, treat it as cursor-in-fmt
@@ -121,7 +158,17 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     var sel = window.getSelection(), el = editorRef.current;
     if (sel && !sel.isCollapsed && el && el.contains(sel.anchorNode))
       return sel.getRangeAt(0).cloneRange();
+    // Fall back to the last selection if the tap already collapsed it (iOS)
+    var r = lastRange.current;
+    if (r && !r.collapsed && el && el.contains(r.commonAncestorContainer)) return r.cloneRange();
     return null;
+  }
+  // Put the remembered selection back after focus() may have collapsed it
+  function restoreSel() {
+    var sel = window.getSelection(), el = editorRef.current;
+    if (sel && !sel.isCollapsed && el && el.contains(sel.anchorNode)) return;
+    var r = captureRange(); if (!r || !sel) return;
+    sel.removeAllRanges(); sel.addRange(r);
   }
 
   // Replace a formatted DOM node with its plain text content
@@ -144,7 +191,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 
   function applyBold() {
     var el = editorRef.current; if (!el) return;
-    el.focus();
+    el.focus({ preventScroll:true }); restoreSel();
     var sel = window.getSelection(); if (!sel||sel.isCollapsed) return;
     var r = sel.getRangeAt(0), text = r.toString(); if (!text) return;
     var node = document.createElement("strong");
@@ -196,7 +243,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 
     // Mode: new inflection wrapping a selection
     if (!selRange) return;
-    el.focus();
+    el.focus({ preventScroll:true });
     var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(selRange);
     var text = selRange.toString(); if (!text) { setSelRange(null); return; }
     var em = document.createElement("em");
@@ -219,7 +266,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   function applyQuickInfl(lbl) {
     var r = captureRange(); if (!r) return;
     var el = editorRef.current; if (!el) return;
-    el.focus();
+    el.focus({ preventScroll:true });
     var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
     var text = r.toString(); if (!text) return;
     var em = document.createElement("em");
@@ -245,7 +292,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     }
 
     // Case 2: active text selection — extract as plain text and re-insert
-    el.focus();
+    el.focus({ preventScroll:true }); restoreSel();
     var sel = window.getSelection(); if (!sel || sel.isCollapsed) return;
     var r = sel.getRangeAt(0);
     var plainText = r.toString(); if (!plainText) return;
@@ -275,6 +322,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   }
 
 
+  showPickerRef.current = showPicker;
   var curFmt = cursorInFmt;
   var curInfl = curFmt && curFmt.inf ? INFL_MAP[curFmt.inf] : null;
   var isEmpty = !value || value.trim() === "";
@@ -296,7 +344,14 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
           onPaste={handlePaste}
           onMouseUp={handleMouseUp}
           onKeyUp={checkSel}
-          onBlur={function() { setHasSel(false); setCursorInFmt(null); }}
+          onFocus={function() { clearTimeout(blurTimer.current); }}
+          onBlur={function() {
+            // Delay so a tap on the toolbar (which may blur briefly on touch) still lands
+            clearTimeout(blurTimer.current);
+            blurTimer.current = setTimeout(function() {
+              if (document.activeElement !== editorRef.current && !showPickerRef.current) { setHasSel(false); setCursorInFmt(null); }
+            }, 250);
+          }}
           style={{minHeight:130,padding:"13px 14px 13px 18px",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",borderLeft:"3px solid "+accentColor,borderRadius:12,color:"rgba(255,255,255,.92)",fontSize:15,lineHeight:1.8,fontFamily:"'Lora',Georgia,serif",outline:"none",cursor:"text",wordBreak:"break-word",whiteSpace:"pre-wrap"}}
         />
       </div>
@@ -326,12 +381,12 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
                   </div>
                 </div>
                 {!curFmt.isBold && (
-                  <button onMouseDown={function(e){e.preventDefault();openInflPickerForNode(curFmt.node);}}
+                  <button {...tap(function(){openInflPickerForNode(curFmt.node);})}
                     style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.14)",borderRadius:8,padding:"6px 11px",fontSize:11,color:"rgba(255,255,255,.7)",cursor:"pointer",fontFamily:"inherit",flexShrink:0,fontWeight:600,whiteSpace:"nowrap"}}>
                     ↺ Change
                   </button>
                 )}
-                <button onMouseDown={function(e){e.preventDefault();stripFormatting();}}
+                <button {...tap(stripFormatting)}
                   style={{background:"rgba(239,83,80,.1)",border:"1px solid rgba(239,83,80,.3)",borderRadius:8,padding:"6px 11px",fontSize:11,color:"#EF5350",cursor:"pointer",fontFamily:"inherit",flexShrink:0,fontWeight:600,whiteSpace:"nowrap"}}>
                   ✕ Remove
                 </button>
@@ -344,13 +399,13 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
             /* Default toolbar */
             <div>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:hasSel?8:0}}>
-                <button onMouseDown={function(e){e.preventDefault();applyBold();}} onTouchEnd={function(e){e.preventDefault();applyBold();}}
+                <button {...tap(applyBold)}
                   title="Bold (select text first)"
                   style={{background:hasSel?"rgba(255,255,255,.2)":"rgba(255,255,255,.08)",border:"1px solid "+(hasSel?"rgba(255,255,255,.4)":"rgba(255,255,255,.12)"),borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Lora',serif",fontSize:15,fontWeight:800,fontStyle:"normal",color:"#fff",flexShrink:0,transition:"all .15s"}}>B</button>
-                <button onMouseDown={function(e){e.preventDefault();openInflPicker();}} onTouchEnd={function(e){e.preventDefault();openInflPicker();}}
+                <button {...tap(openInflPicker)}
                   title="Add inflection (select text first)"
                   style={{background:hasSel?"rgba(255,255,255,.2)":"rgba(255,255,255,.08)",border:"1px solid "+(hasSel?"rgba(255,255,255,.4)":"rgba(255,255,255,.12)"),borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Lora',serif",fontSize:15,fontStyle:"italic",fontWeight:700,color:accentColor,flexShrink:0,transition:"all .15s"}}>I</button>
-                <button onMouseDown={function(e){e.preventDefault();stripFormatting();}} onTouchEnd={function(e){e.preventDefault();stripFormatting();}}
+                <button {...tap(stripFormatting)}
                   title="Remove formatting from selection"
                   style={{background:hasSel?"rgba(239,83,80,.18)":"rgba(255,255,255,.07)",border:"1px solid "+(hasSel?"rgba(239,83,80,.4)":"rgba(255,255,255,.08)"),borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:hasSel?"#EF5350":"rgba(255,255,255,.2)",flexShrink:0,transition:"all .15s"}}>✕</button>
                 <div style={{width:1,height:20,background:"rgba(255,255,255,.1)",flexShrink:0}}/>
@@ -365,17 +420,17 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
                   {["Pause","Emphasize","Confident","Warm","Slow Down","Question"].map(function(lbl) {
                     var inf = INFL_MAP[lbl]; if (!inf) return null;
                     return (
-                      <button key={lbl} onMouseDown={function(e){e.preventDefault();applyQuickInfl(lbl);}}
+                      <button key={lbl} {...tap(function(){applyQuickInfl(lbl);})}
                         style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.11)",borderRadius:99,padding:"4px 9px",fontSize:10,cursor:"pointer",fontFamily:"inherit",color:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:3}}>
                         <span>{inf.icon}</span><span>{lbl}</span>
                       </button>
                     );
                   })}
-                  <button onMouseDown={function(e){e.preventDefault();openInflPicker();}}
+                  <button {...tap(openInflPicker)}
                     style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.11)",borderRadius:99,padding:"4px 9px",fontSize:10,cursor:"pointer",fontFamily:"inherit",color:accentColor,display:"flex",alignItems:"center",gap:3}}>
                     <span>＋</span><span>More…</span>
                   </button>
-                  <button onMouseDown={function(e){e.preventDefault();stripFormatting();}}
+                  <button {...tap(stripFormatting)}
                     style={{background:"rgba(239,83,80,.08)",border:"1px solid rgba(239,83,80,.2)",borderRadius:99,padding:"4px 9px",fontSize:10,cursor:"pointer",fontFamily:"inherit",color:"rgba(239,83,80,.7)",display:"flex",alignItems:"center",gap:3}}>
                     <span>✕</span><span>Remove</span>
                   </button>
@@ -388,9 +443,9 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 
       {/* ── Inflection picker bottom sheet ── */}
       {showPicker && (
-        <div style={{position:"fixed",inset:0,zIndex:600,display:"flex",flexDirection:"column"}}>
+        <div style={overlayFill(600)}>
           <div onClick={closePicker} style={{flex:1,background:"rgba(0,0,0,.7)",backdropFilter:"blur(6px)"}}/>
-          <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"82vh",display:"flex",flexDirection:"column"}}>
+          <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"calc(var(--vvh, 100vh) * .82)",display:"flex",flexDirection:"column"}}>
             <Handle/>
             <div style={{padding:"0 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
               <div>
@@ -489,6 +544,11 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
   var [errs, setErrs] = useState({});
   var [section, setSection] = useState("prompt");
   var [showOv, setShowOv] = useState(function() { return !!(card.overview && card.overview.some(function(b){return b&&b.trim();})); });
+  // Snapshot of the opened card so a stray backdrop tap can't silently throw away edits
+  var initialForm = useRef(null);
+  if (initialForm.current === null) initialForm.current = JSON.stringify(form);
+  var titleRef = useRef(null);
+  var kbOpen = useKeyboardOpen();
 
   function setField(k, v) { setForm(function(p) { return Object.assign({}, p, {[k]:v}); }); }
   function setAns(i, k, v) { setForm(function(p) { var arr=p.answers.map(function(a){return Object.assign({},a);}); arr[i]=Object.assign({},arr[i],{[k]:v}); return Object.assign({},p,{answers:arr}); }); }
@@ -527,11 +587,27 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
     };
   }
 
+  // New cards focus the title — but not on touch devices (the keyboard would pop up
+  // mid-animation and shove the sheet around), and only after the open animation.
+  useEffect(function() {
+    if (!isBlank || isCoarsePointer()) return;
+    var t = setTimeout(function() { if (titleRef.current) titleRef.current.focus({ preventScroll:true }); }, inline ? 80 : 320);
+    return function() { clearTimeout(t); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Backdrop tap: with the keyboard up it only dismisses the keyboard; otherwise it
+  // closes, asking first when there are unsaved edits.
+  function onBackdrop() {
+    if (keyboardIsOpen() && document.activeElement && document.activeElement.blur) { document.activeElement.blur(); return; }
+    if (JSON.stringify(form) !== initialForm.current && !window.confirm("Discard your changes to this card?")) return;
+    onClose();
+  }
+
   // ── When inline=true: skip fixed overlay + backdrop + Handle; fill height directly ──
   // navDir drives the card-swap animation: "forward" | "back" | null (regular open)
   var outerStyle = inline
     ? {display:"flex",flexDirection:"column",height:"100%"}
-    : {position:"fixed",inset:0,zIndex:300,display:"flex",flexDirection:"column"};
+    : overlayFill(300);
   var mobileAnim = navDir === "forward" ? "cardSwipeIn .26s cubic-bezier(.22,1,.36,1) both"
     : navDir === "back"    ? "cardSwipeBack .26s cubic-bezier(.22,1,.36,1) both"
     : "sheetUp .3s cubic-bezier(.22,1,.36,1) both";
@@ -547,14 +623,14 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
 
   return (
     <div style={outerStyle}>
-      {!inline && <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)"}}/>}
+      {!inline && <div onClick={onBackdrop} style={{flex:1,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)"}}/>}
       <div style={sheetStyle}>
-        {!inline && <Handle/>}
+        {!inline && !kbOpen && <Handle/>}
         {/* Top bar IS the card title: edit it in place (no separate "Edit Card" label / title field) */}
         <div style={{padding:headerPad,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderBottom:"1px solid rgba(255,255,255,.07)"}}>
           <div style={{flex:1,minWidth:0}}>
             <input value={form.title} onChange={function(e){setField("title",e.target.value);}}
-              placeholder={isBlank ? "New card title" : "Card title"} aria-label="Card title" autoFocus={isBlank}
+              placeholder={isBlank ? "New card title" : "Card title"} aria-label="Card title" ref={titleRef}
               className="oc-title-input"
               style={{display:"block",width:"100%",background:"transparent",border:"none",borderBottom:"2px solid "+(errs.title?"#EF5350":"transparent"),borderRadius:0,
                 padding:"4px 0",color:"#fff",fontSize:inline?20:22,fontWeight:700,fontFamily:"'Lora',serif",outline:"none",transition:"border-color .15s"}}/>
@@ -566,7 +642,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
             <button onClick={onClose} style={iconBtn()}>✕</button>
           </div>
         </div>
-        <div style={{overflowY:"auto",flex:1,padding:contentPad}}>
+        <div onFocus={revealOnFocus} style={{overflowY:"auto",flex:1,minHeight:0,padding:contentPad,overscrollBehavior:"contain"}}>
           {/* Linked From — cards that have an answer pointing to this card */}
           {!staged && linkedFromCards.length > 0 && (
             <div style={{marginBottom:14}}>

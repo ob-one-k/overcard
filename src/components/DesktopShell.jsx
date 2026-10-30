@@ -148,7 +148,8 @@ export function DesktopShell({
 
   return (
     <div style={{
-      position:"fixed", inset:0,
+      // Tracks the visible viewport so a tablet keyboard never covers the editor
+      position:"fixed", left:0, right:0, top:"var(--vvt, 0px)", height:"var(--vvh, 100%)",
       display:"flex", flexDirection:"row",
       background:"linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)"
     }}>
@@ -173,7 +174,7 @@ export function DesktopShell({
       />
 
       {/* ── Main content area ── */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,overflow:"hidden"}}>
+      <div data-noscroll="1" style={{flex:1,display:"flex",flexDirection:"column",minWidth:0,overflow:"hidden"}}>
 
         {/* Top bar */}
         <div style={{
@@ -285,7 +286,7 @@ export function DesktopShell({
         </div>
 
         {/* Content area */}
-        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
+        <div data-noscroll="1" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
           {children}
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS } from "../lib/constants";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H } from "../lib/styles";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
+import { keyboardIsOpen } from "../lib/useViewport";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
 import { TipCtx } from "./Tooltip";
 import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
@@ -371,14 +372,19 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
 
   var outerSt = inline
     ? {display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}
-    : {position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"};
+    : overlayFill(250);
   var sheetSt = inline
     ? {display:"flex",flexDirection:"column",flex:1,background:"#081428",overflow:"hidden"}
     : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
 
   return (
     <div style={outerSt}>
-      {!inline && <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>}
+      {!inline && <div onClick={function(){
+        // Keyboard up → just dismiss it; otherwise confirm before dropping an unsaved stack draft
+        if (keyboardIsOpen() && document.activeElement && document.activeElement.blur) { document.activeElement.blur(); return; }
+        if (JSON.stringify(form) !== JSON.stringify(Object.assign({}, stack, { cards:stack.cards || {} })) && !window.confirm("Discard unsaved changes to this stack?")) return;
+        onClose();
+      }} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>}
       <div style={sheetSt}>
         {!inline && <Handle/>}
 

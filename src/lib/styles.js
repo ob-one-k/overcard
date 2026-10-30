@@ -43,10 +43,10 @@ export function resizeHandle() {
   return { width:6, cursor:"col-resize", flexShrink:0, background:"transparent",
     borderRight:"1px solid rgba(255,255,255,.06)", transition:"background .15s" };
 }
-export var SHEET_MAX_H = (function() {
-  try {
-    var el = document.createElement("div");
-    el.style.maxHeight = "100dvh";
-    return el.style.maxHeight ? "calc(100dvh - 48px)" : "94vh";
-  } catch(e) { return "94vh"; }
-})();
+// Bottom sheets: the visible viewport (above any on-screen keyboard — see useViewport.js)
+// minus a strip of backdrop that shrinks to 8px while the keyboard is up
+export var SHEET_MAX_H = "calc(var(--vvh, 94vh) - var(--sheet-gap, 48px))";
+// Full-screen fixed layer that tracks the visible viewport instead of inset:0
+export function overlayFill(z) {
+  return { position:"fixed", left:0, right:0, top:"var(--vvt, 0px)", height:"var(--vvh, 100%)", zIndex:z, display:"flex", flexDirection:"column" };
+}

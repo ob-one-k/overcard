@@ -3,6 +3,7 @@ import { TM } from "../lib/constants";
 import { stripMarkup } from "../lib/richtext";
 import { getParents, orderParents, getChildren } from "../lib/cardGraph";
 import DesktopCtx from "../lib/DesktopCtx";
+import { useKeyboardOpen } from "../lib/useViewport";
 
 // ─── CARD STAGE ───────────────────────────────────────────────────────────────
 // Desktop/tablet card viewer used by the deck editor (Cards) and the objection
@@ -79,6 +80,9 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
   var prevTimer = useRef(null);
   var lastPtr = useRef(null);
   var keyRef = useRef(null);
+  // Tablet keyboard up: the shell shrinks to the visible area, so the stage trims its
+  // chrome to keep the editor usable, and taps navigate on the first touch
+  var kbOpen = useKeyboardOpen();
 
   // Remember where we came from (used to pick the front parent tab)
   var lastIdRef = useRef(card.id);
@@ -150,9 +154,9 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
   var W = size.w || 1000, H = size.h || 700;
   var compact = W < 900;
   var padX = compact ? 14 : 24;
-  var padTop = onBack ? (compact ? 56 : 58) : (compact ? 18 : 26);
-  var hint = !touch && !compact;
-  var padBot = hint ? 34 : (compact ? 16 : 24);
+  var padTop = kbOpen ? 8 : onBack ? (compact ? 56 : 58) : (compact ? 18 : 26);
+  var hint = !touch && !compact && !kbOpen;
+  var padBot = kbOpen ? 8 : hint ? 34 : (compact ? 16 : 24);
   var sideW = compact ? clamp(Math.round(W * 0.19), 124, 168) : clamp(Math.round(W * 0.2), 196, 250);
   var gap = compact ? 18 : 30;
   var tabW = compact ? 200 : 270;
@@ -165,7 +169,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
   var slack = Math.max(0, avail - needL - needR - centreW);
   var centreLeft = padX + needL + Math.round(slack / 2);
   var centreTop = padTop;
-  var centreH = Math.max(240, H - padTop - padBot);
+  var centreH = Math.max(kbOpen ? 160 : 240, H - padTop - padBot);
   var centreRight = centreLeft + centreW;
   var tabH = Math.round(centreH * 0.84);
   var tabTop = centreTop + Math.round((centreH - tabH) / 2);
@@ -189,7 +193,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
   function tabClick() {
     var isTouch = lastPtr.current ? lastPtr.current === "touch" : touch;
     if (!front) return;
-    if (isTouch && !fanOpen) { setFanOpen(true); setPreview(null); return; }
+    if (isTouch && !fanOpen && !kbOpen) { setFanOpen(true); setPreview(null); return; }
     go(front.card, "back");
   }
 
@@ -212,7 +216,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
   }
   function childClick(e, entry) {
     var isTouch = lastPtr.current ? lastPtr.current === "touch" : touch;
-    if (isTouch && !(preview && preview.id === entry.card.id)) {
+    if (isTouch && !kbOpen && !(preview && preview.id === entry.card.id)) {
       setFanOpen(false);
       setPreview({ id:entry.card.id, top:childTop(e.currentTarget) });
       return;
@@ -484,7 +488,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
   }
 
   return (
-    <div ref={rootRef} role="region" aria-label={"Card stage: " + (card.title || "Untitled")}
+    <div ref={rootRef} data-noscroll="1" role="region" aria-label={"Card stage: " + (card.title || "Untitled")}
       onPointerDown={function(e){
         // tap on empty stage closes touch previews / the spread list
         if (e.target === e.currentTarget) { setPreview(null); setFanOpen(false); }
@@ -493,7 +497,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
         background:"radial-gradient(ellipse 60% 70% at 50% 45%, " + m.glow + ", transparent 70%), radial-gradient(rgba(255,255,255,.055) 1px, transparent 1px) 0 0/22px 22px, #06102a"}}>
       <style>{STAGE_CSS}</style>
 
-      {onBack && (
+      {onBack && !kbOpen && (
         <button onClick={onBack}
           style={{position:"absolute",left:padX,top:compact?12:14,zIndex:45,display:"flex",alignItems:"center",gap:8,minHeight:compact?40:36,background:"rgba(8,18,44,.85)",border:"1px solid rgba(255,255,255,.16)",borderRadius:99,color:TXT,fontSize:14,fontWeight:600,padding:"0 16px 0 12px",cursor:"pointer",fontFamily:"inherit"}}>
           <span style={{fontSize:17,lineHeight:1}}>‹</span>{backLabel || "Back"}
@@ -503,7 +507,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
       {renderTabs()}
 
       {/* Centre card */}
-      <div key={"centre-" + card.id} className="oc-stage-anim"
+      <div key={"centre-" + card.id} data-noscroll="1" className="oc-stage-anim"
         style={{position:"absolute",left:centreLeft,top:centreTop,width:centreW,height:centreH,zIndex:10,display:"flex",flexDirection:"column",overflow:"hidden",
           borderRadius:20,background:"#081428",border:"1px solid " + color + "55",
           boxShadow:"0 34px 90px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.04), 0 0 70px " + m.glow,
