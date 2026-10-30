@@ -19,6 +19,8 @@ function notify(url) { (subs[url] || []).slice().forEach(function(fn) { fn(); })
 setWriteHook(function(path) {
   var m = /^\/[^/?]+/.exec(path);
   if (m) invalidate(m[0]);
+  // Creating/editing/deleting users changes who appears in session lists and pickers
+  if (path.indexOf("/admin/users") === 0) invalidate("/sessions");
 });
 
 // Forget everything (sign-out / account switch — cached data belongs to one user)

@@ -4,6 +4,10 @@ const { getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArc
 const { requireAuth, isAdminRole } = require("../auth");
 
 function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+// Every objection stack must be an object with a string id — a null/garbage entry would crash Play for the org
+function validStacks(list) {
+  return Array.isArray(list) && list.every(function(st) { return isPlainObject(st) && typeof st.id === "string" && st.id; });
+}
 
 router.use(requireAuth);
 
@@ -33,8 +37,8 @@ router.post("/", async function(req, res, next) {
     if (cards !== undefined && cards !== null && !isPlainObject(cards)) {
       return res.status(400).json({ error: "cards must be an object" });
     }
-    if (objStacks !== undefined && objStacks !== null && !Array.isArray(objStacks)) {
-      return res.status(400).json({ error: "objStacks must be an array" });
+    if (objStacks !== undefined && objStacks !== null && !validStacks(objStacks)) {
+      return res.status(400).json({ error: "objStacks must be an array of stacks" });
     }
     var startCards = cards || {};
     const deck = await createDeck({
@@ -44,7 +48,7 @@ router.post("/", async function(req, res, next) {
       color:      color || "#F5A623",
       icon:       icon  || "💼",
       visibility: visibility || "public",
-      rootCard:   typeof rootCard === "string" && startCards[rootCard] ? rootCard : null,
+      rootCard:   typeof rootCard === "string" && Object.prototype.hasOwnProperty.call(startCards, rootCard) ? rootCard : null,
       cards:      startCards,
       objStacks:  objStacks || [],
     });
@@ -66,20 +70,23 @@ router.put("/:id", async function(req, res, next) {
     if (!existing) return res.status(404).json({ error: "Deck not found" });
     if (existing.orgId !== req.user.orgId) return res.status(403).json({ error: "Access denied" });
 
-    const body = req.body || {};
+    var body = req.body || {};
     // updateDeck replaces the whole row — reject partial payloads that would wipe cards
     if (!body.name || typeof body.cards !== "object" || body.cards === null) {
       return res.status(400).json({ error: "Full deck (name, cards) is required" });
     }
-    if (body.objStacks !== undefined && !Array.isArray(body.objStacks)) {
-      return res.status(400).json({ error: "objStacks must be an array" });
+    if (body.objStacks !== undefined && !validStacks(body.objStacks)) {
+      return res.status(400).json({ error: "objStacks must be an array of stacks" });
     }
-    // Only the owner may delete objection stacks — admins archive them instead
+    // Only the owner may delete objection stacks — admins archive them instead. A stored stack
+    // missing from a non-owner's save is kept (appended back) rather than rejected: the usual
+    // cause is a stale copy from before another admin added it, and a 403 there would make
+    // autosave fail forever and lose that admin's edits.
     if (req.user.role !== "owner") {
       var incoming = {};
-      (body.objStacks || []).forEach(function(st) { if (st && st.id) incoming[st.id] = true; });
-      var removed = (existing.objStacks || []).some(function(st) { return st && st.id && !incoming[st.id]; });
-      if (removed) return res.status(403).json({ error: "Only the organization owner can delete objection stacks" });
+      (body.objStacks || []).forEach(function(st) { incoming[st.id] = true; });
+      var kept = (existing.objStacks || []).filter(function(st) { return st && st.id && !incoming[st.id]; });
+      if (kept.length) body = Object.assign({}, body, { objStacks: (body.objStacks || []).concat(kept) });
     }
     const deck = await updateDeck(req.params.id, req.user.orgId, body);
     if (body.accessList !== undefined) {

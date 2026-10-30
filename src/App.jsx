@@ -117,8 +117,9 @@ export default function App() {
 
   // Register 401 handler so api helpers can clear auth state
   useEffect(function() {
-    setUnauthHandler(function(){ setStoredToken(null); clearCache(); setAuthUser(false); });
-    setSessionReplacedHandler(function(){ setStoredToken(null); clearCache(); setKickReason("replaced"); setAuthUser(false); });
+    // Signed out by the server: also forget the cached org brand (shared devices)
+    setUnauthHandler(function(){ setStoredToken(null); clearCache(); setBrand(null); setAuthUser(false); });
+    setSessionReplacedHandler(function(){ setStoredToken(null); clearCache(); setBrand(null); setKickReason("replaced"); setAuthUser(false); });
     return function(){ setUnauthHandler(null); setSessionReplacedHandler(null); };
   }, []);
 

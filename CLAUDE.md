@@ -177,7 +177,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 |--------|------|------|-------|-------------|
 | GET | `/api/decks` | Yes | No | List decks (filtered by visibility for non-admins) |
 | POST | `/api/decks` | Yes | Yes | Create new deck — accepts starting `cards`, `rootCard`, `objStacks` (template / duplicate) |
-| PUT | `/api/decks/:id` | Yes | Yes | Update deck fields + access list. Non-owners get 403 if the payload drops an existing objection stack (admins archive instead) |
+| PUT | `/api/decks/:id` | Yes | Yes | Update deck fields + access list. Stacks a non-owner omits are kept (only the owner deletes stacks) |
 | POST | `/api/decks/:id/archive` | Yes | Yes | Archive (sets `archivedAt`) |
 | POST | `/api/decks/:id/restore` | Yes | Yes | Restore an archived deck |
 | GET | `/api/decks/:id/access` | Yes | Yes | Get deck access list |
