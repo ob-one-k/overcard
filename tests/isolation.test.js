@@ -122,6 +122,12 @@ test("cross-org access is refused everywhere", async function() {
       return d.indexOf(merSid) !== -1 || d.indexOf(merLive) !== -1 || d.indexOf(MER_USER) !== -1;
     });
     assert.equal(leak.length, 0, "no Meridian events on Apex streams: " + JSON.stringify(leak));
+    // Control: the Apex streams were alive and still receive their own org's events
+    assert.ok(!aStream.isEnded() && !oStream.isEnded(), "Apex streams up");
+    var ctl = tid("s"), m = aStream.mark();
+    await aUser.post("/sessions", { id: ctl, deckId: "d_apex_ent", name: "control", startTs: Date.now() - 1000, endTs: Date.now(), events: [] });
+    assert.ok(await aStream.waitFor("session.finished", function(d) { return d.id === ctl; }, 5000, m), "control event arrived");
+    await aUser.del("/sessions/" + ctl);
 
     // Health endpoint is public and reveals nothing
     var h = await (await fetch(BASE + "/health")).json();

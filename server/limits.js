@@ -20,16 +20,24 @@ function limiter(windowMs, max, message, keyGenerator) {
 
 // Whole-API ceiling per signed-in account (falls back to the client IP), so one runaway
 // client can't starve the server — and 100 reps behind one office IP don't share a limit.
-// The token is only decoded to pick a bucket; requireAuth still verifies it on every route.
+// The token's signature is verified (one HMAC) before its account is used as the bucket, so
+// forged tokens can neither dodge the limit nor fill someone else's bucket.
+function accountKey(req) {
+  const { jwtVerify } = require("./auth");
+  var token = (req.cookies && req.cookies.rc_token) || null;
+  var h = req.headers.authorization || "";
+  if (!token && h.indexOf("Bearer ") === 0) token = h.slice(7);
+  if (token) {
+    try { var p = jwtVerify(token); if (p && typeof p.sub === "string") return "u:" + p.sub; } catch (_) {}
+  }
+  return "ip:" + ipKeyGenerator(req.ip || "");
+}
 function apiLimiter() {
-  const jwt = require("jsonwebtoken");
-  return limiter(60 * 1000, 600, "Too many requests — slow down and try again in a minute", function(req) {
-    var token = (req.cookies && req.cookies.rc_token) || null;
-    var h = req.headers.authorization || "";
-    if (!token && h.indexOf("Bearer ") === 0) token = h.slice(7);
-    var p = token ? jwt.decode(token) : null;
-    return p && typeof p.sub === "string" ? "u:" + p.sub : "ip:" + ipKeyGenerator(req.ip || "");
-  });
+  return limiter(60 * 1000, 600, "Too many requests — slow down and try again in a minute", accountKey);
+}
+// Live stream (re)connections: a client reconnects with backoff, so 30 a minute is plenty
+function streamLimiter() {
+  return limiter(60 * 1000, 30, "Too many connections", accountKey);
 }
 
-module.exports = { limiter, apiLimiter };
+module.exports = { limiter, apiLimiter, streamLimiter };

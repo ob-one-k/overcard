@@ -89,6 +89,7 @@ async function requireAuth(req, res, next) {
       displayName: user.displayName,
     };
     req.authSid = payload.sid;
+    req.authExp = payload.exp;
     next();
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {

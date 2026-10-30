@@ -900,6 +900,22 @@ async function usePasswordReset(token, passwordHash) {
   });
 }
 
+// Cancel a user's outstanding reset links (their role changed — a link issued under the old
+// rules must not outlive them)
+async function expirePasswordResets(userId) {
+  await pool.query('UPDATE password_resets SET "usedAt"=$1 WHERE "userId"=$2 AND "usedAt" IS NULL', [Date.now(), userId]);
+}
+
+// DEMO_MODE off: the seeded demo accounts can no longer sign in — their shared password is
+// replaced by an unguessable one and any open session ends. Their data stays.
+async function lockDemoAccounts(randomHash) {
+  const r = await pool.query(
+    'UPDATE users SET "passwordHash"=$1, "activeToken"=NULL WHERE id IN (SELECT record_id FROM seed_manifest WHERE table_name = \'users\') AND "passwordHash" <> $1',
+    [randomHash]
+  );
+  return r.rowCount;
+}
+
 // Is this user one of the seeded demo accounts?
 async function isSeedUser(userId) {
   const { rows } = await pool.query("SELECT 1 FROM seed_manifest WHERE table_name = 'users' AND record_id = $1", [userId]);
@@ -1083,8 +1099,11 @@ async function startLiveSession(session, userId, orgId) {
     INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
       name,account,contact,mode,status,outcome,"startTs",sold,events,notes,"referenceSessionId","lastBeatTs",live)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active','in_progress',$12,false,$13,'[]',$14,$15,$16)
-    ON CONFLICT (id) DO UPDATE SET "lastBeatTs"=$15, live=$16
-    WHERE sessions."userId"=$3 AND sessions.status='active'
+    ON CONFLICT (id) DO UPDATE SET status='active', outcome='in_progress', "endTs"=NULL, "lastBeatTs"=$15, live=$16
+    WHERE sessions."userId"=$3 AND (sessions.status='active'
+      -- the owner's own run closed as abandoned in the last 6 hours (phone slept past the
+      -- sweep, start retried) is reopened; finished runs never are
+      OR (sessions.outcome='abandoned' AND COALESCE(sessions."endTs", 0) > $15 - 21600000))
     ` + LIVE_RETURNING, [
     session.id, orgId, userId,
     session.deckId, session.deckName || null, session.deckColor || "#F5A623", session.deckIcon || "💼",
@@ -1099,11 +1118,12 @@ async function startLiveSession(session, userId, orgId) {
 }
 
 // Heartbeat: only the owner, only while the run is still active
+// events null = keep the stored path (a tab-closing keepalive beat may be too small for it)
 async function beatLiveSession(id, userId, events, live) {
   const now = Date.now();
   const { rows } = await pool.query(
-    'UPDATE sessions SET events=$1, live=$2, "lastBeatTs"=$3 WHERE id=$4 AND "userId"=$5 AND status=\'active\' ' + LIVE_RETURNING,
-    [JSON.stringify(events), JSON.stringify(live || null), now, id, userId]
+    'UPDATE sessions SET events=COALESCE($1::jsonb, events), live=$2, "lastBeatTs"=$3 WHERE id=$4 AND "userId"=$5 AND status=\'active\' ' + LIVE_RETURNING,
+    [events ? JSON.stringify(events) : null, JSON.stringify(live || null), now, id, userId]
   );
   return rows[0] ? parseSession(rows[0]) : null;
 }
@@ -1114,6 +1134,12 @@ async function getLiveSession(id, orgId) {
     ' WHERE s.id = $1 AND s."orgId" = $2 AND s.status = \'active\'', [id, orgId]
   );
   return rows[0] ? parseSession(rows[0]) : null;
+}
+
+// A user's other runs still in progress (excluding exceptId)
+async function countActiveRuns(userId, exceptId) {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM sessions WHERE "userId" = $1 AND status = \'active\' AND id <> $2', [userId, exceptId]);
+  return rows[0].n;
 }
 
 async function getLiveSessions(orgId) {
@@ -1221,8 +1247,9 @@ async function markNotificationsRead(userId, ids, sessionId) {
   }
 }
 
-async function deleteSession(id, userId) {
-  await pool.query('DELETE FROM sessions WHERE id = $1 AND "userId" = $2', [id, userId]);
+// The route has already authorised the caller (owner, or an admin of the org)
+async function deleteSession(id, orgId) {
+  await pool.query('DELETE FROM sessions WHERE id = $1 AND "orgId" = $2', [id, orgId]);
 }
 
 // Direct insert for seed script (no userId guard)
@@ -1346,10 +1373,10 @@ module.exports = {
   getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
   // passwords
-  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, isSeedUser,
+  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, isSeedUser, expirePasswordResets, lockDemoAccounts,
   // sessions
   getSessions, getSessionById, upsertSession,
-  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, deleteSession, insertSession,
+  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, countActiveRuns, deleteSession, insertSession,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   // notifications
   createNotification, getNotifications, markNotificationsRead,

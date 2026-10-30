@@ -43,12 +43,14 @@ function revalidate(url) {
   var g = gen;
   var p = apiGet(url).then(function(data) {
     if (g !== gen) return data;
-    store[url] = { data: data, ts: Date.now() };
-    delete inflight[url];
+    // Superseded by an invalidation while in flight: keep the data but mark it stale
+    var current = inflight[url] === p;
+    store[url] = { data: data, ts: current ? Date.now() : 0 };
+    if (current) delete inflight[url];
     notify(url);
     return data;
   }, function(err) {
-    if (g === gen) delete inflight[url];
+    if (g === gen && inflight[url] === p) delete inflight[url];
     throw err;
   });
   inflight[url] = p;
@@ -58,6 +60,9 @@ function revalidate(url) {
 // Drop every cached URL starting with prefix (e.g. "/sessions") and refetch the
 // ones that are on screen right now
 export function invalidate(prefix) {
+  // A request already in flight may have been answered before the change — don't let it
+  // be cached as fresh; the next read starts a new one
+  Object.keys(inflight).forEach(function(url) { if (url.indexOf(prefix) === 0) delete inflight[url]; });
   Object.keys(store).forEach(function(url) {
     if (url.indexOf(prefix) !== 0) return;
     store[url].ts = 0;

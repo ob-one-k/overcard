@@ -40,13 +40,19 @@ function wire() {
   if (wired) return;
   wired = true;
   onLive("session.started",  upsert);
-  onLive("session.progress", upsert);
+  // A heartbeat that raced the final save can arrive after "finished" — ignore it
+  onLive("session.progress", function(run) { if (run && !ended[run.id]) upsert(run); });
   onLive("session.finished", function(d) {
-    if (!runs || !d) return;
-    runs = runs.filter(function(r) { return r.id !== d.id; });
+    if (!d) return;
     ended[d.id] = d;
+    var ids = Object.keys(ended);
+    if (ids.length > 200) delete ended[ids[0]];
+    if (!runs) return;
+    runs = runs.filter(function(r) { return r.id !== d.id; });
     emit();
   });
+  // Signed out: forget this org's runs
+  onLive("live.reset", function() { runs = null; ended = {}; emit(); });
   onLive("live.resync", function() { if (subs.length) load(); });
 }
 var ended = {};   // id → finish event (lets an open watch view say "call ended")

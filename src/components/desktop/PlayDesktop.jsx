@@ -7,7 +7,7 @@ import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
 import { useRecorder, buildAudioSegments } from "../../lib/useRecorder";
-import { uploadSessionAudio, savePendingAudio } from "../../lib/audioUpload";
+import { uploadSessionAudio, savePendingAudio, getAudioOwner } from "../../lib/audioUpload";
 import { useLiveBeat, onSignedOut } from "../../lib/liveBeat";
 import { RecordingSetup, RecIndicator } from "../RecordingSetup";
 import { StudyPopout } from "../StudyCard";
@@ -223,6 +223,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
 
   function finishSession(sold, soldCard, outcomeOverride) {
     setSaving(true);
+    var owner = getAudioOwner();   // captured now: a sign-out mid-save clears it
     var outcome = outcomeOverride || (sold ? "sold" : "completed");
     // The card on screen hasn't been "left" yet — record it so the last segment isn't lost
     var lastVisit = leaveCurrent();
@@ -245,6 +246,9 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           onPortalToReview(finished.id);
         })
         .catch(function() {
+          // Couldn't save (offline, signed out): keep the recording on this device — the
+          // server has the run from its heartbeats, and the audio uploads after next sign-in
+          if (audio) savePendingAudio(finished.id, audio, owner);
           setSaving(false); setActiveSession(null); setSessionEvents([]);
           setPlayView("home"); setNameError(false); onPortalToReview(null);
         });
@@ -358,8 +362,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   var signedOutRef = useRef(null);
   signedOutRef.current = function() {
     if (!activeSession) return;
-    var id = activeSession.id;
-    rec.stop().then(function(audio) { if (audio) savePendingAudio(id, audio); });
+    var id = activeSession.id, who = getAudioOwner();
+    rec.stop().then(function(audio) { if (audio) savePendingAudio(id, audio, who); });
   };
   useEffect(function() { return onSignedOut(function() { if (signedOutRef.current) signedOutRef.current(); }); }, []);
 

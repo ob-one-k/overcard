@@ -55,8 +55,9 @@ test("live session: start → progress → finish reaches the org's admins only"
     live = await admin.get("/sessions/live");
     assert.ok(!live.body.some(function(s) { return s.id === id; }));
 
-    // Nothing about Apex reached Meridian
+    // Nothing about Apex reached Meridian — and Meridian's stream was alive the whole time
     await sleep(300);
+    assert.ok(mStream.events.some(function(e) { return e.type === "hello"; }) && !mStream.isEnded(), "control: Meridian stream is up");
     assert.ok(!mStream.events.some(function(e) { return e.data && e.data.id === id; }), "no cross-org events");
   } finally {
     await user.del("/sessions/" + id);
@@ -103,15 +104,18 @@ test("feedback and shares update the rep, the recipient and admins live", async 
     assert.equal(mateNotes.body.items.filter(function(n) { return n.sessionId === id && n.type === "share"; }).length, 1);
 
     // The recipient leaves feedback → the rep hears about it
+    var m1 = uStream.mark();
     r = await mate.post("/sessions/" + id + "/feedback", { text: "Agreed" });
     assert.equal(r.status, 200);
-    assert.ok(await uStream.waitFor("feedback.changed", function(d) { return d.sessionId === id; }));
+    assert.ok(await uStream.waitFor("feedback.changed", function(d) { return d.sessionId === id; }, 5000, m1));
 
     // Revoking tells the recipient
     var shares = await user.get("/sessions/" + id + "/shares");
     var share = shares.body.find(function(x) { return x.toUserId === mate.user.id; });
-    await user.del("/sessions/" + id + "/shares/" + share.id);
-    assert.ok(await mStream.waitFor("share.changed", function(d) { return d.sessionId === id; }), "recipient told the share was revoked");
+    var m2 = mStream.mark();
+    assert.equal((await user.del("/sessions/" + id + "/shares/" + share.id)).status, 200);
+    assert.ok(await mStream.waitFor("share.changed", function(d) { return d.sessionId === id; }, 5000, m2), "recipient told the share was revoked");
+    assert.ok(!(await mate.get("/sessions")).body.some(function(s) { return s.id === id; }), "revoked session gone from their list");
   } finally {
     await user.del("/sessions/" + id);
     uStream.close(); mStream.close();
@@ -124,6 +128,7 @@ test("signing in on a second device signs the first out live and saves its run",
   var first = await login("apexUser3");
   var fStream = await first.stream();
   var id = tid("s");
+  try {
   var r = await first.post("/sessions/" + id + "/start", { deckId: APEX_DECK, name: "Kicked run", startTs: Date.now() });
   assert.equal(r.status, 200);
   await first.post("/sessions/" + id + "/beat", { events: [visit("c1", Date.now())], live: { cardId: "c2" } });
@@ -146,8 +151,10 @@ test("signing in on a second device signs the first out live and saves its run",
   // Logging out the old token must not end the new device's session
   await first.post("/auth/logout");
   assert.equal((await second.get("/sessions")).status, 200);
-  await second.del("/sessions/" + id);
-  aStream.close(); fStream.close();
+  } finally {
+    await (await login("apexUser3")).del("/sessions/" + id);
+    aStream.close(); fStream.close();
+  }
 });
 
 test("the live stream accepts the session cookie alone (same-origin browsers)", async function() {
@@ -156,4 +163,65 @@ test("the live stream accepts the session cookie alone (same-origin browsers)", 
   var r = await fetch(require("./helpers").BASE + "/events", { headers: { Cookie: "rc_token=" + user.token }, signal: ctrl.signal });
   assert.equal(r.status, 200);
   ctrl.abort();
+});
+
+test("live run guards: hijack, validation, after finishing", async function() {
+  var user = await login("apexUser");
+  var other = await login("apexUser2");
+  var merUser = await login("merUser");
+  var id = tid("s");
+  try {
+    assert.equal((await user.post("/sessions/" + id + "/start", { deckId: "d_apex_ent", name: "Guarded" })).status, 200);
+    // Someone else can't take over the id — same org or not
+    assert.equal((await other.post("/sessions/" + id + "/start", { deckId: "d_apex_ent", name: "Mine now" })).status, 409);
+    assert.equal((await merUser.post("/sessions/" + id + "/start", { deckId: "d_merd_out", name: "x" })).status, 409);
+    assert.equal((await other.post("/sessions", { id: id, deckId: "d_apex_ent", name: "x", startTs: 1, events: [] })).status, 403);
+    // Bad heartbeats
+    assert.equal((await user.post("/sessions/" + id + "/beat", { events: "nope" })).status, 400);
+    assert.equal((await user.post("/sessions/" + id + "/beat", { events: [1, 2] })).status, 400);
+    var big = []; for (var i = 0; i < 2001; i++) big.push({ type: "visit", cardId: "c" });
+    assert.equal((await user.post("/sessions/" + id + "/beat", { events: big })).status, 400);
+    // Unknown fields are dropped from stored events
+    await user.post("/sessions/" + id + "/beat", { events: [{ type: "visit", cardId: "c1", evil: "<script>" }], live: { cardId: "c2" } });
+    var live = (await (await login("apexAdmin")).get("/sessions/live")).body.find(function(s) { return s.id === id; });
+    assert.equal(live.events[0].evil, undefined);
+    // A path-less beat keeps the stored path
+    await user.post("/sessions/" + id + "/beat", { live: { cardId: "c3" } });
+    live = (await (await login("apexAdmin")).get("/sessions/live")).body.find(function(s) { return s.id === id; });
+    assert.equal(live.events.length, 1);
+    assert.equal(live.live.cardId, "c3");
+    // Finished → no more beats, no reopening, and the client can't mark it "active"
+    assert.equal((await user.post("/sessions", { id: id, deckId: "d_apex_ent", name: "Guarded", status: "active", startTs: Date.now() - 1000, endTs: Date.now(), events: [] })).status, 200);
+    assert.equal((await user.post("/sessions/" + id + "/beat", { events: [] })).status, 409);
+    assert.equal((await user.post("/sessions/" + id + "/start", { deckId: "d_apex_ent", name: "again" })).status, 409);
+    var saved = (await user.get("/sessions")).body.find(function(s) { return s.id === id; });
+    assert.equal(saved.status, "completed");
+  } finally {
+    await user.del("/sessions/" + id);
+  }
+});
+
+test("a rep can have at most 3 runs in progress", async function() {
+  var user = await login("apexUser3");
+  var ids = [tid("s"), tid("s"), tid("s"), tid("s")];
+  try {
+    for (var i = 0; i < 3; i++) assert.equal((await user.post("/sessions/" + ids[i] + "/start", { deckId: "d_apex_ent", name: "r" + i })).status, 200);
+    assert.equal((await user.post("/sessions/" + ids[3] + "/start", { deckId: "d_apex_ent", name: "r3" })).status, 429);
+  } finally {
+    for (var j = 0; j < ids.length; j++) {
+      await user.post("/sessions", { id: ids[j], deckId: "d_apex_ent", name: "r", startTs: Date.now(), endTs: Date.now(), events: [] });
+      await user.del("/sessions/" + ids[j]);
+    }
+  }
+});
+
+test("each account keeps at most 5 live streams", async function() {
+  var user = await login("apexUser");
+  var streams = [];
+  try {
+    for (var i = 0; i < 6; i++) { streams.push(await user.stream()); await sleep(100); }
+    await sleep(500);
+    assert.ok(streams[0].isEnded(), "oldest stream dropped");
+    assert.ok(!streams[5].isEnded(), "newest kept");
+  } finally { streams.forEach(function(s) { s.close(); }); }
 });

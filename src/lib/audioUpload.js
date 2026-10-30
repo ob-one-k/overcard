@@ -16,6 +16,7 @@ var listeners = [];
 var owner = null;      // signed-in user id — tags local copies so only they resume them
 
 export function setAudioOwner(userId) { owner = userId || null; }
+export function getAudioOwner() { return owner; }
 
 function emit() { listeners.slice().forEach(function(fn) { fn(); }); }
 function set(sessionId, s) { status[sessionId] = s; emit(); }
@@ -46,9 +47,11 @@ export function uploadSessionAudio(sessionId, blob, mimeType, durationMs) {
     .then(function() { return attempt(sessionId, blob, durationMs, 3); });
 }
 
-// Keep a recording on this device to upload later (this device was signed out mid-call)
-export function savePendingAudio(sessionId, audio) {
-  return saveAudioBlob(sessionId, audio.blob, audio.mimeType, audio.durationMs, owner).catch(function() {});
+// Keep a recording on this device to upload later (signed out mid-call, or the final save
+// failed). forOwner is captured when the call ended — by the time the recorder hands over
+// the audio the app may already be signed out.
+export function savePendingAudio(sessionId, audio, forOwner) {
+  return saveAudioBlob(sessionId, audio.blob, audio.mimeType, audio.durationMs, forOwner || owner).catch(function() {});
 }
 
 // After sign-in: upload every recording this user left on this device (signed out mid-call,
@@ -67,7 +70,9 @@ export function resumePendingUploads() {
             return apiPutBlob(path, rec.blob, function(pr) { set(r.sessionId, { state: "uploading", progress: pr }); })
               .then(function() { set(r.sessionId, { state: "done", progress: 1 }); return deleteAudioBlob(r.sessionId); })
               .catch(function(err) {
-                if (err.status === 404) { delete status[r.sessionId]; emit(); return deleteAudioBlob(r.sessionId); }
+                // Session gone for good (deleted) — drop the copy, but only once it is old enough
+                // that a run still being saved can't be the cause
+                if (err.status === 404 && Date.now() - (r.createdAt || 0) > 7 * 24 * 3600 * 1000) { delete status[r.sessionId]; emit(); return deleteAudioBlob(r.sessionId); }
                 set(r.sessionId, { state: "failed", progress: 0, error: err.message || "Upload failed" });
               });
           });

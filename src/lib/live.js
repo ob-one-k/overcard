@@ -72,17 +72,25 @@ function parseBlock(block) {
   dispatch(type, parsed);
 }
 
-async function connect() {
-  ctrl = new AbortController();
+// Everything that signs this device out (stream auth.ended, any API 401, a failed token
+// refresh) goes through here, so listeners such as Play can keep an in-progress recording
+// before the app unmounts
+export function signalSignedOut(reason) { dispatch("auth.ended", { reason: reason || "unauthenticated" }); }
+
+var gen = 0;                 // bumped by start/stop: results of an older connection are ignored
+var IDLE_MS = 60000;         // the server pings every 25s; silence this long = dead connection
+
+async function connect(myGen) {
+  var myCtrl = ctrl = new AbortController();
   var headers = { Accept: "text/event-stream" };
   var t = getStoredToken();
   if (t) headers.Authorization = "Bearer " + t;
-  var r = await fetch(API_BASE + "/events", { credentials: "include", headers: headers, signal: ctrl.signal, cache: "no-store" });
+  var r = await fetch(API_BASE + "/events", { credentials: "include", headers: headers, signal: myCtrl.signal, cache: "no-store" });
+  if (myGen !== gen) { myCtrl.abort(); return "stale"; }
   if (r.status === 401) {
-    // Let the normal API path decide (session_replaced banner vs login screen)
     var body = null;
     try { body = await r.json(); } catch (_) {}
-    dispatch("auth.ended", { reason: body && body.error === "session_replaced" ? "replaced" : "unauthenticated" });
+    if (myGen === gen) signalSignedOut(body && body.error === "session_replaced" ? "replaced" : "unauthenticated");
     return "stop";
   }
   if (!r.ok || !r.body) throw new Error("stream " + r.status);
@@ -93,27 +101,38 @@ async function connect() {
   var reader = r.body.getReader();
   var dec = new TextDecoder();
   var buf = "";
-  for (;;) {
-    var chunk = await reader.read();
-    if (chunk.done) break;
-    buf += dec.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
-    var idx;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      var block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      parseBlock(block);
+  // Watchdog: a half-open connection (wifi ↔ cellular switch) never ends by itself
+  var idle = null;
+  function kick() { clearTimeout(idle); idle = setTimeout(function() { try { myCtrl.abort(); } catch (_) {} }, IDLE_MS); }
+  kick();
+  try {
+    for (;;) {
+      var chunk = await reader.read();
+      if (chunk.done || myGen !== gen) break;
+      kick();
+      buf += dec.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
+      var idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        var block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        parseBlock(block);
+      }
     }
-  }
+  } finally { clearTimeout(idle); }
   return "closed";
 }
 
 function loop() {
   if (!running) return;
-  connect().then(function(result) {
+  var myGen = gen;
+  retryTimer = null;
+  connect(myGen).then(function(result) {
+    if (myGen !== gen) return;
     setConnected(false);
     if (result === "stop") { running = false; return; }
     schedule();
   }, function() {
+    if (myGen !== gen) return;
     setConnected(false);
     schedule();
   });
@@ -135,6 +154,7 @@ function onVisible() {
 
 export function startLive() {
   if (running) return;
+  gen++;
   running = true;
   retryMs = 1000;
   everConnected = false;
@@ -143,9 +163,12 @@ export function startLive() {
 }
 
 export function stopLive() {
+  gen++;
   running = false;
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   if (ctrl) { try { ctrl.abort(); } catch (_) {} ctrl = null; }
   document.removeEventListener("visibilitychange", onVisible);
   setConnected(false);
+  // Per-user live state (e.g. the admin monitor's run list) must not survive a sign-out
+  dispatch("live.reset", {});
 }

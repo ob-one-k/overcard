@@ -5,7 +5,7 @@ const {
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, uid,
   setUserTeams, getUserTeams, setActiveToken,
   transferOwnership, removeTeamAdminEverywhere, allInOrg,
-  createInvite, getOrgInvites, getInvite, updateInvite, getInviteMembers, revokeInvite, createPasswordReset,
+  createInvite, getOrgInvites, getInvite, updateInvite, getInviteMembers, revokeInvite, createPasswordReset, expirePasswordResets,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
 const realtime = require("../realtime");
@@ -129,6 +129,7 @@ router.put("/users/:id", async function(req, res, next) {
     if (teamIds !== undefined) {
       await setUserTeams(req.params.id, teamIds);
     }
+    if (fields.role) await expirePasswordResets(req.params.id);
     // Their open app re-reads its profile (role/teams) and rejoins the right live channels
     realtime.refreshUser(req.params.id);
     realtime.publish({ orgAdmins: req.user.orgId }, "users.changed", {});
@@ -217,6 +218,8 @@ router.post("/transfer-ownership", async function(req, res, next) {
       if (err.code === "NOT_OWNER" || err.code === "23505") return res.status(409).json({ error: "Ownership changed — reload and try again" });
       throw err;
     }
+    await expirePasswordResets(req.user.id);
+    await expirePasswordResets(target.id);
     realtime.refreshUser(req.user.id);
     realtime.refreshUser(target.id);
     res.json({ ok: true });

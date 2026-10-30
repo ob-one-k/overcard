@@ -7,10 +7,10 @@ const {
   getOrgUsers, getUserTeams, findUserById,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   createNotification, getShareRecipientIds, getDeckById, deckUsableBy,
-  startLiveSession, beatLiveSession, getLiveSessions,
+  startLiveSession, beatLiveSession, getLiveSessions, countActiveRuns,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
-const { publish } = require("../realtime");
+const { publish, publishProgress, endProgress, startProgress } = require("../realtime");
 
 router.use(requireAuth);
 
@@ -24,33 +24,6 @@ async function publishSession(session, type, data, extraUsers) {
   } catch (err) { console.error("publish failed:", err.message); }
 }
 
-// Live progress goes to org admins (the monitor). At most one event per session every
-// PROGRESS_MS; the latest state is sent when the window closes, so watchers never lag behind.
-var PROGRESS_MS = 2000;
-var progressState = new Map(); // sessionId → { last, timer, pending }
-function publishProgress(live) {
-  var st = progressState.get(live.id) || { last: 0, timer: null, pending: null };
-  progressState.set(live.id, st);
-  var now = Date.now();
-  if (now - st.last >= PROGRESS_MS && !st.timer) {
-    st.last = now;
-    publish({ orgAdmins: live.orgId }, "session.progress", live);
-    return;
-  }
-  st.pending = live;
-  if (!st.timer) {
-    st.timer = setTimeout(function() {
-      st.timer = null; st.last = Date.now();
-      if (st.pending) { publish({ orgAdmins: st.pending.orgId }, "session.progress", st.pending); st.pending = null; }
-    }, Math.max(0, PROGRESS_MS - (now - st.last)));
-  }
-}
-function endProgress(id) {
-  var st = progressState.get(id);
-  if (st && st.timer) clearTimeout(st.timer);
-  progressState.delete(id);
-}
-
 // Validate the small "where is the rep now" object a heartbeat carries
 function cleanLive(live) {
   if (!live || typeof live !== "object") return null;
@@ -61,6 +34,27 @@ function cleanLive(live) {
   };
 }
 var MAX_EVENTS = 5000;
+var MAX_ACTIVE_RUNS = 3;   // a rep runs one call at a time; a few allows a stuck tab
+
+// Heartbeat events are stored and shown to admins live: keep only known fields, bounded
+function cleanEvents(list) {
+  if (!Array.isArray(list) || list.length > 2000) return null;
+  function str(v, n) { return typeof v === "string" ? v.slice(0, n) : null; }
+  function num(v) { return Number.isFinite(v) ? v : null; }
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var e = list[i];
+    if (!e || typeof e !== "object") return null;
+    if (e.type === "visit") {
+      out.push({ type: "visit", cardId: str(e.cardId, 100), cardTitle: str(e.cardTitle, 200), cardType: str(e.cardType, 20),
+        isObjCard: !!e.isObjCard, stackLabel: str(e.stackLabel, 100), intendedPath: !!e.intendedPath, ts: num(e.ts),
+        durationMs: num(e.durationMs), audioStartMs: num(e.audioStartMs), audioEndMs: num(e.audioEndMs) });
+    } else if (e.type === "note") {
+      out.push({ type: "note", cardId: str(e.cardId, 100), cardTitle: str(e.cardTitle, 200), text: str(e.text, 2000), ts: num(e.ts) });
+    }
+  }
+  return out;
+}
 
 // A run's reference session must be a completed session of the same org; anything else is dropped
 async function cleanReference(id, orgId) {
@@ -132,14 +126,18 @@ router.post("/", async function(req, res, next) {
     if (typeof req.body.deckId !== "string" || !req.body.deckId) return res.status(400).json({ error: "Unknown deck" });
     const deck = await getDeckById(req.body.deckId);
     if (deck && deck.orgId !== req.user.orgId) return res.status(400).json({ error: "Unknown deck" });
+    // Only a deck this user may use is ever described back to them (a run is still saved if
+    // their access changed mid-call — the client sends its own deck snapshot)
+    const usable = deck && (await deckUsableBy(deck.id, req.user, { allowArchived: true }));
     if (req.body.events && (!Array.isArray(req.body.events) || req.body.events.length > MAX_EVENTS)) {
       return res.status(400).json({ error: "Invalid events" });
     }
     // Snapshot the deck's look when the client didn't send it (a deleted deck must have been sent)
-    var body = Object.assign({}, req.body);
+    // This endpoint only ever saves finished runs; live ones go through /start and /beat
+    var body = Object.assign({}, req.body, { status: "completed" });
     body.referenceSessionId = await cleanReference(body.referenceSessionId, req.user.orgId);
     if (!body.deckName) {
-      if (!deck) return res.status(400).json({ error: "Unknown deck" });
+      if (!usable) return res.status(400).json({ error: "Unknown deck" });
       body.deckName = deck.name; body.deckColor = body.deckColor || deck.color; body.deckIcon = body.deckIcon || deck.icon;
     }
     const session = await upsertSession(body, req.user.id, req.user.orgId);
@@ -166,12 +164,16 @@ router.post("/:id/start", async function(req, res, next) {
     const body = req.body || {};
     const deck = await deckUsableBy(body.deckId, req.user);
     if (!deck) return res.status(400).json({ error: "Unknown deck" });
+    if ((await countActiveRuns(req.user.id, req.params.id)) >= MAX_ACTIVE_RUNS) {
+      return res.status(429).json({ error: "Finish your other session first" });
+    }
     const live = await startLiveSession(Object.assign({}, body, {
       id: req.params.id, deckName: deck.name, deckColor: deck.color, deckIcon: deck.icon,
       events: [], live: cleanLive(body.live),
       referenceSessionId: await cleanReference(body.referenceSessionId, req.user.orgId),
     }), req.user.id, req.user.orgId);
     if (!live) return res.status(409).json({ error: "Session can't be started" });
+    startProgress(live.id);
     publish({ orgAdmins: live.orgId }, "session.started", live);
     res.json({ ok: true });
   } catch (err) { next(err); }
@@ -181,8 +183,9 @@ router.post("/:id/start", async function(req, res, next) {
 router.post("/:id/beat", async function(req, res, next) {
   try {
     const body = req.body || {};
-    if (!Array.isArray(body.events) || body.events.length > MAX_EVENTS) return res.status(400).json({ error: "Invalid events" });
-    const live = await beatLiveSession(req.params.id, req.user.id, body.events, cleanLive(body.live));
+    var events = body.events === undefined ? null : cleanEvents(body.events);
+    if (body.events !== undefined && !events) return res.status(400).json({ error: "Invalid events" });
+    const live = await beatLiveSession(req.params.id, req.user.id, events, cleanLive(body.live));
     // 409 tells the client the run is no longer live (finished elsewhere, or closed as abandoned)
     if (!live) return res.status(409).json({ error: "Session is not live" });
     publishProgress(live);
@@ -205,7 +208,7 @@ router.delete("/:id", async function(req, res, next) {
 
     // Read the audience before the delete — shares cascade with the session
     const recipients = await getShareRecipientIds(existing.id);
-    await deleteSession(req.params.id, existing.userId);
+    await deleteSession(req.params.id, existing.orgId);
     publish({ users: [existing.userId].concat(recipients), orgAdmins: existing.orgId }, "session.changed", { id: existing.id, deleted: true });
     res.json({ ok: true });
   } catch (err) { next(err); }
@@ -361,7 +364,7 @@ router.post("/:id/feedback", async function(req, res, next) {
       text:       text.trim(),
     });
     // Tell the session owner (never notify yourself)
-    if (session.userId !== req.user.id) {
+    if (session.userId && session.userId !== req.user.id) {
       await createNotification({
         userId: session.userId, orgId: session.orgId, type: "feedback", sessionId: session.id,
         actorId: req.user.id, actorName: req.user.displayName,
@@ -421,6 +424,7 @@ router.post("/:id/share", async function(req, res, next) {
 
     const { toUserId, context } = req.body || {};
     if (!toUserId) return res.status(400).json({ error: "toUserId is required" });
+    if (context != null && (typeof context !== "string" || context.length > 1000)) return res.status(400).json({ error: "Message must be 1000 characters or less" });
 
     const orgUsers = await getOrgUsers(req.user.orgId);
     const target   = orgUsers.find(function(u) { return u.id === toUserId; });

@@ -6,7 +6,9 @@ const compression  = require("compression");
 const path         = require("path");
 const fs           = require("fs");
 
-const { pool, initSchema, closeActiveSessions } = require("./db");
+const { pool, initSchema, closeActiveSessions, lockDemoAccounts } = require("./db");
+const { hashPassword } = require("./auth");
+const crypto = require("crypto");
 const { runSeed }          = require("./seed");
 const authRoutes    = require("./routes/authRoutes");
 const deckRoutes    = require("./routes/deckRoutes");
@@ -17,7 +19,7 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const { requireAuth } = require("./auth");
 const realtime      = require("./realtime");
 const { DEMO_MODE } = require("./config");
-const { apiLimiter } = require("./limits");
+const { apiLimiter, streamLimiter } = require("./limits");
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -45,7 +47,9 @@ app.use(cors({
 app.use(cookieParser());
 
 // Live event stream — mounted before compression so events are never buffered
-app.get("/api/events", requireAuth, realtime.streamHandler);
+app.get("/api/events", streamLimiter(), requireAuth, realtime.streamHandler);
+// Heartbeats are small — cap their bodies well below the general 10 MB JSON limit
+app.use(/^\/api\/sessions\/[^/]+\/(start|beat)$/, express.json({ limit: "256kb" }));
 
 // gzip JSON/HTML/JS (session lists are large and highly repetitive); audio/* is skipped by the default filter
 app.use(compression({ threshold: 1024 }));
@@ -127,11 +131,7 @@ async function initSchemaWithRetry(attempts) {
 // abandoned after STALE_MS, keeping the path recorded so far
 var STALE_MS = 10 * 60 * 1000;
 function sweepStaleSessions() {
-  closeActiveSessions({ staleBefore: Date.now() - STALE_MS }).then(function(rows) {
-    rows.forEach(function(r) {
-      realtime.publish({ users: [r.userId], orgAdmins: r.orgId }, "session.finished", { id: r.id, userId: r.userId, abandoned: true });
-    });
-  }).catch(function(err) { console.error("Stale session sweep failed:", err.message); });
+  closeActiveSessions({ staleBefore: Date.now() - STALE_MS }).then(realtime.publishAbandoned).catch(function(err) { console.error("Stale session sweep failed:", err.message); });
 }
 
 async function start() {
@@ -161,6 +161,11 @@ async function start() {
       });
     } else {
       console.log("Demo mode off — skipping demo seed");
+      // Demo accounts share a published password: lock them (their data stays)
+      hashPassword(crypto.randomBytes(32).toString("base64url"))
+        .then(lockDemoAccounts)
+        .then(function(n) { if (n) console.log("Demo mode off — locked " + n + " demo account(s)"); })
+        .catch(function(err) { console.error("Locking demo accounts failed:", err.message); });
     }
   });
 }

@@ -6,6 +6,11 @@
 // Tests only create their own records (ids prefixed "t_") and never touch other data.
 
 var BASE = (process.env.TEST_API || "http://localhost:3001") + "/api";
+// The suite signs demo accounts in with force (signing out whoever uses them) and creates
+// records — never point it at a deployed server by accident
+if (!/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\/api$/.test(BASE) && process.env.TEST_ALLOW_REMOTE !== "1") {
+  throw new Error("Refusing to run tests against " + BASE + " (set TEST_ALLOW_REMOTE=1 for a disposable staging server)");
+}
 var PASSWORD = process.env.TEST_PASSWORD || "Overcard2025!"; // demo seed password (server/seed.js)
 
 var ACCOUNTS = {
@@ -54,13 +59,14 @@ async function openStream(token) {
   var ctrl = new AbortController();
   var r = await fetch(BASE + "/events", { headers: { Authorization: "Bearer " + token, Accept: "text/event-stream" }, signal: ctrl.signal });
   var events = [];
+  var claimed = new Set();   // each event satisfies at most one waitFor
   var waiters = [];
   var ended = false;
   var status = r.status;
   function check() {
     waiters.slice().forEach(function(w) {
-      var hit = events.find(function(e) { return e.type === w.type && !w.seen.has(e) && (!w.pred || w.pred(e.data)); });
-      if (hit) { w.seen.add(hit); waiters.splice(waiters.indexOf(w), 1); clearTimeout(w.timer); w.resolve(hit.data); }
+      var hit = events.find(function(e, i) { return i >= w.since && e.type === w.type && !claimed.has(e) && (!w.pred || w.pred(e.data)); });
+      if (hit) { claimed.add(hit); waiters.splice(waiters.indexOf(w), 1); clearTimeout(w.timer); w.resolve(hit.data); }
     });
   }
   if (r.ok && r.body) {
@@ -91,12 +97,14 @@ async function openStream(token) {
     status: status,
     events: events,
     isEnded: function() { return ended; },
+    // Index to pass as waitFor's `since`: only events after this point count
+    mark: function() { return events.length; },
     close: function() { ctrl.abort(); },
     // Resolves with the event's data, or null after ms (tests assert on null for "never arrived")
-    waitFor: function(type, pred, ms) {
+    waitFor: function(type, pred, ms, since) {
       return new Promise(function(resolve) {
-        var w = { type: type, pred: pred, resolve: resolve, seen: new Set() };
-        w.timer = setTimeout(function() { waiters.splice(waiters.indexOf(w), 1); resolve(null); }, ms || 3000);
+        var w = { type: type, pred: pred, resolve: resolve, since: since || 0 };
+        w.timer = setTimeout(function() { waiters.splice(waiters.indexOf(w), 1); resolve(null); }, ms || 5000);
         waiters.push(w);
         check();
       });

@@ -22,43 +22,59 @@ export function useLiveBeat(session, events, live) {
   var sessionId = session ? session.id : null;
   var latest = useRef({ events: events, live: live });
   latest.current = { events: events, live: live };
-  var startRef = useRef(null);   // Promise of the start request for this session
-  var stopped  = useRef(false);  // the server closed the run (finished elsewhere / signed out)
+  var startRef = useRef(null);   // Promise<boolean> — the run exists on the server
+  var stopped  = useRef(false);  // the server refuses this run for good (finished elsewhere)
   var timer    = useRef(null);
+  var sessRef  = useRef(session);
+  sessRef.current = session;
+
+  // POST /start — idempotent for a run that is still live, and reopens the owner's own run
+  // if the server closed it as abandoned (phone slept past the stale sweep)
+  function start() {
+    var s = sessRef.current;
+    if (!s) return Promise.resolve(false);
+    return apiPost("/sessions/" + encodeURIComponent(s.id) + "/start", {
+      deckId: s.deckId, name: s.name, account: s.account || null, contact: s.contact || null,
+      mode: s.mode, startTs: s.startTs, referenceSessionId: s.referenceSessionId || null,
+      live: latest.current.live || null,
+    }).then(function() { return true; }, function(err) {
+      if (err.status === 409 || err.status === 400) stopped.current = true;   // not ours / unusable deck
+      return false;   // offline etc.: the next beat tries again
+    });
+  }
 
   function send() {
-    if (!sessionId || stopped.current || !startRef.current) return;
+    if (!sessionId || stopped.current) return;
     var body = { events: latest.current.events || [], live: latest.current.live || null };
-    startRef.current.then(function() {
+    var id = sessionId;
+    (startRef.current || Promise.resolve(false)).then(function(ok) {
       if (stopped.current) return;
-      return apiPost("/sessions/" + encodeURIComponent(sessionId) + "/beat", body).catch(function(err) {
-        if (err.status === 409) stopped.current = true;
+      if (!ok) { startRef.current = start(); return startRef.current.then(function(again) { if (again) send(); }); }
+      return apiPost("/sessions/" + encodeURIComponent(id) + "/beat", body).catch(function(err) {
+        // Not live on the server any more: start again once (reopens it if it was swept)
+        if (err.status === 409) startRef.current = start();
       });
     });
   }
 
-  // Start once per run
   useEffect(function() {
     if (!sessionId) return;
     stopped.current = false;
-    var s = session;
-    startRef.current = apiPost("/sessions/" + encodeURIComponent(sessionId) + "/start", {
-      deckId: s.deckId, name: s.name, account: s.account || null, contact: s.contact || null,
-      mode: s.mode, startTs: s.startTs, referenceSessionId: s.referenceSessionId || null,
-      live: latest.current.live || null,
-    }).catch(function() { /* offline: beats retry the row via the final save */ });
+    startRef.current = start();
 
     var iv = setInterval(send, HEARTBEAT_MS);
-    // Closing the tab: one last beat that survives the page unloading
+    // Closing the tab: one last beat that survives the page unloading. keepalive bodies are
+    // limited to 64 KB, so a long path is left out (the server keeps the one it has).
     function onHide() {
       if (stopped.current) return;
       var headers = { "Content-Type": "application/json" };
       var t = getStoredToken();
       if (t) headers.Authorization = "Bearer " + t;
+      var body = JSON.stringify({ events: latest.current.events || [], live: latest.current.live || null });
+      if (body.length > 60000) body = JSON.stringify({ live: latest.current.live || null });
       try {
         fetch(API_BASE + "/sessions/" + encodeURIComponent(sessionId) + "/beat", {
-          method: "POST", keepalive: true, credentials: "include", headers: headers,
-          body: JSON.stringify({ events: latest.current.events || [], live: latest.current.live || null }),
+          method: "POST", keepalive: true, credentials: "include", headers: headers, body: body,
         }).catch(function() {});
       } catch (_) {}
     }

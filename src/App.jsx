@@ -10,7 +10,7 @@ import { NotificationBell } from "./components/NotificationBell";
 import { OrgMark } from "./components/OrgMark";
 import { getBrand, syncBrand, setBrand, cachedLogoVer } from "./lib/brand";
 import { clearCache } from "./lib/dataCache";
-import { startLive, stopLive, onLive } from "./lib/live";
+import { startLive, stopLive, onLive, signalSignedOut } from "./lib/live";
 import { setAudioOwner, resumePendingUploads } from "./lib/audioUpload";
 
 // ─── CODE SPLITTING ─────────────────────────────────────────────────────────
@@ -131,8 +131,9 @@ export default function App() {
   // Register 401 handler so api helpers can clear auth state
   useEffect(function() {
     // Signed out by the server: also forget the cached org brand (shared devices)
-    setUnauthHandler(function(){ setStoredToken(null); clearCache(); setBrand(null); setAuthUser(false); });
-    setSessionReplacedHandler(function(){ setStoredToken(null); clearCache(); setBrand(null); setKickReason("replaced"); setAuthUser(false); });
+    // signalSignedOut first: Play keeps an in-progress recording before the app unmounts
+    setUnauthHandler(function(){ signalSignedOut("unauthenticated"); setStoredToken(null); clearCache(); setBrand(null); setAuthUser(false); });
+    setSessionReplacedHandler(function(){ signalSignedOut("replaced"); setStoredToken(null); clearCache(); setBrand(null); setKickReason("replaced"); setAuthUser(false); });
     return function(){ setUnauthHandler(null); setSessionReplacedHandler(null); };
   }, []);
 
@@ -171,6 +172,7 @@ export default function App() {
         .then(function(r) {
           if (r.status === 401) {
             return r.json().catch(function() { return null; }).then(function(b) {
+              signalSignedOut(b && b.error === "session_replaced" ? "replaced" : "unauthenticated");
               setStoredToken(null); clearCache(); setBrand(null);
               if (b && b.error === "session_replaced") setKickReason("replaced");
               setAuthUser(false);

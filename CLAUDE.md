@@ -16,7 +16,14 @@ Dev endpoints:
 - Frontend: `http://localhost:5173`
 - API: `http://localhost:3001/api/health`
 
-No test framework is configured.
+```bash
+npm test             # node:test suite in tests/ — needs a running, demo-seeded server:
+                     #   RATE_LIMITS=off npm run server   (then)   TEST_API=http://localhost:3001 npm test
+npm run loadtest     # 100-person mixed workload in a throwaway org (needs MASTER_CODE; never against production)
+npm run owner-reset -- owner@company.com   # one-time password link for a locked-out owner
+```
+
+Tests only create their own records (ids prefixed `t_`) in the two demo orgs. `tests/isolation.test.js` probes every endpoint across orgs — extend it whenever an endpoint is added. Operations (deploy, backups, demo off, recovery): `docs/PRODUCTION.md`.
 
 ## Architecture
 
@@ -52,11 +59,12 @@ JWT-based authentication with HttpOnly cookies.
   - `user` — play sessions, view cards/objections read-only, share sessions
   - Nobody changes their own role. Demoting an admin removes them from `team_admins`.
 - **Signup:** `POST /api/auth/signup` (share code → joins that org as `user`) and `POST /api/auth/create-org` (requires `MASTER_CODE` env; creator becomes `owner`). Both create the account and log in. Share-code use is claimed in the same transaction as the user insert, so a failed signup never burns a use. Both share a 10/15min rate limiter. Invite links: `/?join=CODE` opens the signup screen pre-filled.
-- **Dev login:** Uses `DEV_ORGS` and `DEV_PASSWORD` defined unconditionally at module level in `Panels.jsx`. Only the LoginScreen UI that renders them is conditionally shown. Default credentials are configured in `server/seed.js` (development only).
+- **Demo login:** while `DEMO_MODE` is on (default), `GET /api/config` returns `{demo:true}` and the LoginScreen shows the demo org picker (`DEV_ORGS` in `Panels.jsx`, names/emails only). Picking a person calls `POST /api/auth/demo-login {email}`, which only works for seeded accounts (`seed_manifest`). No password ships in the client.
+- **Passwords:** `POST /auth/change-password` (current password required; this device gets a fresh session, others are signed out). Admins issue one-time reset links (`POST /admin/users/:id/reset-link`, 1h, single use, SHA-256-hashed in `password_resets`) opened at `/?reset=TOKEN` (`ResetPasswordScreen`). The owner recovers with `npm run owner-reset`. No email yet — the table/endpoints are ready for an email step.
 
 ## Database Schema
 
-PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE TABLE IF NOT EXISTS`. 11 tables:
+PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CREATE TABLE IF NOT EXISTS`) followed by numbered migrations. Main tables (also `seed_manifest`, `migrations`):
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -73,6 +81,9 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `session_shares` | Session sharing between users | id, "sessionId", "fromUserId", "toUserId", context |
 | `notifications` | In-app notifications (cascade with user/session) | id, "userId", type, "sessionId", "actorName", text, "createdAt", "readAt" |
 | `session_audio` | Session recordings (BYTEA, one per session; cascades on session delete) | "sessionId" PK, "orgId", "mimeType", "durationMs", "sizeBytes", data |
+| `password_resets` | One-time reset links | id, "userId", "tokenHash" (SHA-256), "createdBy", "expiresAt", "usedAt" |
+
+Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org_invites.label`/`"teamId"`, `users."inviteId"`. `users."activeToken"` holds SHA-256 of the session id, never the raw id. Emails are unique case-insensitively (`uniq_users_email_lower`). Deleting a user keeps their sessions (`userId` → NULL, listed as "Former member"), keeps feedback they wrote, removes shares to/from them; deleting a team clears members' `teamId`.
 
 **Column naming:** All camelCase column names are double-quoted in every SQL string throughout db.js to preserve case in PostgreSQL (e.g., `"orgId"`, `"userId"`, `"startTs"`).
 
@@ -80,7 +91,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 
 **BIGINT timestamps:** `"startTs"`, `"updatedAt"`, `"lastLoginAt"` are `BIGINT` storing Unix milliseconds. A type parser (`types.setTypeParser(20, ...)`) ensures these are returned as JS numbers, not strings.
 
-**Migrations:** Applied at end of `initSchema()` with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+**Migrations:** every schema change goes in a numbered file in `server/migrations/` (`{ name, up(client) }`, listed in `index.js`), applied once each in its own transaction under an advisory lock and recorded in `migrations`. Never edit or reorder a shipped migration. Don't add new `ALTER`s to the `initSchema` baseline.
 
 **Audio size budget:** recordings are ~0.24 MB/min (32 kbps). The free Render database is 1 GB, which is roughly 60 hours of audio in total.
 
@@ -151,7 +162,15 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | `src/lib/useViewport.js` | `startViewportTracking`, `useKeyboardOpen`, `keyboardIsOpen`, `revealOnFocus`, `revealField`, `resetStrayScroll`, `isCoarsePointer` |
 | `src/lib/brand.js` | `getBrand`, `syncBrand`, `setBrand`, `cachedLogoVer` — org name/logo/accent store + device cache |
 | `src/components/ImportPicker.jsx` | `ImportPicker` (copy cards — optionally with their downstream branch — or objection stacks from another org deck) |
-| `src/components/AdminPanel.jsx` | `AdminPanel` (Users / Teams / Share Codes / Organization; split from Panels.jsx, lazy-loaded) |
+| `src/components/AdminPanel.jsx` | `AdminPanel` (Users / Teams / Share Codes / Organization; split from Panels.jsx, lazy-loaded), `ResetPasswordDialog`, `InviteCard` |
+| `src/lib/live.js` | `startLive`, `stopLive`, `onLive`, `useLive`, `isLiveConnected` — the live event stream (fetch-based SSE, reconnect + resync) |
+| `src/lib/liveBeat.js` | `useLiveBeat(session, events, live)` — start/heartbeat/pagehide for runs in progress; `onSignedOut` |
+| `src/components/LiveMonitor.jsx` | `LiveNow` (admin "Live now" strip/card + watch view), `useLiveRuns` |
+| `src/components/ResetPassword.jsx` | `ResetPasswordScreen` (`/?reset=TOKEN`), `passwordProblem` |
+| `server/realtime.js` | `streamHandler`, `publish`, `closeUser`, `refreshUser`, `signOutDevices` — in-process SSE pub/sub |
+| `server/migrations/` | Numbered schema migrations + runner |
+| `server/limits.js` | `limiter` factory (`RATE_LIMITS=off` for tests, never in production), `apiLimiter` (600/min per account) |
+| `server/config.js` | `DEMO_MODE` |
 
 ## API Endpoints
 
@@ -164,6 +183,10 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | GET | `/api/auth/me` | Yes | Returns current user profile with team info, name parts, phone, orgName, `orgLogoVer`. `?logoVer=` matching the current logo omits `orgLogo` (`orgLogoCached:true`) |
 | GET | `/api/auth/invite/:code` | No | Preview the org a share code joins (rate limited) |
 | POST | `/api/auth/signup` | No | `{code, firstName, lastName, email, phone, password}` → new `user` in the code's org, logged in |
+| POST | `/api/auth/demo-login` | No | `{email}` → sign in to a seeded demo account. 404 unless `DEMO_MODE` is on |
+| POST | `/api/auth/change-password` | Yes | `{currentPassword, newPassword}` → new session token for this device; other sessions end |
+| GET | `/api/auth/reset/:token` | No | Preview a reset link (first name, email, org) |
+| POST | `/api/auth/reset` | No | `{token, password}` → one-time reset; signs the account out everywhere |
 | POST | `/api/auth/create-org` | No | `{masterCode, org:{name, industry, website, phone, address}, firstName, lastName, email, phone, password}` → new org + `owner`, logged in. 503 if `MASTER_CODE` unset |
 
 ### Organization
@@ -188,7 +211,10 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` using `CREATE 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/sessions` | Yes | List sessions (supports `?scope=`, `?deckId=`, `?mode=`, `?outcome=`, `?from=`, `?to=`, `?limit=`). One query: feedback/share counts are LATERAL joins |
-| POST | `/api/sessions` | Yes | Upsert session (requires `id` in body) |
+| POST | `/api/sessions` | Yes | Save a finished run (requires `id`; deck must be in the caller's org). Ends its live row |
+| GET | `/api/sessions/live` | Admin | The org's runs in progress |
+| POST | `/api/sessions/:id/start` | Yes | Store a run as `active` when it starts (deck must be usable by the caller) |
+| POST | `/api/sessions/:id/beat` | Owner | `{events, live}` heartbeat while active; 409 once it isn't |
 | DELETE | `/api/sessions/:id` | Yes | Delete session (owner or org admin) |
 | GET | `/api/sessions/org-users` | Yes | List all users in the caller's org (used by sharing UI) |
 
@@ -228,7 +254,10 @@ Sessions store the chosen reference in `"referenceSessionId"`.
 | GET | `/api/notifications` | Yes | `{ items (latest 30, with sessionName/deckId), unreadCount }` |
 | POST | `/api/notifications/read` | Yes | `{ ids }` or `{ sessionId }` marks those read; empty body marks all |
 
-Created when someone else leaves feedback on your session (`type: "feedback"`). Client store: `src/lib/notifications.js` (polls every 30s); UI: `NotificationBell` in the desktop shell and mobile header; opening your own session's review marks its notifications read.
+Created when someone else leaves feedback on your session (`type: "feedback"`) or shares one with you (`type: "share"`). Client store: `src/lib/notifications.js` (updated live; 5-minute safety poll); UI: `NotificationBell` in the desktop shell and mobile header; opening your own session's review marks its notifications read.
+
+### Live events
+`GET /api/events` (auth: cookie or Bearer) is a Server-Sent Events stream. Channels come from the signed-in user only: `user:<id>` and, for admins/owner, `orgAdmins:<orgId>`. Events: `session.started/progress/finished` (admins), `session.changed`, `feedback.changed`, `share.changed` (owner + share recipients + admins), `notification.new/read`, `users.changed` (admins), `auth.ended {reason: replaced|password|removed|logout}`, `auth.changed`. Payloads carry ids; clients refetch through the normal endpoints (progress carries the live run).
 
 ### Admin (requires admin role)
 | Method | Path | Description |
@@ -236,11 +265,14 @@ Created when someone else leaves feedback on your session (`type: "feedback"`). 
 | GET | `/api/admin/users` | List org users |
 | POST | `/api/admin/users` | Create user (`firstName, lastName, email, phone, password, role: admin|user`) |
 | PUT | `/api/admin/users/:id` | Update name/phone/role/team (role rules above) |
-| POST | `/api/admin/users/:id/reset-password` | Reset password (owner required for admin targets) |
+| POST | `/api/admin/users/:id/reset-link` | One-time reset link `{token, expiresAt}` (never the owner, never yourself; owner required for admin targets) |
+| POST | `/api/admin/users/:id/reset-password` | Set a temporary password (owner required for admin targets) |
 | DELETE | `/api/admin/users/:id` | Delete user (never the owner; owner required for admin targets) |
 | POST | `/api/admin/transfer-ownership` | Owner only — `{userId}`; target becomes owner, caller becomes admin |
 | GET | `/api/admin/invites` | List share codes |
 | POST | `/api/admin/invites` | Generate share code (`expiresInDays` 1–365 or null, `maxUses` 1–1000 or null) |
+| PUT | `/api/admin/invites/:id` | Edit label, team, expiry (`expiresInDays` from now), max uses; `reactivate:true` clears a revoke |
+| GET | `/api/admin/invites/:id/members` | Who joined with this code |
 | DELETE | `/api/admin/invites/:id` | Revoke share code |
 | GET | `/api/admin/teams` | List org teams |
 | POST | `/api/admin/teams` | Create team |
@@ -250,7 +282,8 @@ Created when someone else leaves feedback on your session (`type: "feedback"`). 
 ### Health
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/health` | No | Server status with user/deck/session counts |
+| GET | `/api/health` | No | `{ok, ts}` liveness (checks the DB) |
+| GET | `/api/config` | No | `{demo}` |
 
 ## Rich Text Format
 
@@ -292,13 +325,15 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Three layouts:** `useDesktop()` returns `layout` = desktop (≥1024px, mouse) | tablet (768–1023px, or touch tablets) | mobile. App passes `DesktopCtx` with `isDesktop:true` on tablet too, so every `XDesktop/XMobile` switch shows the desktop component; tablet-aware code checks `desktop.compact` (smaller type, 44px touch targets, icon rail + ☰ drawer, in-session Play side rails as drawers) and `desktop.splitPanes` (list + detail side by side only when ≥960px wide, otherwise list ↔ detail with back buttons). Phones are unchanged.
 - **Card stage (desktop/tablet editors only):** `src/components/CardStage.jsx` shows the open card large in the centre, its parent card(s) as tabs tucked behind on the left (fanned when there are several; front = the card you came from, else intended path), and its destinations as floating cards on the right with hover/tap previews. Used by `CardsDesktop` (list mode), `ObjectionsDesktop` and `ObjStackEditor` (inline). Graph helpers live in `src/lib/cardGraph.js` (`getParents`, `orderParents`, `getChildren`). Never used in Play or on phones. Stage navigation saves through `CardEditorSheet`'s `onSaveAndNavigateTo`.
 - **Desktop/mobile split:** `PlayTab`, `CardsTab`, `ObjectionsTab`, `SessionsTab` are thin wrappers that render `XDesktop` or `XMobile`. Never put hooks after a conditional `return` — crossing the 1024px breakpoint would change hook order and crash.
-- **Auth sessions:** `requireAuth` requires the JWT `sid` to equal `users.activeToken`. Logout clears `activeToken` only if the token's `sid` matches (a stale device can't end the active session); admin password reset nulls it unconditionally, revoking all tokens. JWTs pinned to HS256. bcrypt is async (`hashPassword`/`checkPassword` return promises).
+- **Auth sessions:** `requireAuth` requires SHA-256 of the JWT `sid` to equal `users.activeToken` (constant-time). One device at a time: login asks "Log in anyway?" (409), then `startSession` → `realtime.signOutDevices()` saves the old device's runs as abandoned and sends it `auth.ended {reason:"replaced"}` instantly. Logout clears `activeToken` only if the token's `sid` matches. Password reset/change, user removal and role changes push `auth.ended`/`auth.changed` too. JWTs pinned to HS256. bcrypt is async. The client keeps the Bearer token in localStorage only when the API is cross-site (`CROSS_SITE` in `api.js`); same-origin uses the cookie alone.
+- **Live updates:** `startLive()` runs while signed in. Components subscribe with `onLive(type, fn)` (unsubscribe on unmount). Session-list effects add `useCacheVersion("/sessions")` to their deps — `live.js` invalidates `/sessions` on finished/changed/feedback/share events and everything on reconnect (`live.resync`). Never invalidate on `session.progress`. New server writes should `publish()` to the right audience (`publishSession` in sessionRoutes).
+- **Runs in progress:** Play calls `useLiveBeat` — the run exists server-side from the start (`status:'active'`, hidden from every list except `/sessions/live`), heartbeats on each card change/note and every 20s, and the normal finish save completes it. Runs whose heartbeat stops for 10 min are closed as `abandoned` (sweep in `index.js`). A device signed out mid-call keeps its recording in IndexedDB; `resumePendingUploads()` uploads it after the next sign-in.
 - **Autosave:** 800ms debounce per deck. `dirtyIds` ref tracks which decks have unsaved changes. Saves via `PUT /api/decks/:id`.
-- **Polling:** SessionReview polls feedback every 5s. ShareModal polls shares every 5s. Both clean up intervals on unmount.
+- **No polling for live data:** feedback, shares, notifications and session lists update from live events (notifications keep a 5-minute safety poll).
 - **Immutable updates:** All state updates use `Object.assign({}, prev, changes)` pattern. No spread operator (ES5-style codebase).
 - **Inline styling:** All styles are JS objects. Helper functions for common patterns. No CSS classes.
 - **Auth flow:** JWT in HttpOnly cookie. `setUnauthHandler` sets a global 401 redirect. `apiGet/Put/Post/Del` check for 401 on every response.
-- **Dev login:** `DEV_ORGS` and `DEV_PASSWORD` defined unconditionally in `Panels.jsx`. The quick-select UI is shown based on context, not `import.meta.env.DEV`. Default credentials are configured in `server/seed.js` (development only).
+- **Share codes:** codes can carry a label and a team; joining adds the person to that team and records `users."inviteId"`. Signup/preview errors say why a code can't be used (`reason`: unknown/revoked/expired/used_up).
 - **Read-only mode:** CardsTab and ObjectionsTab accept a `readOnly` prop. Non-admin users see cards/objections but cannot edit.
 - **Feedback notifications:** `feedbackCount` and `latestFeedbackAt` returned per session by API. Frontend stores `fbSeenTs` in localStorage to track read state.
 - **Card reordering:** Cards within each type group support drag-and-drop reordering via a `⠿` grip handle (non-readOnly only). Uses Pointer Events API (`setPointerCapture`, `onPointerMove`, `onPointerUp`). On drop, `sortIndex` (integer) is written to every card in the group via `safeUpsert`. Display order is `(a.sortIndex||0) - (b.sortIndex||0)`. Autosave handles persistence.
@@ -333,8 +368,14 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `DATABASE_URL` | Yes (production) | PostgreSQL connection string (e.g., `postgres://localhost/overcard_dev` locally; auto-wired on Render) |
-| `JWT_SECRET` | Yes (production) | App exits without it. Dev uses a hardcoded fallback. |
-| `NODE_ENV` | Yes (production) | Set to `production`. Enables secure cookies, helmet CSP, JWT secret enforcement. |
+| `JWT_SECRET` | Yes (except dev/test) | 32+ chars. The server refuses to start without it unless `NODE_ENV` is `development` or `test` (`npm run server` sets development). |
+| `NODE_ENV` | Yes (production) | Set to `production`. Enables secure cookies, helmet CSP. |
+| `DATABASE_SSL` | No | `verify` / `require` (production default) / `off` |
+| `DATABASE_POOL_MAX` | No | Default 20 |
+| `DEMO_MODE` | No | `on` seeds demo orgs on boot and offers demo sign-in; `off` stops both and locks the demo accounts (random password), deleting nothing. Unset = off when `NODE_ENV=production`, on otherwise |
+| `APP_URL` | No | Public app URL for owner recovery links |
+| `UV_THREADPOOL_SIZE` | No | 8 on Render (fast sign-in bursts) |
+| `RATE_LIMITS` | No | `off` disables rate limits for tests/load test; ignored in production |
 | `CORS_ORIGIN` | Yes (production) | Frontend URL allowed for CORS (e.g., your Vercel URL) |
 | `MASTER_CODE` | For org sign-up | Secret entered on the "Create organization" signup form. Unset = org creation disabled (503). Compared in constant time. |
 | `PORT` | No | Default: 3000 |
@@ -369,13 +410,14 @@ Deploy steps:
 
 ## Security
 
-- **JWT secret:** Production requires `JWT_SECRET` env var — app refuses to start without it. Dev mode uses a hardcoded fallback.
-- **Rate limiting:** Login endpoint limited to 10 attempts per 15-minute window via `express-rate-limit`.
+- **JWT secret:** required (32+ chars) everywhere except `NODE_ENV=development/test`.
+- **Rate limiting (server/limits.js):** login and signup 10/15 min, invite preview 30/15 min, reset links 20/15 min, password change 10/15 min per account, whole API 600/min per account (falls back to IP).
+- **Tokens:** session ids and reset tokens are stored only as SHA-256 hashes.
+- **PII:** emails are returned to admins only (`/sessions/org-users`, share lists). Production error logs omit row details.
 - **Security headers:** `helmet` middleware sets standard security headers (CSP disabled in dev for Vite HMR).
 - **Password policy:** 8+ characters, at least one uppercase letter, at least one digit. Enforced on user creation and password reset.
 - **Org scoping:** All endpoints validate `orgId` to prevent cross-org data access (IDOR protection).
 - **XSS prevention:** `escH()` in `Editor.jsx` escapes all user content before innerHTML rendering in the contentEditable editor.
-- **Dev-only features:** `DEV_ORGS` and `DEV_PASSWORD` are defined unconditionally in `Panels.jsx` (not tree-shaken by Vite). Only the LoginScreen UI rendering them checks a condition. Do not rely on Vite bundle stripping for these values.
-- **Seed on boot:** `server/index.js` runs `runSeed()` on every start, including production. There is no production guard — seeded accounts share a known password (demo deployment only).
+- **Demo accounts:** seeded on boot only while `DEMO_MODE` is on; they share a known password (in `server/seed.js`), so turn demo mode off for a production launch (`docs/PRODUCTION.md`).
 - **Feedback limits:** Feedback text capped at 5000 characters.
 - **Signup:** Share codes are 8 chars from an unambiguous 31-char alphabet (~40 bits), expirable, use-limited and revocable. `/auth/invite`, `/auth/signup` and `/auth/create-org` share a 10-per-15-min rate limiter.

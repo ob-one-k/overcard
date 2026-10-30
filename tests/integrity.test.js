@@ -31,8 +31,12 @@ test("deleting a user with sessions, feedback and shares keeps the history", asy
     assert.equal((await admin.get("/sessions/" + sid + "/feedback")).body.length, 1, "feedback kept");
     assert.ok(!(await mate.get("/sessions")).body.some(function(s) { return s.id === sid; }), "shares from them removed");
     assert.deepEqual((await admin.get("/decks/" + deckId + "/access")).body, [], "deck access entry removed");
+    assert.equal((await admin.post("/sessions/" + sid + "/feedback", { text: "After they left" })).status, 200, "feedback on a former member's session");
     assert.equal((await admin.del("/sessions/" + sid)).status, 200, "admins can still delete it");
+    assert.ok(!(await admin.get("/sessions?scope=org")).body.some(function(s) { return s.id === sid; }), "and it is really gone");
   } finally {
+    await admin.del("/sessions/" + sid);      // no-ops when the test got this far
+    await admin.del("/admin/users/" + u.id);
     if (deckId) await (await login("apexOwner")).del("/decks/" + deckId);
   }
 });

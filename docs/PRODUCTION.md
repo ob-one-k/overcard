@@ -51,8 +51,10 @@ done
 ## 5. Turning demo mode off at launch
 
 1. Create the real organization or organizations: the sign-up screen, then "Create organization" with `MASTER_CODE`.
-2. Set `DEMO_MODE=off` and redeploy. The demo orgs stop being re-seeded, the one-click demo picker disappears, and demo sign-in is disabled. **Nothing is deleted**, and real orgs never see demo data, because every query is scoped to the signed-in user's org.
-3. The demo accounts still exist with the demo password. To remove them later, delete the two demo orgs' users from each org's Admin panel, or ask for a cleanup script.
+2. Set `DEMO_MODE=off` and redeploy. The demo orgs stop being re-seeded, the one-click demo picker disappears, and demo sign-in is disabled. The demo accounts are **locked**: their shared, published password is replaced by a random one, and any open session ends. **No data is deleted**, and real orgs never see demo data, because every query is scoped to the signed-in user's org.
+3. Locking is permanent for password sign-in. If demo mode is turned back on, the picker works again, because it signs in without a password. To remove the demo orgs completely later, ask for a cleanup script.
+
+When `DEMO_MODE` is unset, it defaults to **off** if `NODE_ENV=production` and **on** otherwise. `render.yaml` sets it to `on` explicitly while the demo deployment is live.
 
 ## 6. Account recovery
 
@@ -80,7 +82,8 @@ Email-based "forgot password" is not built yet. The `password_resets` table and 
   - Invite preview: 30 per 15 minutes.
   - Reset links: 20 per 15 minutes.
   - Password change: 10 per 15 minutes per account.
-  - Whole API: 600 per minute per account.
+  - Whole API: 600 per minute per account. The bucket is chosen from a verified token, so forged tokens can't dodge it or fill someone else's.
+  - Live-stream connections: 30 per minute per account. Each person keeps at most 5 open streams and 3 runs in progress, and a heartbeat body may be at most 256 KB.
 - **Logs:** production errors log the message, code and route only, never full database rows.
 
 ## 8. Same-origin API (recommended hardening)
