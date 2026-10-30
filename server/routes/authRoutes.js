@@ -4,7 +4,7 @@ const router    = express.Router();
 const {
   findUserByEmail, updateLastLogin, findUserById, getTeamNames, getUserTeams, getAdminTeamIds,
   setActiveToken, clearActiveTokenIfMatches, findOrgById,
-  findUsableInvite, signupWithInvite, createOrgWithOwner,
+  checkInvite, signupWithInvite, createOrgWithOwner,
   findPasswordReset, usePasswordReset, setPasswordHash,
 } = require("../db");
 const realtime = require("../realtime");
@@ -15,6 +15,9 @@ const { validateNewUser, cleanNewUser, validateOrg, cleanOrg, validatePassword }
 var loginLimiter  = limiter(15 * 60 * 1000, 10, "Too many login attempts, please try again later");
 // Signup endpoints share one limiter — share codes and the master code must not be brute-forceable
 var signupLimiter = limiter(15 * 60 * 1000, 10);
+// The signup form previews a code as it's typed — looser than signup itself so typos
+// don't use up the attempts the real signup needs
+var invitePreviewLimiter = limiter(15 * 60 * 1000, 30);
 // Reset links: tokens are 256-bit, so this only stops hammering
 var resetLimiter = limiter(15 * 60 * 1000, 20);
 // Changing your password re-checks the current one — limit guesses per account, not just per IP
@@ -116,11 +119,21 @@ router.post("/login", loginLimiter, async function(req, res, next) {
 });
 
 // GET /api/auth/invite/:code — preview which org a share code joins (signup form)
-router.get("/invite/:code", signupLimiter, async function(req, res, next) {
+var INVITE_ERRORS = {
+  unknown: "That share code doesn't exist. Check it with your admin.",
+  revoked: "This share code was turned off. Ask your admin for a new one.",
+  expired: "This share code has expired. Ask your admin for a new one.",
+  used_up: "This share code has been used the maximum number of times. Ask your admin for a new one.",
+};
+function inviteError(res, reason) {
+  return res.status(reason === "unknown" ? 404 : 410).json({ error: INVITE_ERRORS[reason] || INVITE_ERRORS.unknown, reason: reason });
+}
+
+router.get("/invite/:code", invitePreviewLimiter, async function(req, res, next) {
   try {
-    const invite = await findUsableInvite(req.params.code);
-    if (!invite) return res.status(404).json({ error: "Invalid or expired share code" });
-    res.json({ orgName: invite.orgName });
+    const r = await checkInvite(req.params.code);
+    if (!r.ok) return inviteError(res, r.reason);
+    res.json({ orgName: r.orgName, teamName: r.teamName });
   } catch (err) { next(err); }
 });
 
@@ -140,7 +153,9 @@ router.post("/signup", signupLimiter, async function(req, res, next) {
       if (err.code === "23505") return res.status(409).json({ error: "An account with this email already exists" });
       throw err;
     }
-    if (!user) return res.status(404).json({ error: "Invalid or expired share code" });
+    if (!user) return inviteError(res, (await checkInvite(body.code)).reason || "unknown");
+    // Admins' people lists and share-code counts update live
+    realtime.publish({ orgAdmins: user.orgId }, "users.changed", { joined: user.id });
     res.status(201).json(await startSession(res, user));
   } catch (err) { next(err); }
 });

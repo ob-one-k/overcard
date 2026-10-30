@@ -5,7 +5,7 @@ const {
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, uid,
   setUserTeams, getUserTeams, setActiveToken,
   transferOwnership, removeTeamAdminEverywhere, allInOrg,
-  createInvite, getOrgInvites, revokeInvite, createPasswordReset,
+  createInvite, getOrgInvites, getInvite, updateInvite, getInviteMembers, revokeInvite, createPasswordReset,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
 const realtime = require("../realtime");
@@ -65,6 +65,7 @@ router.post("/users", async function(req, res, next) {
     if (teamIds !== undefined) {
       await setUserTeams(user.id, teamIds);
     }
+    realtime.publish({ orgAdmins: req.user.orgId }, "users.changed", {});
     res.status(201).json(stripSecrets(user));
   } catch (err) {
     // PostgreSQL unique violation code
@@ -130,6 +131,7 @@ router.put("/users/:id", async function(req, res, next) {
     }
     // Their open app re-reads its profile (role/teams) and rejoins the right live channels
     realtime.refreshUser(req.params.id);
+    realtime.publish({ orgAdmins: req.user.orgId }, "users.changed", {});
     res.json(stripSecrets(updated));
   } catch (err) { next(err); }
 });
@@ -191,6 +193,7 @@ router.delete("/users/:id", async function(req, res, next) {
     }
     await realtime.signOutDevices(req.params.id, "removed");
     await deleteUser(req.params.id, req.user.orgId);
+    realtime.publish({ orgAdmins: req.user.orgId }, "users.changed", {});
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -229,26 +232,63 @@ router.get("/invites", async function(req, res, next) {
   } catch (err) { next(err); }
 });
 
-// POST /api/admin/invites  { expiresInDays?: 1..365 | null, maxUses?: 1..1000 | null }
-// Omitted expiresInDays defaults to 7 days; a never-expiring code needs an explicit null
+// Shared checks for creating/editing a code. Returns an error message or null; fills out.
+async function inviteFields(body, orgId, out, creating) {
+  if (body.expiresInDays !== undefined || creating) {
+    // Omitted on create = 7 days; a never-expiring code needs an explicit null
+    var days = body.expiresInDays === undefined ? 7 : body.expiresInDays;
+    if (days != null && !(Number.isInteger(days) && days >= 1 && days <= 365)) return "expiresInDays must be a whole number from 1 to 365";
+    out.expiresAt = days == null ? null : Date.now() + days * 24 * 60 * 60 * 1000;
+  }
+  if (body.maxUses !== undefined) {
+    if (body.maxUses != null && !(Number.isInteger(body.maxUses) && body.maxUses >= 1 && body.maxUses <= 1000)) return "maxUses must be a whole number from 1 to 1000";
+    out.maxUses = body.maxUses == null ? null : body.maxUses;
+  }
+  if (body.label !== undefined) {
+    if (body.label != null && (typeof body.label !== "string" || body.label.trim().length > 60)) return "Label must be 60 characters or less";
+    out.label = body.label ? body.label.trim() : null;
+  }
+  if (body.teamId !== undefined) {
+    if (body.teamId) {
+      const team = typeof body.teamId === "string" ? await getTeamById(body.teamId) : null;
+      if (!team || team.orgId !== orgId) return "Unknown team";
+    }
+    out.teamId = body.teamId || null;
+  }
+  return null;
+}
+
+// POST /api/admin/invites  { label?, teamId?, expiresInDays?: 1..365 | null, maxUses?: 1..1000 | null }
 router.post("/invites", async function(req, res, next) {
   try {
-    const body = req.body || {};
-    const expiresInDays = body.expiresInDays === undefined ? 7 : body.expiresInDays;
-    const maxUses = body.maxUses;
-    if (expiresInDays != null && !(Number.isInteger(expiresInDays) && expiresInDays >= 1 && expiresInDays <= 365)) {
-      return res.status(400).json({ error: "expiresInDays must be a whole number from 1 to 365" });
-    }
-    if (maxUses != null && !(Number.isInteger(maxUses) && maxUses >= 1 && maxUses <= 1000)) {
-      return res.status(400).json({ error: "maxUses must be a whole number from 1 to 1000" });
-    }
-    const invite = await createInvite({
-      orgId:     req.user.orgId,
-      createdBy: req.user.id,
-      expiresAt: expiresInDays ? Date.now() + expiresInDays * 24 * 60 * 60 * 1000 : null,
-      maxUses:   maxUses || null,
-    });
+    var f = {};
+    var err = await inviteFields(req.body || {}, req.user.orgId, f, true);
+    if (err) return res.status(400).json({ error: err });
+    const invite = await createInvite(Object.assign(f, { orgId: req.user.orgId, createdBy: req.user.id }));
     res.status(201).json(invite);
+  } catch (err) { next(err); }
+});
+
+// PUT /api/admin/invites/:id  { label?, teamId?, expiresInDays? (from now) | null, maxUses?, reactivate? }
+router.put("/invites/:id", async function(req, res, next) {
+  try {
+    const existing = await getInvite(req.params.id, req.user.orgId);
+    if (!existing) return res.status(404).json({ error: "Share code not found" });
+    var f = {};
+    var err = await inviteFields(req.body || {}, req.user.orgId, f, false);
+    if (err) return res.status(400).json({ error: err });
+    if (f.maxUses != null && f.maxUses < existing.uses) return res.status(400).json({ error: "This code has already been used " + existing.uses + " times" });
+    f.reactivate = !!(req.body && req.body.reactivate);
+    res.json(await updateInvite(existing.id, req.user.orgId, f));
+  } catch (err) { next(err); }
+});
+
+// GET /api/admin/invites/:id/members — who joined with this code
+router.get("/invites/:id/members", async function(req, res, next) {
+  try {
+    const existing = await getInvite(req.params.id, req.user.orgId);
+    if (!existing) return res.status(404).json({ error: "Share code not found" });
+    res.json(await getInviteMembers(existing.id, req.user.orgId));
   } catch (err) { next(err); }
 });
 

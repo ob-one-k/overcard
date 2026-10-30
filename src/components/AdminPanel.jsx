@@ -58,10 +58,122 @@ function fmtShortDate(ts) {
 }
 
 // ── Share codes: admins generate org-specific codes that employees use to sign up ──
-function ShareCodesPanel({ isDesktop, orgUsers, compact, stacked }) {
+var EXPIRY_OPTIONS = [["1","In 24 hours"],["7","In 7 days"],["30","In 30 days"],["90","In 90 days"],["","Never"]];
+var USES_OPTIONS   = [["","Unlimited"],["1","1 person"],["5","5 people"],["10","10 people"],["25","25 people"],["100","100 people"]];
+
+// One share code: status, who it's for, who joined, and edit / extend / reactivate / revoke
+function InviteCard({ inv, isDesktop, fs, fresh, orgTeams, onCopy, onRevoke, onSaved, flash }) {
+  var st = inviteStatus(inv);
+  var link = window.location.origin + "/?join=" + inv.code;
+  var [editing, setEditing] = useState(false);
+  var [ef, setEf] = useState(null);
+  var [members, setMembers] = useState(null);
+  var [showMembers, setShowMembers] = useState(false);
+  var [busy, setBusy] = useState(false);
+  var selSt = inputSt({marginBottom:0,fontSize:fs.base,padding:isDesktop?"9px 10px":"8px 10px"});
+
+  function startEdit() {
+    setEf({ label: inv.label || "", teamId: inv.teamId || "", expiry: "keep", maxUses: inv.maxUses ? String(inv.maxUses) : "" });
+    setEditing(true);
+  }
+  function save(reactivate) {
+    var body = { label: ef.label.trim() || null, teamId: ef.teamId || null, maxUses: ef.maxUses ? Number(ef.maxUses) : null };
+    if (ef.expiry !== "keep") body.expiresInDays = ef.expiry ? Number(ef.expiry) : null;
+    if (reactivate) body.reactivate = true;
+    setBusy(true);
+    apiPut("/admin/invites/" + inv.id, body)
+      .then(function() { setEditing(false); onSaved(); flash(reactivate ? "Code reactivated" : "Code updated"); })
+      .catch(function(e) { flash(e.message || "Couldn't save", true); })
+      .finally(function() { setBusy(false); });
+  }
+  function toggleMembers() {
+    var open = !showMembers;
+    setShowMembers(open);
+    if (open) apiGet("/admin/invites/" + inv.id + "/members").then(setMembers).catch(function() { setMembers([]); });
+  }
+  var joined = inv.joinedCount || 0;
+
+  return (
+    <div style={{background:fresh?accentA(.07):"rgba(255,255,255,.04)",border:"1px solid "+(fresh?accentA(.35):"rgba(255,255,255,.08)"),borderRadius:12,padding:isDesktop?"14px 16px":"12px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:4,opacity:st.active?1:.7}}>
+        <span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:fs.code,fontWeight:700,letterSpacing:2,color:"#fff"}}>{prettyCode(inv.code)}</span>
+        <span style={{fontSize:fs.small - 1,fontWeight:700,color:st.color}}>● {st.label}</span>
+      </div>
+      {(inv.label || inv.teamName) && (
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
+          {inv.label && <span style={{fontSize:fs.base,fontWeight:700,color:"#fff"}}>{inv.label}</span>}
+          {inv.teamName && <span style={{fontSize:fs.small - 1,color:"#FFD54F",border:"1px solid rgba(255,213,79,.35)",borderRadius:99,padding:"1px 8px"}}>Joins {inv.teamName}</span>}
+        </div>
+      )}
+      <div style={{fontSize:fs.small,color:"rgba(255,255,255,.45)",lineHeight:1.6,marginBottom:10}}>
+        {inv.uses} use{inv.uses!==1?"s":""}{inv.maxUses ? " of " + inv.maxUses : ""}
+        {" · "}{inv.expiresAt ? (st.label === "Expired" ? "expired " : "expires ") + fmtShortDate(inv.expiresAt) : "never expires"}
+        <br/>Created {fmtShortDate(inv.createdAt)}{inv.createdByName ? " by " + inv.createdByName : ""}
+      </div>
+
+      {editing ? (
+        <div style={{display:"flex",flexDirection:"column",gap:8,borderTop:"1px solid rgba(255,255,255,.07)",paddingTop:10}}>
+          <input value={ef.label} maxLength={60} placeholder="Label (e.g. Spring hires)" onChange={function(e){ setEf(Object.assign({}, ef, { label:e.target.value })); }} style={selSt}/>
+          <select value={ef.teamId} onChange={function(e){ setEf(Object.assign({}, ef, { teamId:e.target.value })); }} style={selSt} aria-label="Team">
+            <option value="">No team</option>
+            {(orgTeams || []).map(function(t){ return <option key={t.id} value={t.id}>Join {t.name}</option>; })}
+          </select>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <select value={ef.expiry} onChange={function(e){ setEf(Object.assign({}, ef, { expiry:e.target.value })); }} style={selSt} aria-label="Expires">
+              <option value="keep">Keep expiry</option>
+              {EXPIRY_OPTIONS.map(function(o){ return <option key={o[0]} value={o[0]}>{o[0] ? "Expire " + o[1].toLowerCase() : "Never expire"}</option>; })}
+            </select>
+            <select value={ef.maxUses} onChange={function(e){ setEf(Object.assign({}, ef, { maxUses:e.target.value })); }} style={selSt} aria-label="Uses">
+              {USES_OPTIONS.map(function(o){ return <option key={o[0]} value={o[0]}>{o[1]}</option>; })}
+            </select>
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button onClick={function(){ setEditing(false); }} style={ghostSm({fontSize:fs.small})}>Cancel</button>
+            <button disabled={busy} onClick={function(){ save(false); }} style={Object.assign({}, solidBtn(SESS_COLOR), {padding:"6px 14px",fontSize:fs.small})}>Save</button>
+            {!st.active && <button disabled={busy} onClick={function(){ save(true); }} style={ghostSm({fontSize:fs.small,color:"#66BB6A",borderColor:"rgba(102,187,106,.35)"})}>Save &amp; reactivate</button>}
+          </div>
+          {!st.active && <div style={{fontSize:fs.small - 1,color:"rgba(255,255,255,.4)"}}>To reactivate an expired or used-up code, pick a new expiry or more uses first.</div>}
+        </div>
+      ) : (
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {st.active && <button onClick={function(){ onCopy(prettyCode(inv.code), "Code"); }} style={ghostSm({fontSize:fs.small,color:"#fff"})}>Copy code</button>}
+          {st.active && <button onClick={function(){ onCopy(link, "Invite link"); }} style={ghostSm({fontSize:fs.small,color:"#00B4FF",borderColor:"rgba(0,180,255,.3)"})}>Copy invite link</button>}
+          <button onClick={startEdit} style={ghostSm({fontSize:fs.small})}>{st.active ? "Edit" : "Edit / reactivate"}</button>
+          {st.active && <button onClick={function(){ onRevoke(inv); }} style={ghostSm({fontSize:fs.small,color:"#EF5350",borderColor:"rgba(239,83,80,.3)",marginLeft:"auto"})}>Revoke</button>}
+        </div>
+      )}
+
+      {joined > 0 && (
+        <div style={{marginTop:10,borderTop:"1px solid rgba(255,255,255,.07)",paddingTop:8}}>
+          <button onClick={toggleMembers} aria-expanded={showMembers}
+            style={{background:"none",border:"none",color:"rgba(255,255,255,.65)",fontSize:fs.small,fontWeight:600,cursor:"pointer",fontFamily:"inherit",padding:"4px 0"}}>
+            {showMembers ? "▾" : "▸"} Joined ({joined})
+          </button>
+          {showMembers && (
+            <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:4}}>
+              {members === null && <div style={{fontSize:fs.small,color:"rgba(255,255,255,.35)"}}>Loading…</div>}
+              {(members || []).map(function(m){
+                return (
+                  <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:fs.small,padding:"3px 0"}}>
+                    <span style={{flex:1,minWidth:0,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.displayName}</span>
+                    <span style={{color:"rgba(255,255,255,.4)",flexShrink:0}}>{fmtShortDate(m.createdAt)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShareCodesPanel({ isDesktop, orgUsers, orgTeams, compact, stacked }) {
   var [invites, setInvites] = useState(null);
   var [expiry,  setExpiry]  = useState("7");
   var [maxUses, setMaxUses] = useState("");
+  var [label,   setLabel]   = useState("");
+  var [teamId,  setTeamId]  = useState("");
   var [busy,    setBusy]    = useState(false);
   var [msg,     setMsg]     = useState(null);   // { text, error }
   var [fresh,   setFresh]   = useState(null);   // id of the code just generated
@@ -69,14 +181,16 @@ function ShareCodesPanel({ isDesktop, orgUsers, compact, stacked }) {
 
   function flash(text, error) { setMsg({ text:text, error:!!error }); setTimeout(function(){ setMsg(null); }, 3000); }
   function load() {
-    cachedGet("/admin/invites").then(setInvites).catch(function(){ setInvites([]); flash("Couldn't load share codes", true); });
+    cachedGet("/admin/invites").then(setInvites).catch(function(){ setInvites(function(p){ return p || []; }); flash("Couldn't load share codes", true); });
   }
-  useEffect(load, []);
+  // Reloads when someone joins (live users.changed → /admin invalidated) or a code is edited
+  var av = useCacheVersion("/admin");
+  useEffect(load, [av]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function generate() {
     setBusy(true);
-    apiPost("/admin/invites", { expiresInDays: expiry ? Number(expiry) : null, maxUses: maxUses ? Number(maxUses) : null })
-      .then(function(inv) { setBusy(false); setFresh(inv.id); load(); })
+    apiPost("/admin/invites", { expiresInDays: expiry ? Number(expiry) : null, maxUses: maxUses ? Number(maxUses) : null, label: label.trim() || null, teamId: teamId || null })
+      .then(function(inv) { setBusy(false); setFresh(inv.id); setLabel(""); load(); })
       .catch(function(e) { setBusy(false); flash(e.message || "Couldn't generate code", true); });
   }
   function revoke(inv) {
@@ -100,25 +214,27 @@ function ShareCodesPanel({ isDesktop, orgUsers, compact, stacked }) {
         Employees enter the code on the sign-up screen (or open the invite link) and join this organization as users.
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div style={{gridColumn:"1 / -1"}}>
+          <label style={labelSt()}>Label <span style={{textTransform:"none",letterSpacing:0,fontWeight:400,color:"rgba(255,255,255,.3)"}}>(optional)</span></label>
+          <input value={label} maxLength={60} onChange={function(e){ setLabel(e.target.value); }} placeholder="e.g. Spring hires, Austin office" style={selSt}/>
+        </div>
+        <div style={{gridColumn:"1 / -1"}}>
+          <label style={labelSt()}>Add to team</label>
+          <select value={teamId} onChange={function(e){ setTeamId(e.target.value); }} style={selSt}>
+            <option value="">No team (assign later)</option>
+            {(orgTeams || []).map(function(t){ return <option key={t.id} value={t.id}>{t.name}</option>; })}
+          </select>
+        </div>
         <div>
           <label style={labelSt()}>Expires</label>
           <select value={expiry} onChange={function(e){ setExpiry(e.target.value); }} style={selSt}>
-            <option value="1">In 24 hours</option>
-            <option value="7">In 7 days</option>
-            <option value="30">In 30 days</option>
-            <option value="90">In 90 days</option>
-            <option value="">Never</option>
+            {EXPIRY_OPTIONS.map(function(o){ return <option key={o[0]} value={o[0]}>{o[1]}</option>; })}
           </select>
         </div>
         <div>
           <label style={labelSt()}>Uses</label>
           <select value={maxUses} onChange={function(e){ setMaxUses(e.target.value); }} style={selSt}>
-            <option value="">Unlimited</option>
-            <option value="1">1 person</option>
-            <option value="5">5 people</option>
-            <option value="10">10 people</option>
-            <option value="25">25 people</option>
-            <option value="100">100 people</option>
+            {USES_OPTIONS.map(function(o){ return <option key={o[0]} value={o[0]}>{o[1]}</option>; })}
           </select>
         </div>
       </div>
@@ -146,29 +262,8 @@ function ShareCodesPanel({ isDesktop, orgUsers, compact, stacked }) {
       )}
       <div style={{display:"grid",gridTemplateColumns:isDesktop?"repeat(auto-fill,minmax(320px,1fr))":"1fr",gap:10}}>
         {list.map(function(inv) {
-          var st = inviteStatus(inv);
-          var link = window.location.origin + "/?join=" + inv.code;
-          var isFresh = inv.id === fresh;
-          return (
-            <div key={inv.id} style={{background:isFresh?accentA(.07):"rgba(255,255,255,.04)",border:"1px solid "+(isFresh?accentA(.35):"rgba(255,255,255,.08)"),borderRadius:12,padding:isDesktop?"14px 16px":"12px",opacity:st.active?1:.6}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:6}}>
-                <span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:fs.code,fontWeight:700,letterSpacing:2,color:"#fff"}}>{prettyCode(inv.code)}</span>
-                <span style={{fontSize:fs.small - 1,fontWeight:700,color:st.color}}>● {st.label}</span>
-              </div>
-              <div style={{fontSize:fs.small,color:"rgba(255,255,255,.45)",lineHeight:1.6,marginBottom:st.active?10:0}}>
-                {inv.uses} use{inv.uses!==1?"s":""}{inv.maxUses ? " of " + inv.maxUses : ""}
-                {" · "}{inv.expiresAt ? (st.label === "Expired" ? "expired " : "expires ") + fmtShortDate(inv.expiresAt) : "never expires"}
-                <br/>Created {fmtShortDate(inv.createdAt)}{inv.createdByName ? " by " + inv.createdByName : ""}
-              </div>
-              {st.active && (
-                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                  <button onClick={function(){ copy(prettyCode(inv.code), "Code"); }} style={ghostSm({fontSize:fs.small,color:"#fff"})}>Copy code</button>
-                  <button onClick={function(){ copy(link, "Invite link"); }} style={ghostSm({fontSize:fs.small,color:"#00B4FF",borderColor:"rgba(0,180,255,.3)"})}>Copy invite link</button>
-                  <button onClick={function(){ revoke(inv); }} style={ghostSm({fontSize:fs.small,color:"#EF5350",borderColor:"rgba(239,83,80,.3)",marginLeft:"auto"})}>Revoke</button>
-                </div>
-              )}
-            </div>
-          );
+          return <InviteCard key={inv.id} inv={inv} isDesktop={isDesktop} fs={fs} fresh={inv.id === fresh} orgTeams={orgTeams}
+            onCopy={copy} onRevoke={revoke} onSaved={load} flash={flash}/>;
         })}
       </div>
     </div>
@@ -201,7 +296,7 @@ function ShareCodesPanel({ isDesktop, orgUsers, compact, stacked }) {
               <SideTitle>How it works</SideTitle>
               {[["1","Generate a code","Pick how long it lasts and how many people can use it."],
                 ["2","Send it to your team","Share the code, or the invite link — it opens sign-up with the code filled in."],
-                ["3","They sign up","New accounts join this organization as users. Promote them in Users."]].map(function(st) {
+                ["3","They sign up","New accounts join as users — into the code's team if it has one. Open Joined on a code to see who used it."]].map(function(st) {
                 return (
                   <div key={st[0]} style={{display:"flex",gap:12,padding:"7px 0"}}>
                     <span style={{width:26,height:26,borderRadius:"50%",background:accentA(.15),border:"1px solid "+accentA(.4),color:SESS_COLOR,fontSize:13,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{st[0]}</span>
@@ -1221,7 +1316,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
           )}
         </div>
         {msgBanner}
-        {sub === "codes" && <ShareCodesPanel isDesktop={true} orgUsers={orgUsers} compact={compact} stacked={stackedA}/>}
+        {sub === "codes" && <ShareCodesPanel isDesktop={true} orgUsers={orgUsers} orgTeams={orgTeams} compact={compact} stacked={stackedA}/>}
         {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams} isDesktop={true} onOrgUpdated={onOrgUpdated} compact={compact} stacked={stackedA}/>}
         {(sub === "users" || sub === "teams") && (
           <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
@@ -1262,7 +1357,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
       {msgBanner}
       {resetDialog}
 
-      {sub === "codes" && <ShareCodesPanel isDesktop={false}/>}
+      {sub === "codes" && <ShareCodesPanel isDesktop={false} orgTeams={orgTeams}/>}
       {sub === "org"   && <OrgPanel authUser={authUser} orgUsers={orgUsers} isDesktop={false} onOrgUpdated={onOrgUpdated}/>}
 
       {(sub === "users" || sub === "teams") && (

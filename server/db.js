@@ -393,12 +393,12 @@ async function getOrgUsers(orgId) {
 }
 
 // db is the pool or a transaction client, so signup can create the user atomically with the org/invite
-async function createUser({ id, orgId, teamId, email, passwordHash, firstName, lastName, phone, role }, db) {
+async function createUser({ id, orgId, teamId, email, passwordHash, firstName, lastName, phone, role, inviteId }, db) {
   const now   = Date.now();
   const newId = id || uid("u");
   await (db || pool).query(
-    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",phone,role,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-    [newId, orgId, teamId || null, email, passwordHash, fullName(firstName, lastName), firstName, lastName, phone || null, role, now]
+    'INSERT INTO users (id,"orgId","teamId",email,"passwordHash","displayName","firstName","lastName",phone,role,"createdAt","inviteId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+    [newId, orgId, teamId || null, email, passwordHash, fullName(firstName, lastName), firstName, lastName, phone || null, role, now, inviteId || null]
   );
   const { rows } = await (db || pool).query("SELECT * FROM users WHERE id = $1", [newId]);
   return rows[0];
@@ -532,18 +532,17 @@ function normalizeInviteCode(code) {
   return String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-async function createInvite({ orgId, createdBy, expiresAt, maxUses }) {
+async function createInvite({ orgId, createdBy, expiresAt, maxUses, label, teamId }) {
   // Retry on the (astronomically unlikely) unique collision
   for (var attempt = 0; attempt < 5; attempt++) {
     const id = uid("inv_");
     const code = generateInviteCode();
     try {
       await pool.query(
-        'INSERT INTO org_invites (id,"orgId",code,"createdBy","createdAt","expiresAt","maxUses") VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [id, orgId, code, createdBy, Date.now(), expiresAt || null, maxUses || null]
+        'INSERT INTO org_invites (id,"orgId",code,"createdBy","createdAt","expiresAt","maxUses",label,"teamId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [id, orgId, code, createdBy, Date.now(), expiresAt || null, maxUses || null, label || null, teamId || null]
       );
-      const { rows } = await pool.query("SELECT * FROM org_invites WHERE id = $1", [id]);
-      return rows[0];
+      return getInvite(id, orgId);
     } catch (err) {
       if (err.code !== "23505") throw err;
     }
@@ -551,11 +550,42 @@ async function createInvite({ orgId, createdBy, expiresAt, maxUses }) {
   throw new Error("Could not generate a unique share code");
 }
 
+var INVITE_SELECT = 'SELECT i.*, (SELECT "displayName" FROM users WHERE id = i."createdBy") AS "createdByName",' +
+  ' (SELECT name FROM teams WHERE id = i."teamId") AS "teamName",' +
+  ' (SELECT COUNT(*)::int FROM users WHERE "inviteId" = i.id) AS "joinedCount"' +
+  ' FROM org_invites i';
+
 async function getOrgInvites(orgId) {
+  const { rows } = await pool.query(INVITE_SELECT + ' WHERE i."orgId" = $1 ORDER BY i."createdAt" DESC', [orgId]);
+  return rows;
+}
+
+async function getInvite(id, orgId) {
+  const { rows } = await pool.query(INVITE_SELECT + ' WHERE i.id = $1 AND i."orgId" = $2', [id, orgId]);
+  return rows[0] || null;
+}
+
+// Edit a code: label, team, expiry, max uses; reactivate clears a revoke
+async function updateInvite(id, orgId, f) {
+  var sets = [], vals = [], p = 1;
+  function set(col, v) { sets.push(col + " = $" + (p++)); vals.push(v); }
+  if (f.label !== undefined)     set("label", f.label || null);
+  if (f.teamId !== undefined)    set('"teamId"', f.teamId || null);
+  if (f.expiresAt !== undefined) set('"expiresAt"', f.expiresAt);
+  if (f.maxUses !== undefined)   set('"maxUses"', f.maxUses);
+  if (f.reactivate)              sets.push('"revokedAt" = NULL');
+  if (sets.length) {
+    vals.push(id, orgId);
+    await pool.query('UPDATE org_invites SET ' + sets.join(", ") + ' WHERE id = $' + (p++) + ' AND "orgId" = $' + p, vals);
+  }
+  return getInvite(id, orgId);
+}
+
+// Who joined with this code
+async function getInviteMembers(id, orgId) {
   const { rows } = await pool.query(
-    'SELECT i.*, (SELECT "displayName" FROM users WHERE id = i."createdBy") AS "createdByName"' +
-    ' FROM org_invites i WHERE i."orgId" = $1 ORDER BY i."createdAt" DESC',
-    [orgId]
+    'SELECT id, "displayName", email, role, "createdAt", "lastLoginAt" FROM users WHERE "inviteId" = $1 AND "orgId" = $2 ORDER BY "createdAt" DESC',
+    [id, orgId]
   );
   return rows;
 }
@@ -570,15 +600,21 @@ async function revokeInvite(id, orgId) {
 
 var INVITE_USABLE_SQL = '"revokedAt" IS NULL AND ("expiresAt" IS NULL OR "expiresAt" > $2) AND ("maxUses" IS NULL OR uses < "maxUses")';
 
-// Read-only lookup for the signup form ("You're joining Apex Sales")
-async function findUsableInvite(code) {
+// Read-only lookup for the signup form ("You're joining Apex Sales"). Returns
+// { ok:true, orgName, teamName } or { ok:false, reason: "unknown"|"revoked"|"expired"|"used_up" }
+async function checkInvite(code) {
   const { rows } = await pool.query(
-    'SELECT i.id, i."orgId", o.name AS "orgName" FROM org_invites i JOIN orgs o ON o.id = i."orgId"' +
-    ' WHERE i.code = $1 AND i."revokedAt" IS NULL AND (i."expiresAt" IS NULL OR i."expiresAt" > $2)' +
-    ' AND (i."maxUses" IS NULL OR i.uses < i."maxUses")',
-    [normalizeInviteCode(code), Date.now()]
+    'SELECT i.id, i."orgId", i."revokedAt", i."expiresAt", i."maxUses", i.uses, o.name AS "orgName",' +
+    ' (SELECT name FROM teams WHERE id = i."teamId") AS "teamName"' +
+    ' FROM org_invites i JOIN orgs o ON o.id = i."orgId" WHERE i.code = $1',
+    [normalizeInviteCode(code)]
   );
-  return rows[0] || null;
+  var i = rows[0];
+  if (!i) return { ok: false, reason: "unknown" };
+  if (i.revokedAt) return { ok: false, reason: "revoked" };
+  if (i.expiresAt && i.expiresAt <= Date.now()) return { ok: false, reason: "expired" };
+  if (i.maxUses != null && i.uses >= i.maxUses) return { ok: false, reason: "used_up" };
+  return { ok: true, orgName: i.orgName, teamName: i.teamName || null };
 }
 
 // Signup with a share code: claim one use of the code and create the user in one transaction,
@@ -586,11 +622,15 @@ async function findUsableInvite(code) {
 async function signupWithInvite(code, userFields) {
   return withTransaction(async function(client) {
     const claimed = await client.query(
-      'UPDATE org_invites SET uses = uses + 1 WHERE code = $1 AND ' + INVITE_USABLE_SQL + ' RETURNING "orgId"',
+      'UPDATE org_invites SET uses = uses + 1 WHERE code = $1 AND ' + INVITE_USABLE_SQL + ' RETURNING id, "orgId", "teamId"',
       [normalizeInviteCode(code), Date.now()]
     );
-    if (!claimed.rows[0]) return null;
-    return createUser(Object.assign({}, userFields, { orgId: claimed.rows[0].orgId, role: "user" }), client);
+    var inv = claimed.rows[0];
+    if (!inv) return null;
+    const user = await createUser(Object.assign({}, userFields, { orgId: inv.orgId, role: "user", teamId: inv.teamId, inviteId: inv.id }), client);
+    // The code's team (if it still exists) — membership as well as the primary team
+    if (inv.teamId) await client.query('INSERT INTO user_teams ("userId","teamId") VALUES ($1,$2) ON CONFLICT DO NOTHING', [user.id, inv.teamId]);
+    return user;
   });
 }
 
@@ -1253,7 +1293,7 @@ module.exports = {
   // orgs
   findOrgById, createOrg, updateOrg, getOrgOwner, transferOwnership, removeTeamAdminEverywhere, allInOrg, ORG_FIELDS,
   // share codes + signup
-  createInvite, getOrgInvites, revokeInvite, findUsableInvite, signupWithInvite, createOrgWithOwner, normalizeInviteCode,
+  createInvite, getOrgInvites, getInvite, updateInvite, getInviteMembers, revokeInvite, checkInvite, signupWithInvite, createOrgWithOwner, normalizeInviteCode,
   // teams
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,

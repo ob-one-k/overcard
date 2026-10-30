@@ -59,10 +59,11 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
     if (mode !== "join" || raw.length !== 8) return;
     var cancelled = false;
     apiGet("/auth/invite/" + raw)
-      .then(function(r) { if (!cancelled) setCodeOrg(r.orgName); })
+      .then(function(r) { if (!cancelled) setCodeOrg(r.orgName + (r.teamName ? " · " + r.teamName : "")); })
       .catch(function(e) {
         if (cancelled) return;
-        setCodeErr(e.status === 404 ? "This share code is invalid or has expired." : e.status === 429 ? "Too many attempts. Wait a few minutes." : "Couldn't check the code.");
+        // The server says why: unknown, revoked, expired or used up
+        setCodeErr(e.status === 404 || e.status === 410 ? e.message : e.status === 429 ? "Too many attempts. Wait a few minutes." : "Couldn't check the code.");
       });
     return function() { cancelled = true; };
   }, [code, mode]);

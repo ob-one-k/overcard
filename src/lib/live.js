@@ -51,6 +51,7 @@ function dispatch(type, data) {
   // session reads stale (progress ticks don't — in-progress runs aren't in the lists)
   if (type === "session.finished" || type === "session.changed" || type === "feedback.changed" || type === "share.changed") invalidate("/sessions");
   if (type === "live.resync") invalidate("/");
+  if (type === "users.changed") invalidate("/admin");
   (handlers[type] || []).slice().forEach(function(fn) { try { fn(data); } catch (e) { console.error(e); } });
   (handlers["*"] || []).slice().forEach(function(fn) { try { fn(type, data); } catch (e) { console.error(e); } });
 }

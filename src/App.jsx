@@ -90,6 +90,11 @@ export default function App() {
     try { return new URLSearchParams(window.location.search).get("join") || ""; } catch (_) { return ""; }
   });
   var [showSignup, setShowSignup] = useState(!!joinCode);
+  var [joinDismissed, setJoinDismissed] = useState(false);
+  function dropJoin() {
+    setJoinDismissed(true);
+    try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
+  }
   // Password reset links look like /?reset=TOKEN
   var [resetToken, setResetToken] = useState(function() {
     try { return new URLSearchParams(window.location.search).get("reset") || ""; } catch (_) { return ""; }
@@ -97,8 +102,8 @@ export default function App() {
 
   function handleLogin(u) {
     clearCache(); setKickReason(null); setShowSignup(false); setAuthUser(syncBrand(u));
-    // Drop ?join= so a reload doesn't reopen signup
-    if (joinCode) { try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {} }
+    // Drop ?join= so a reload doesn't reopen signup (and the code is spent/irrelevant now)
+    if (joinCode) dropJoin();
   }
 
   // Only 401/403 mean "logged out". Network errors, timeouts and 5xx mean the server
@@ -209,6 +214,26 @@ export default function App() {
       retryAuth();   // a completed reset signed this account out everywhere — re-check
     }}/>
     </Suspense>
+  );
+  // Signed in already, but opened someone's invite link: say so instead of silently ignoring it
+  if (authUser && joinCode && !joinDismissed) return (
+    <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",padding:16,boxSizing:"border-box"}}>
+      <div style={{maxWidth:420,width:"100%",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:20,padding:"28px 24px",display:"flex",flexDirection:"column",gap:14}}>
+        <OrgMark authUser={authUser} size={44}/>
+        <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>You're already signed in</div>
+        <div style={{fontSize:14,color:"rgba(255,255,255,.65)",lineHeight:1.6}}>
+          You're signed in as <strong style={{color:"#fff"}}>{authUser.displayName}</strong> ({authUser.orgName}). This invite link is for creating a new account — to use it, sign out first.
+        </div>
+        <button onClick={function() { dropJoin(); }} style={solidBtn("#1565C0")}>Continue as {authUser.firstName || authUser.displayName}</button>
+        <button onClick={function() {
+          setJoinDismissed(true);
+          var t = getStoredToken();
+          fetchWithTimeout(API_BASE + "/auth/logout", { method:"POST", credentials:"include", headers: t ? { Authorization: "Bearer " + t } : {} }, 10000)
+            .catch(function() {})
+            .then(function() { setStoredToken(null); clearCache(); setBrand(null); setAuthUser(false); setShowSignup(true); });
+        }} style={ghostBtn()}>Sign out and use the invite</button>
+      </div>
+    </div>
   );
   if (!authUser && showSignup) return (
     <Suspense fallback={<div style={{minHeight:"100vh",background:"#060d1a"}}/>}>
@@ -334,6 +359,11 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   function refreshOrgTeams() {
     apiGet("/admin/teams").then(function(t){ setOrgTeams(t); }).catch(function(){});
   }
+  // Someone joined with a share code, or another admin changed people/teams: refresh live
+  useEffect(function() {
+    if (!isAdminRole(authUser.role)) return;
+    return onLive("users.changed", function() { refreshOrgUsers(); refreshOrgTeams(); });
+  }, [authUser.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Autosave decks with debounce (per-deck dirty tracking) ───────────────────
   var saveTimer = useRef(null);
