@@ -1,6 +1,7 @@
 const jwt    = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
-const { findUserById } = require("./db");
+const { timingSafeEqual } = require("crypto");
+const { findUserById, hashSid } = require("./db");
 
 if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is required in production");
@@ -68,7 +69,9 @@ async function requireAuth(req, res, next) {
     if (!payload.sid || !user.activeToken) {
       return res.status(401).json({ error: "Session ended" });
     }
-    if (user.activeToken !== payload.sid) {
+    var given = Buffer.from(hashSid(payload.sid));
+    var stored = Buffer.from(String(user.activeToken));
+    if (given.length !== stored.length || !timingSafeEqual(given, stored)) {
       return res.status(401).json({ error: "session_replaced", message: "Signed in on another device." });
     }
     req.user = {
@@ -79,6 +82,7 @@ async function requireAuth(req, res, next) {
       email:       user.email,
       displayName: user.displayName,
     };
+    req.authSid = payload.sid;
     next();
   } catch (err) {
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {

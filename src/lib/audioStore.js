@@ -40,13 +40,14 @@ function initAudioDB() {
   });
 }
 
-export function saveAudioBlob(sessionId, blob, mimeType, durationMs) {
+// owner — id of the signed-in user who recorded it, so pending uploads resume only for them
+export function saveAudioBlob(sessionId, blob, mimeType, durationMs, owner) {
   return initAudioDB().then(function(db) {
     if (!db) return;
     return new Promise(function(resolve, reject) {
       var tx    = db.transaction(STORE_NAME, "readwrite");
       var store = tx.objectStore(STORE_NAME);
-      var req   = store.put({ sessionId: sessionId, blob: blob, mimeType: mimeType, durationMs: durationMs || null, createdAt: Date.now() });
+      var req   = store.put({ sessionId: sessionId, blob: blob, mimeType: mimeType, durationMs: durationMs || null, owner: owner || null, createdAt: Date.now() });
       req.onsuccess = function() { resolve(); };
       req.onerror   = function() { reject(req.error); };
     });
@@ -67,6 +68,24 @@ export function getAudioBlob(sessionId) {
       req.onerror = function() { resolve(null); };
     });
   }).catch(function() { return null; });
+}
+
+// Every local recording's metadata (no blobs) — used to resume uploads after sign-in
+export function listAudioBlobs() {
+  return initAudioDB().then(function(db) {
+    if (!db) return [];
+    return new Promise(function(resolve) {
+      var out = [];
+      var req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).openCursor();
+      req.onsuccess = function() {
+        var cur = req.result;
+        if (!cur) return resolve(out);
+        out.push({ sessionId: cur.value.sessionId, owner: cur.value.owner || null, durationMs: cur.value.durationMs || null, createdAt: cur.value.createdAt });
+        cur.continue();
+      };
+      req.onerror = function() { resolve(out); };
+    });
+  }).catch(function() { return []; });
 }
 
 export function hasAudioBlob(sessionId) {

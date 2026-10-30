@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { apiPutBlob } from "./api";
-import { saveAudioBlob, getAudioBlob, deleteAudioBlob } from "./audioStore";
+import { saveAudioBlob, getAudioBlob, deleteAudioBlob, listAudioBlobs } from "./audioStore";
 
 // ─── SESSION AUDIO UPLOAD ─────────────────────────────────────────────────────
 // After a session ends its recording is first saved to this device (IndexedDB), then
@@ -13,6 +13,9 @@ import { saveAudioBlob, getAudioBlob, deleteAudioBlob } from "./audioStore";
 
 var status = {};       // sessionId -> { state: "uploading"|"done"|"failed", progress, error }
 var listeners = [];
+var owner = null;      // signed-in user id — tags local copies so only they resume them
+
+export function setAudioOwner(userId) { owner = userId || null; }
 
 function emit() { listeners.slice().forEach(function(fn) { fn(); }); }
 function set(sessionId, s) { status[sessionId] = s; emit(); }
@@ -38,9 +41,39 @@ function attempt(sessionId, blob, durationMs, tries) {
 // Save locally first (never lose a recording), then upload with retries.
 export function uploadSessionAudio(sessionId, blob, mimeType, durationMs) {
   set(sessionId, { state: "uploading", progress: 0 });
-  return saveAudioBlob(sessionId, blob, mimeType, durationMs)
+  return saveAudioBlob(sessionId, blob, mimeType, durationMs, owner)
     .catch(function() {})
     .then(function() { return attempt(sessionId, blob, durationMs, 3); });
+}
+
+// Keep a recording on this device to upload later (this device was signed out mid-call)
+export function savePendingAudio(sessionId, audio) {
+  return saveAudioBlob(sessionId, audio.blob, audio.mimeType, audio.durationMs, owner).catch(function() {});
+}
+
+// After sign-in: upload every recording this user left on this device (signed out mid-call,
+// or the app closed before an upload finished). Recordings of deleted sessions are dropped.
+export function resumePendingUploads() {
+  var me = owner;
+  if (!me) return Promise.resolve();
+  return listAudioBlobs().then(function(list) {
+    return list.filter(function(r) { return r.owner === me && !(status[r.sessionId] && status[r.sessionId].state === "uploading"); })
+      .reduce(function(p, r) {
+        return p.then(function() {
+          return getAudioBlob(r.sessionId).then(function(rec) {
+            if (!rec || !rec.blob) return;
+            var path = "/sessions/" + encodeURIComponent(r.sessionId) + "/audio" + (rec.durationMs ? "?durationMs=" + Math.round(rec.durationMs) : "");
+            set(r.sessionId, { state: "uploading", progress: 0 });
+            return apiPutBlob(path, rec.blob, function(pr) { set(r.sessionId, { state: "uploading", progress: pr }); })
+              .then(function() { set(r.sessionId, { state: "done", progress: 1 }); return deleteAudioBlob(r.sessionId); })
+              .catch(function(err) {
+                if (err.status === 404) { delete status[r.sessionId]; emit(); return deleteAudioBlob(r.sessionId); }
+                set(r.sessionId, { state: "failed", progress: 0, error: err.message || "Upload failed" });
+              });
+          });
+        });
+      }, Promise.resolve());
+  });
 }
 
 // Retry from the local copy (e.g. after the app was reloaded while offline)

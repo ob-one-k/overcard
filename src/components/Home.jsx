@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../lib/constants";
-import { cachedGet } from "../lib/dataCache";
+import { cachedGet, useCacheVersion } from "../lib/dataCache";
 import { SectionHdr, StatBox, BarRow } from "./ui";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "./Sessions";
+import { LiveNow } from "./LiveMonitor";
 
 // ─── STATS COMPUTATION ────────────────────────────────────────────────────────
 // Stats are derived from session arrays that only change when data reloads, so cache
@@ -156,7 +157,7 @@ function computeRankings(sessions, orgUsers) {
 }
 
 // ─── HOME TAB ─────────────────────────────────────────────────────────────────
-export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay }) {
+export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");
@@ -180,6 +181,7 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
 
   // Admins: one org-wide request, split into teams on the client using each team's memberIds
   // (same rows the server's team scope returns) instead of one request per team
+  var sv = useCacheVersion("/sessions");
   function teamFromOrg(teamId) {
     if (!isAdminRole(authUser.role)) return null;
     var t = (orgTeams || []).find(function(x){ return x.id === teamId; });
@@ -190,7 +192,15 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
     cachedGet("/sessions")
       .then(function(data){ setMySessions(Array.isArray(data) ? data : []); })
       .catch(function(){ setMySessions([]); });
-  }, []);
+  }, [sv]);
+
+  // Live: refresh team tabs already loaded when sessions change
+  var svSeen = useRef(sv);
+  useEffect(function() {
+    if (svSeen.current === sv) return;
+    svSeen.current = sv;
+    Object.keys(teamSessions).forEach(function(tid) { loadTeamSessions(tid, true); });
+  }, [sv]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(function() {
     // Admins wait for the org's teams (with memberIds) so all team tabs come from one request
@@ -200,9 +210,9 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
     });
   }, [myTeams.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function loadTeamSessions(teamId) {
-    if (teamSessions[teamId] !== undefined) return; // already loaded or loading
-    setLoadingTeam(teamId);
+  function loadTeamSessions(teamId, force) {
+    if (!force && teamSessions[teamId] !== undefined) return; // already loaded or loading
+    if (!force) setLoadingTeam(teamId);
     var orgTeam = teamFromOrg(teamId);
     var req = orgTeam
       ? cachedGet("/sessions?scope=org").then(function(all){
@@ -212,9 +222,10 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
     req
       .then(function(data){
         setTeamSessions(function(prev){ return Object.assign({}, prev, { [teamId]: Array.isArray(data) ? data : [] }); });
-        setLoadingTeam(null);
+        if (!force) setLoadingTeam(null);
       })
       .catch(function(){
+        if (force) return;
         setTeamSessions(function(prev){ return Object.assign({}, prev, { [teamId]: [] }); });
         setLoadingTeam(null);
       });
@@ -291,6 +302,9 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
       {/* ── Scrollable content ── */}
       <div style={{flex:1,overflowY:"auto"}}>
         <div style={{padding:"14px 14px 0"}}>
+          {isAdminRole(authUser.role) && (
+            <div style={{marginBottom:14}}><LiveNow variant="strip" onOpenSession={onOpenSession}/></div>
+          )}
 
 
           {/* ── Loading ── */}

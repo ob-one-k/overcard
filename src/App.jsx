@@ -10,6 +10,8 @@ import { NotificationBell } from "./components/NotificationBell";
 import { OrgMark } from "./components/OrgMark";
 import { getBrand, syncBrand, setBrand, cachedLogoVer } from "./lib/brand";
 import { clearCache } from "./lib/dataCache";
+import { startLive, stopLive, onLive } from "./lib/live";
+import { setAudioOwner, resumePendingUploads } from "./lib/audioUpload";
 
 // ─── CODE SPLITTING ─────────────────────────────────────────────────────────
 // Play stays in the main bundle (it is always mounted). Every other tab, the admin
@@ -123,6 +125,31 @@ export default function App() {
     return function(){ setUnauthHandler(null); setSessionReplacedHandler(null); };
   }, []);
 
+  // Live updates for the signed-in user. The server ends the stream with auth.ended when
+  // this device is signed out elsewhere (another device signed in, password reset, account removed).
+  var liveUserId = authUser ? authUser.id : null;
+  useEffect(function() {
+    setAudioOwner(liveUserId);
+    if (!liveUserId) { stopLive(); return; }
+    // Recordings left on this device (signed out mid-call, closed before uploading) go up now
+    resumePendingUploads();
+    var off = onLive("auth.ended", function(d) {
+      setStoredToken(null); clearCache(); setBrand(null);
+      if (d && d.reason === "replaced") setKickReason("replaced");
+      else if (d && d.reason === "password") setKickReason("password");
+      setAuthUser(false);
+    });
+    // Role or teams changed by an admin: refresh the profile in place
+    var offChanged = onLive("auth.changed", function() {
+      var v = cachedLogoVer();
+      apiGet("/auth/me" + (v ? "?logoVer=" + encodeURIComponent(v) : "")).then(function(u) {
+        if (u && u.id) setAuthUser(function(prev) { return prev ? syncBrand(u) : prev; });
+      }).catch(function() {});
+    });
+    startLive();
+    return function() { off(); offChanged(); stopLive(); };
+  }, [liveUserId]);
+
   // Refresh JWT on visibility change and every hour to prevent mid-session logout
   useEffect(function() {
     function doRefresh() {
@@ -131,7 +158,14 @@ export default function App() {
       if (storedToken) headers["Authorization"] = "Bearer " + storedToken;
       fetchWithTimeout(API_BASE + "/auth/refresh", { method:"POST", credentials:"include", headers: headers })
         .then(function(r) {
-          if (r.status === 401) { setStoredToken(null); setAuthUser(false); return null; }
+          if (r.status === 401) {
+            return r.json().catch(function() { return null; }).then(function(b) {
+              setStoredToken(null); clearCache(); setBrand(null);
+              if (b && b.error === "session_replaced") setKickReason("replaced");
+              setAuthUser(false);
+              return null;
+            });
+          }
           return r.ok ? r.json() : null;
         })
         .then(function(data) { if (data && data._token) setStoredToken(data._token); })
@@ -539,8 +573,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
       {tab==="home" && (
         <Suspense fallback={<TabFallback/>}>
         {desktop.isDesktop
-          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>
-          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay}/>}
+          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification}/>
+          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification}/>}
         </Suspense>
       )}
       <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
@@ -608,6 +642,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           onRefreshUsers={refreshOrgUsers}
           onRefreshTeams={refreshOrgTeams}
           onOrgUpdated={onOrgUpdated}
+          onOpenSession={openSessionFromNotification}
         />
         </Suspense>
       )}

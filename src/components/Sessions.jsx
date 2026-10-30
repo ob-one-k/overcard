@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { cachedGet, peek } from "../lib/dataCache";
+import { cachedGet, peek, useCacheVersion } from "../lib/dataCache";
+import { onLive } from "../lib/live";
 import { OrgMark } from "./OrgMark";
 import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
@@ -43,9 +44,14 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
   var [error, setError]         = useState("");
 
   useEffect(function() {
-    apiGet("/sessions/" + session.id + "/shares")
-      .then(function(data){ setShares(data); })
-      .catch(function(){ setShares([]); });
+    function load() {
+      apiGet("/sessions/" + session.id + "/shares")
+        .then(function(data){ setShares(data); })
+        .catch(function(){ setShares(function(prev){ return prev || []; }); });
+    }
+    load();
+    // Someone else shared or revoked while this is open
+    return onLive("share.changed", function(d) { if (d && d.sessionId === session.id) load(); });
   }, [session.id]);
 
   var alreadySharedIds = (shares||[]).map(function(s){ return s.toUserId; });
@@ -274,9 +280,13 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   // Load shares for display in overview (owner or admin only)
   useEffect(function() {
     if (!isOwner && !isAdmin) return;
-    apiGet("/sessions/" + session.id + "/shares")
-      .then(function(data){ setReviewShares(data); })
-      .catch(function(){ setReviewShares([]); });
+    function load() {
+      apiGet("/sessions/" + session.id + "/shares")
+        .then(function(data){ setReviewShares(data); })
+        .catch(function(){ setReviewShares(function(prev){ return prev || []; }); });
+    }
+    load();
+    return onLive("share.changed", function(d) { if (d && d.sessionId === session.id) load(); });
   }, [session.id]);
 
   var st = STYPE[session.mode||session.sessionType||"live"] || STYPE.live;
@@ -319,19 +329,19 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   var isSharedRecipient = !!(session._shared);
   var canWriteFeedback = isAdmin || isSharedRecipient;
 
-  // Fetch feedback once per session (for the tab badge); poll only while the Feedback
-  // tab is open and the page is visible — each poll costs several DB queries
+  // Fetch feedback once per session, then live: the server announces every new, edited
+  // or deleted comment (feedback.changed), and a reconnect reloads in case one was missed
   function loadFeedback() {
     apiGet("/sessions/" + session.id + "/feedback")
       .then(function(data) { setFeedback(data); })
       .catch(function() {});
   }
-  useEffect(loadFeedback, [session.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(function() {
-    if (tab !== "feedback") return;
-    var timer = setInterval(function() { if (document.visibilityState === "visible") loadFeedback(); }, 8000);
-    return function() { clearInterval(timer); };
-  }, [session.id, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+    loadFeedback();
+    var offA = onLive("feedback.changed", function(d) { if (d && d.sessionId === session.id) loadFeedback(); });
+    var offB = onLive("live.resync", loadFeedback);
+    return function() { offA(); offB(); };
+  }, [session.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   var hasFeedback = feedback && feedback.length > 0;
   var showFbBadge = hasFeedback && !feedbackSeenOnce;
@@ -883,6 +893,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     if (isAdminScope) url += "&scope=" + encodeURIComponent(viewScope === "org" || /^(team|user):/.test(viewScope) ? viewScope : "team:" + viewScope);
     return url;
   }
+  var sv = useCacheVersion("/sessions");
   useEffect(function() {
     // Ignore responses from a superseded request (deck/scope changed mid-flight)
     var cancelled = false;
@@ -895,7 +906,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
         .catch(function() { if (!cancelled) setSessions([]); });
     }
     return function() { cancelled = true; };
-  }, [deckId, view, viewScope]);
+  }, [deckId, view, viewScope, sv]);
 
   function deleteSession(id) {
     apiDel("/sessions/" + id).then(function() {

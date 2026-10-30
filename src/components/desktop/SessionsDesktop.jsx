@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext } from "react";
-import { cachedGet, peek } from "../../lib/dataCache";
+import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR } from "../../lib/constants";
 import { apiDel } from "../../lib/api";
@@ -182,6 +182,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
     if (onInitialReview) setSelectedId(onInitialReview);
   }, [onInitialReview]);
 
+  var sv = useCacheVersion("/sessions");
   function buildUrl() {
     var url = "/sessions?deckId=" + deckId;
     if (isAdminScope) url += "&scope=" + encodeURIComponent(scopeVal);
@@ -198,7 +199,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
       .then(function(data) { if (!cancelled) setSessions(sorted(data)); })
       .catch(function() { if (!cancelled) setSessions([]); });
     return function() { cancelled = true; };
-  }, [deckId, viewScope]);
+  }, [deckId, viewScope, sv]);
 
   // Picking Live/Practice in the list filter moves the overview to the same sub-tab
   useEffect(function() { if (fType === "live" || fType === "practice") setOvMode(fType); }, [fType]);

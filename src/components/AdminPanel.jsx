@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { cachedGet, peek } from "../lib/dataCache";
+import { cachedGet, peek, useCacheVersion } from "../lib/dataCache";
+import { LiveNow } from "./LiveMonitor";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt } from "../lib/styles";
@@ -544,6 +545,7 @@ function outcomeChip(x) {
 // Selected user's call activity + account facts
 function UserActivity({ user, teams }) {
   var [list, setList] = useState(null);
+  var sv = useCacheVersion("/sessions");
   useEffect(function() {
     var cancelled = false;
     var url = "/sessions?scope=user:" + encodeURIComponent(user.id);
@@ -552,7 +554,7 @@ function UserActivity({ user, teams }) {
       .then(function(d){ if (!cancelled) setList(Array.isArray(d) ? d : []); })
       .catch(function(){ if (!cancelled) setList([]); });
     return function(){ cancelled = true; };
-  }, [user.id]);
+  }, [user.id, sv]);
   var st = list ? sessStats(list) : null;
   var recent = list ? list.slice().sort(function(a, b){ return b.startTs - a.startTs; }).slice(0, 6) : [];
   return (
@@ -600,6 +602,7 @@ function UserActivity({ user, teams }) {
 // Selected team's results + per-member roster
 function TeamOverview({ team, orgUsers }) {
   var [list, setList] = useState(null);
+  var sv = useCacheVersion("/sessions");
   useEffect(function() {
     var cancelled = false;
     var url = "/sessions?scope=team:" + encodeURIComponent(team.id);
@@ -608,7 +611,7 @@ function TeamOverview({ team, orgUsers }) {
       .then(function(d){ if (!cancelled) setList(Array.isArray(d) ? d : []); })
       .catch(function(){ if (!cancelled) setList([]); });
     return function(){ cancelled = true; };
-  }, [team.id]);
+  }, [team.id, sv]);
   var st = list ? sessStats(list) : null;
   var members = (team.memberIds || []).map(function(id){ return (orgUsers || []).find(function(u){ return u.id === id; }); }).filter(Boolean);
   var rows = members.map(function(u) {
@@ -656,7 +659,7 @@ function TeamOverview({ team, orgUsers }) {
 }
 
 // Nothing selected on Users: an org roster snapshot instead of an empty pane
-function RosterOverview({ users, teams, onOpen }) {
+function RosterOverview({ users, teams, onOpen, onOpenSession }) {
   var counts = { owner:0, admin:0, user:0 };
   users.forEach(function(u){ counts[u.role] = (counts[u.role] || 0) + 1; });
   var recent = users.slice().sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); }).slice(0, 6);
@@ -687,6 +690,7 @@ function RosterOverview({ users, teams, onOpen }) {
           );
         })}
       </div>
+      <div style={{marginBottom:16}}><LiveNow variant="card" onOpenSession={onOpenSession}/></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(300px, 1fr))",gap:16,alignItems:"start"}}>
         <div style={SIDE_CARD}>
           <SideTitle>Recently joined</SideTitle>
@@ -704,7 +708,7 @@ function RosterOverview({ users, teams, onOpen }) {
 
 var EMPTY_UF = { email:"", firstName:"", lastName:"", phone:"", role:"user", teamId:"", password:"" };
 
-export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRefreshTeams, onOrgUpdated }) {
+export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRefreshTeams, onOrgUpdated, onOpenSession }) {
   var desktop = useContext(DesktopCtx);
   var [sub, setSub]           = useState("users");
   var [editUser, setEditUser] = useState(null);    // null | "new" | user obj
@@ -1071,7 +1075,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
           </div>
         </div>
       ) : (
-        <RosterOverview users={sortedUsers} teams={orgTeams || []} onOpen={openUser}/>
+        <RosterOverview users={sortedUsers} teams={orgTeams || []} onOpen={openUser} onOpenSession={onOpenSession}/>
       );
     } else if (sub === "teams") {
       listPane = (

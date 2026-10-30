@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../../lib/constants";
-import { cachedGet } from "../../lib/dataCache";
+import { cachedGet, useCacheVersion } from "../../lib/dataCache";
 import { solidBtn } from "../../lib/styles";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "../Sessions";
+import { LiveNow } from "../LiveMonitor";
 
 // ─── HELPERS (mirrors Home.jsx) ───────────────────────────────────────────────
 // Stats are derived from session arrays that only change when data reloads, so cache
@@ -185,7 +186,7 @@ function EmptyNote({ icon, title, body, action }) {
 //     Me tab:   Recent sessions | Decks (quick launch) | Insights (funnel, objections, ranking, top close)
 //     Team tab: Leaderboard     | Recent team sessions | Insights
 // Mirrors HomeTab data/state — no hooks extracted to avoid conditional-hooks issues
-export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay }) {
+export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");   // "me" | "all" | teamId
@@ -212,6 +213,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
 
   // Admins: one org-wide request, split into teams on the client using each team's memberIds
   // (same rows the server's team scope returns) instead of one request per team
+  var sv = useCacheVersion("/sessions");
   function teamFromOrg(teamId) {
     if (!isAdminRole(authUser.role)) return null;
     var t = (orgTeams || []).find(function(x){ return x.id === teamId; });
@@ -222,7 +224,17 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     cachedGet("/sessions")
       .then(function(data){ setMySessions(Array.isArray(data) ? data : []); })
       .catch(function(){ setMySessions([]); });
-  }, []);
+  }, [sv]);
+
+  // Live: when sessions change (a run finishes, feedback, a share), refresh every scope already loaded
+  var svSeen = useRef(sv);
+  useEffect(function() {
+    if (svSeen.current === sv) return;
+    svSeen.current = sv;
+    Object.keys(teamSessions).forEach(function(tid) { loadTeamSessions(tid, true); });
+    if (orgSessions !== null) loadAll(true);
+    Object.keys(personSessions).forEach(function(uid) { loadPerson(uid, true); });
+  }, [sv]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(function() {
     // Admins wait for the org's teams (with memberIds) so all team tabs come from one request
@@ -247,9 +259,10 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     return function() { window.removeEventListener("resize", onResize); clearTimeout(timer); };
   }, []);
 
-  function loadTeamSessions(teamId) {
-    if (teamSessions[teamId] !== undefined) return;
-    setLoadingTeam(teamId);
+  // force → refetch quietly (live refresh) even when the team is already loaded
+  function loadTeamSessions(teamId, force) {
+    if (!force && teamSessions[teamId] !== undefined) return;
+    if (!force) setLoadingTeam(teamId);
     var orgTeam = teamFromOrg(teamId);
     var req = orgTeam
       ? cachedGet("/sessions?scope=org").then(function(all){
@@ -259,17 +272,18 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     req
       .then(function(data){
         setTeamSessions(function(prev){ return Object.assign({}, prev, { [teamId]: Array.isArray(data) ? data : [] }); });
-        setLoadingTeam(null);
+        if (!force) setLoadingTeam(null);
       })
       .catch(function(){
+        if (force) return;
         setTeamSessions(function(prev){ return Object.assign({}, prev, { [teamId]: [] }); });
         setLoadingTeam(null);
       });
   }
 
-  function loadAll() {
+  function loadAll(force) {
     if (isAdmin) {
-      if (orgSessions !== null) return;
+      if (!force && orgSessions !== null) return;
       cachedGet("/sessions?scope=org")
         .then(function(data){ setOrgSessions(Array.isArray(data) ? data : []); })
         .catch(function(){ setOrgSessions([]); });
@@ -279,8 +293,8 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
     }
   }
 
-  function loadPerson(userId) {
-    if (String(userId) === String(authUser.id) || personSessions[userId] !== undefined) return;
+  function loadPerson(userId, force) {
+    if (String(userId) === String(authUser.id) || (!force && personSessions[userId] !== undefined)) return;
     cachedGet("/sessions?scope=user:" + encodeURIComponent(userId))
       .then(function(data){ setPersonSessions(function(prev){ var n = Object.assign({}, prev); n[userId] = Array.isArray(data) ? data : []; return n; }); })
       .catch(function(){ setPersonSessions(function(prev){ var n = Object.assign({}, prev); n[userId] = []; return n; }); });
@@ -646,6 +660,13 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
           );
         })}
       </div>
+
+      {/* ── Live now (admins): reps on a call right now ── */}
+      {isAdmin && (
+        <div style={{flexShrink:0,padding:compact?"0 "+padX+"px 12px":"0 24px 16px"}}>
+          <LiveNow variant="strip" onOpenSession={onOpenSession}/>
+        </div>
+      )}
 
       {/* ── Panels ── */}
       <div style={{flex:1,minHeight:0,overflowY:wide?"hidden":"auto",padding:compact?"0 "+padX+"px "+padX+"px":"0 24px 24px",display:"grid",gridTemplateColumns:cols,gridAutoRows:wide?"minmax(0,1fr)":"auto",gap:compact?12:16}}>

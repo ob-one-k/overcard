@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useContext, useMemo } from "react";
-import { cachedGet, peek } from "../../lib/dataCache";
+import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
 import { TM, uid, aid } from "../../lib/constants";
 import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, inputSt, resizeHandle } from "../../lib/styles";
@@ -171,6 +171,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
   var [perfSort, setPerfSort] = useState({ key:"visits", dir:"desc" });
   var [perfType, setPerfType] = useState("all");     // card performance: all | pitch | discovery | close
   var [perfPath, setPerfPath] = useState(false);     // card performance: intended-path cards only
+  var sv = useCacheVersion("/sessions");
   useEffect(function() {
     var cancelled = false;
     var url = "/sessions?deckId=" + encodeURIComponent(deck.id) + (perfScope === "org" ? "&scope=org" : "");
@@ -181,7 +182,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
       .then(function(list) { if (!cancelled) setPerfSessions(own(list)); })
       .catch(function() { if (!cancelled) setPerfSessions([]); });
     return function() { cancelled = true; };
-  }, [deck.id, perfScope]);
+  }, [deck.id, perfScope, sv]);
 
   function updateLeftW(w) { leftWRef.current = w; setLeftW(w); }
 

@@ -487,9 +487,11 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
         <div style={{fontSize:F.title,fontWeight:700,color:"#fff",fontFamily:big ? "'Lora',serif" : "inherit"}}>{big ? "Welcome back" : "Sign in"}</div>
         {big && <div style={{fontSize:F.small,color:"rgba(255,255,255,.45)",marginTop:4}}>Sign in to your organization's workspace.</div>}
       </div>
-      {kickReason === "replaced" && (
+      {(kickReason === "replaced" || kickReason === "password") && (
         <div style={{background:"rgba(239,83,80,.10)",border:"1px solid rgba(239,83,80,.28)",borderRadius:12,padding:"10px 14px",fontSize:F.small - 1,color:"#EF8070",lineHeight:1.5}}>
-          You were signed out because this account was accessed on another device.
+          {kickReason === "replaced"
+            ? "You were signed out because this account was signed in on another device. Any call in progress was saved."
+            : "You were signed out because this account's password was changed."}
         </div>
       )}
       {err && <div role="alert" style={{background:"rgba(239,83,80,.12)",border:"1px solid rgba(239,83,80,.3)",borderRadius:10,padding:"10px 12px",fontSize:F.small - 1,color:"#EF5350"}}>{err}</div>}

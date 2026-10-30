@@ -2,6 +2,7 @@ const express = require("express");
 const router  = express.Router();
 const { getNotifications, markNotificationsRead } = require("../db");
 const { requireAuth } = require("../auth");
+const { publish } = require("../realtime");
 
 router.use(requireAuth);
 
@@ -18,6 +19,8 @@ router.post("/read", async function(req, res, next) {
     const body = req.body || {};
     await markNotificationsRead(req.user.id, Array.isArray(body.ids) ? body.ids.slice(0, 100) : null,
       typeof body.sessionId === "string" ? body.sessionId : null);
+    // The user's other tabs/devices update their bell
+    publish({ users: [req.user.id] }, "notification.read", {});
     res.json(await getNotifications(req.user.id, 30));
   } catch (err) { next(err); }
 });

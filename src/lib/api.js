@@ -143,7 +143,10 @@ export function apiPutBlob(path, blob, onProgress) {
       var body = null;
       try { body = JSON.parse(xhr.responseText); } catch (_) {}
       if (xhr.status >= 200 && xhr.status < 300) { wrote(path); return resolve(body); }
-      if (xhr.status === 401 && _onUnauth) _onUnauth();
+      if (xhr.status === 401) {
+        if (body && body.error === "session_replaced") { if (_onSessionReplaced) _onSessionReplaced(); }
+        else if (_onUnauth) _onUnauth();
+      }
       var e = new Error((body && body.error) || ("API " + xhr.status)); e.status = xhr.status; reject(e);
     };
     xhr.onerror   = function() { reject(new Error("Network error")); };

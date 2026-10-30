@@ -6,11 +6,61 @@ const {
   createShare, getSharesForSession, deleteShare, getShareRecord,
   getOrgUsers, getUserTeams, findUserById,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
-  createNotification,
+  createNotification, getShareRecipientIds, getDeckById, deckUsableBy,
+  startLiveSession, beatLiveSession, getLiveSessions,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
+const { publish } = require("../realtime");
 
 router.use(requireAuth);
+
+// ─── LIVE PUBLISHING ──────────────────────────────────────────────────────────
+// Everyone who can open a session's review: its owner, its share recipients and the
+// org's admins. Payloads are ids only — clients refetch through the endpoints below.
+async function publishSession(session, type, data, extraUsers) {
+  try {
+    var users = [session.userId].concat(await getShareRecipientIds(session.id), extraUsers || []);
+    publish({ users: users, orgAdmins: session.orgId }, type, data);
+  } catch (err) { console.error("publish failed:", err.message); }
+}
+
+// Live progress goes to org admins (the monitor). At most one event per session every
+// PROGRESS_MS; the latest state is sent when the window closes, so watchers never lag behind.
+var PROGRESS_MS = 2000;
+var progressState = new Map(); // sessionId → { last, timer, pending }
+function publishProgress(live) {
+  var st = progressState.get(live.id) || { last: 0, timer: null, pending: null };
+  progressState.set(live.id, st);
+  var now = Date.now();
+  if (now - st.last >= PROGRESS_MS && !st.timer) {
+    st.last = now;
+    publish({ orgAdmins: live.orgId }, "session.progress", live);
+    return;
+  }
+  st.pending = live;
+  if (!st.timer) {
+    st.timer = setTimeout(function() {
+      st.timer = null; st.last = Date.now();
+      if (st.pending) { publish({ orgAdmins: st.pending.orgId }, "session.progress", st.pending); st.pending = null; }
+    }, Math.max(0, PROGRESS_MS - (now - st.last)));
+  }
+}
+function endProgress(id) {
+  var st = progressState.get(id);
+  if (st && st.timer) clearTimeout(st.timer);
+  progressState.delete(id);
+}
+
+// Validate the small "where is the rep now" object a heartbeat carries
+function cleanLive(live) {
+  if (!live || typeof live !== "object") return null;
+  function str(v, n) { return typeof v === "string" ? v.slice(0, n) : null; }
+  return {
+    cardId: str(live.cardId, 100), cardTitle: str(live.cardTitle, 200), cardType: str(live.cardType, 20),
+    inObjection: !!live.inObjection, stackLabel: str(live.stackLabel, 100),
+  };
+}
+var MAX_EVENTS = 5000;
 
 // GET /api/sessions/org-users — all authenticated users can fetch their org's user list (for sharing)
 router.get("/org-users", async function(req, res, next) {
@@ -61,16 +111,70 @@ router.get("/", async function(req, res, next) {
   } catch (err) { next(err); }
 });
 
-// POST /api/sessions  (upsert)
+// POST /api/sessions  (upsert — saves a finished run)
 router.post("/", async function(req, res, next) {
   try {
-    if (!req.body || !req.body.id) {
+    if (!req.body || typeof req.body.id !== "string" || !req.body.id) {
       return res.status(400).json({ error: "Session id is required" });
     }
-    const session = await upsertSession(req.body, req.user.id, req.user.orgId);
+    // A run may never point at another org's deck. (Archived or deleted mid-run is fine —
+    // the session keeps its own snapshot of the deck's name, colour and icon.)
+    if (typeof req.body.deckId !== "string" || !req.body.deckId) return res.status(400).json({ error: "Unknown deck" });
+    const deck = await getDeckById(req.body.deckId);
+    if (deck && deck.orgId !== req.user.orgId) return res.status(400).json({ error: "Unknown deck" });
+    if (req.body.events && (!Array.isArray(req.body.events) || req.body.events.length > MAX_EVENTS)) {
+      return res.status(400).json({ error: "Invalid events" });
+    }
+    // Snapshot the deck's look when the client didn't send it (a deleted deck must have been sent)
+    var body = Object.assign({}, req.body);
+    if (!body.deckName) {
+      if (!deck) return res.status(400).json({ error: "Unknown deck" });
+      body.deckName = deck.name; body.deckColor = body.deckColor || deck.color; body.deckIcon = body.deckIcon || deck.icon;
+    }
+    const session = await upsertSession(body, req.user.id, req.user.orgId);
     // null means the id belongs to another user's session — never return it
     if (!session) return res.status(403).json({ error: "Access denied" });
+    endProgress(session.id);
+    await publishSession(session, "session.finished", { id: session.id, userId: session.userId });
     res.json({ ok: true, session });
+  } catch (err) { next(err); }
+});
+
+// ─── LIVE SESSIONS ────────────────────────────────────────────────────────────
+// GET /api/sessions/live — the org's runs in progress (admin live monitor)
+router.get("/live", async function(req, res, next) {
+  try {
+    if (!isAdminRole(req.user.role)) return res.status(403).json({ error: "Admin access required" });
+    res.json(await getLiveSessions(req.user.orgId));
+  } catch (err) { next(err); }
+});
+
+// POST /api/sessions/:id/start — the rep started a run; it is stored as 'active'
+router.post("/:id/start", async function(req, res, next) {
+  try {
+    const body = req.body || {};
+    const deck = await deckUsableBy(body.deckId, req.user);
+    if (!deck) return res.status(400).json({ error: "Unknown deck" });
+    const live = await startLiveSession(Object.assign({}, body, {
+      id: req.params.id, deckName: deck.name, deckColor: deck.color, deckIcon: deck.icon,
+      events: [], live: cleanLive(body.live),
+    }), req.user.id, req.user.orgId);
+    if (!live) return res.status(409).json({ error: "Session can't be started" });
+    publish({ orgAdmins: live.orgId }, "session.started", live);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// POST /api/sessions/:id/beat — heartbeat with the run so far (owner only, while active)
+router.post("/:id/beat", async function(req, res, next) {
+  try {
+    const body = req.body || {};
+    if (!Array.isArray(body.events) || body.events.length > MAX_EVENTS) return res.status(400).json({ error: "Invalid events" });
+    const live = await beatLiveSession(req.params.id, req.user.id, body.events, cleanLive(body.live));
+    // 409 tells the client the run is no longer live (finished elsewhere, or closed as abandoned)
+    if (!live) return res.status(409).json({ error: "Session is not live" });
+    publishProgress(live);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
@@ -87,7 +191,10 @@ router.delete("/:id", async function(req, res, next) {
 
     if (!canDelete) return res.status(403).json({ error: "Access denied" });
 
+    // Read the audience before the delete — shares cascade with the session
+    const recipients = await getShareRecipientIds(existing.id);
     await deleteSession(req.params.id, existing.userId);
+    publish({ users: [existing.userId].concat(recipients), orgAdmins: existing.orgId }, "session.changed", { id: existing.id, deleted: true });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -145,6 +252,7 @@ router.put("/:id/audio",
       if (!AUDIO_MIME.test(mime)) mime = "audio/webm";
       var dur = parseInt(req.query.durationMs, 10);
       await saveSessionAudio(session.id, session.orgId, mime, Number.isFinite(dur) && dur > 0 ? dur : null, req.body);
+      await publishSession(session, "session.changed", { id: session.id, audio: true });
       res.json({ ok: true, sizeBytes: req.body.length });
     } catch (err) { next(err); }
   }
@@ -202,6 +310,7 @@ router.get("/:id/audio", async function(req, res, next) {
 async function canAccessFeedback(session, user) {
   if (!session) return false;
   if (isAdminRole(user.role) && session.orgId === user.orgId) return true;
+  if (session.orgId !== user.orgId) return false;
   if (session.userId === user.id) return true;
   const share = await getShareRecord(session.id, user.id);
   return !!share;
@@ -246,7 +355,9 @@ router.post("/:id/feedback", async function(req, res, next) {
         actorId: req.user.id, actorName: req.user.displayName,
         text: text.trim().slice(0, 160),
       });
+      publish({ users: [session.userId] }, "notification.new", { type: "feedback", sessionId: session.id });
     }
+    await publishSession(session, "feedback.changed", { sessionId: session.id });
     res.json(fb);
   } catch (err) { next(err); }
 });
@@ -261,6 +372,8 @@ router.put("/:id/feedback/:fid", async function(req, res, next) {
     if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
     if (text.trim().length > 5000) return res.status(400).json({ error: "Feedback text must be 5000 characters or less" });
     const updated = await updateFeedback(fb.id, text.trim(), cardId || null, cardTitle || null, req.user.id);
+    const session = await getSessionById(req.params.id);
+    if (session) await publishSession(session, "feedback.changed", { sessionId: session.id });
     res.json(updated);
   } catch (err) { next(err); }
 });
@@ -277,6 +390,7 @@ router.delete("/:id/feedback/:fid", async function(req, res, next) {
       : fb.authorId === req.user.id;
     if (!canDelete) return res.status(403).json({ error: "Access denied" });
     await deleteFeedback(fb.id, session.orgId);
+    await publishSession(session, "feedback.changed", { sessionId: session.id });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -302,6 +416,13 @@ router.post("/:id/share", async function(req, res, next) {
     if (target.id === req.user.id) return res.status(400).json({ error: "Cannot share with yourself" });
 
     const share = await createShare({ sessionId: session.id, fromUserId: req.user.id, toUserId, context: context || null });
+    if (share && share.created) await createNotification({
+      userId: toUserId, orgId: session.orgId, type: "share", sessionId: session.id,
+      actorId: req.user.id, actorName: req.user.displayName,
+      text: typeof context === "string" && context.trim() ? context.trim().slice(0, 160) : null,
+    });
+    publish({ users: [toUserId] }, "notification.new", { type: "share", sessionId: session.id });
+    await publishSession(session, "share.changed", { sessionId: session.id });
     res.json(share);
   } catch (err) { next(err); }
 });
@@ -328,7 +449,10 @@ router.delete("/:id/shares/:shareId", async function(req, res, next) {
       ? session.orgId === req.user.orgId
       : session.userId === req.user.id;
     if (!canRevoke) return res.status(403).json({ error: "Access denied" });
+    // The recipient loses access, so tell them before the row disappears
+    const recipients = await getShareRecipientIds(session.id);
     await deleteShare(req.params.shareId, session.id);
+    publish({ users: [session.userId].concat(recipients), orgAdmins: session.orgId }, "share.changed", { sessionId: session.id });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

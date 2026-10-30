@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { cachedGet, peek } from "../../lib/dataCache";
+import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
 import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA } from "../../lib/constants";
@@ -7,7 +7,8 @@ import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
 import { useRecorder, buildAudioSegments } from "../../lib/useRecorder";
-import { uploadSessionAudio } from "../../lib/audioUpload";
+import { uploadSessionAudio, savePendingAudio } from "../../lib/audioUpload";
+import { useLiveBeat, onSignedOut } from "../../lib/liveBeat";
 import { RecordingSetup, RecIndicator } from "../RecordingSetup";
 import { StudyPopout } from "../StudyCard";
 import { ReferencePicker, ReferencePanel } from "../ReferenceSession";
@@ -146,6 +147,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
 
   // Recent runs on this deck — own sessions first, org-wide fallback (admins only; others get 403 → empty)
   var isActiveView = playView === "active";
+  var sv = useCacheVersion("/sessions");
   useEffect(function() {
     if (isActiveView) return;
     var cancelled = false;
@@ -167,7 +169,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
       })
       .catch(function() { if (!cancelled) setRecent([]); });
     return function() { cancelled = true; };
-  }, [deck.id, isActiveView]);
+  }, [deck.id, isActiveView, sv]);
 
   // Guard against deck switch during active session
   useEffect(function() {
@@ -344,6 +346,22 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
     if (e.key === "Escape" && inObj) { e.preventDefault(); exitObj(); return; }
     if ((e.key === "n" || e.key === "N") && noteRef.current) { e.preventDefault(); noteRef.current.focus(); }
   };
+
+  // Live: the server keeps a copy of the run so admins can watch it and nothing is lost
+  var liveRun = playView === "active" && activeSession && !saving ? activeSession : null;
+  useLiveBeat(liveRun, sessionEvents, card ? {
+    cardId: card.id, cardTitle: card.title, cardType: card.type,
+    inObjection: inObj, stackLabel: inObj && objMode ? objMode.stack.label : null,
+  } : null);
+  // Signed out mid-call (this account signed in elsewhere): the server already saved the
+  // path; keep the recording on this device — it uploads after the next sign-in
+  var signedOutRef = useRef(null);
+  signedOutRef.current = function() {
+    if (!activeSession) return;
+    var id = activeSession.id;
+    rec.stop().then(function(audio) { if (audio) savePendingAudio(id, audio); });
+  };
+  useEffect(function() { return onSignedOut(function() { if (signedOutRef.current) signedOutRef.current(); }); }, []);
 
   // ════════════════════════════════════════════════════════════════════════════
   // ── ACTIVE SESSION ──────────────────────────────────────────────────────────

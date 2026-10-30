@@ -8,6 +8,7 @@ const {
   createInvite, getOrgInvites, revokeInvite,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
+const realtime = require("../realtime");
 const { validatePassword, validateName, validatePhone, validateNewUser, cleanNewUser } = require("../validate");
 
 router.use(requireAdmin);
@@ -127,6 +128,8 @@ router.put("/users/:id", async function(req, res, next) {
     if (teamIds !== undefined) {
       await setUserTeams(req.params.id, teamIds);
     }
+    // Their open app re-reads its profile (role/teams) and rejoins the right live channels
+    realtime.refreshUser(req.params.id);
     res.json(stripSecrets(updated));
   } catch (err) { next(err); }
 });
@@ -152,6 +155,7 @@ router.post("/users/:id/reset-password", async function(req, res, next) {
     await updateUser(req.params.id, req.user.orgId, { passwordHash: await hashPassword(password) });
     // Revoke the user's current session so the old password's tokens stop working
     await setActiveToken(req.params.id, null);
+    await realtime.signOutDevices(req.params.id, "password");
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -172,6 +176,7 @@ router.delete("/users/:id", async function(req, res, next) {
     if (!canManage(req.user, target)) {
       return res.status(403).json({ error: "Only the owner can delete admins" });
     }
+    await realtime.signOutDevices(req.params.id, "removed");
     await deleteUser(req.params.id, req.user.orgId);
     res.json({ ok: true });
   } catch (err) { next(err); }
@@ -196,6 +201,8 @@ router.post("/transfer-ownership", async function(req, res, next) {
       if (err.code === "NOT_OWNER" || err.code === "23505") return res.status(409).json({ error: "Ownership changed — reload and try again" });
       throw err;
     }
+    realtime.refreshUser(req.user.id);
+    realtime.refreshUser(target.id);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

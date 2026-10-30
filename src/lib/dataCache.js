@@ -17,6 +17,8 @@ function notify(url) { (subs[url] || []).slice().forEach(function(fn) { fn(); })
 
 // Any successful write to /sessions/…, /admin/…, /org… makes that area's cached reads stale
 setWriteHook(function(path) {
+  // Live-session heartbeats change nothing a list shows
+  if (/^\/sessions\/[^/]+\/(start|beat)$/.test(path)) return;
   var m = /^\/[^/?]+/.exec(path);
   if (m) invalidate(m[0]);
   // Creating/editing/deleting users changes who appears in session lists and pickers
@@ -61,6 +63,33 @@ export function invalidate(prefix) {
     store[url].ts = 0;
     if (subs[url] && subs[url].length) revalidate(url).catch(function() {});
   });
+  bumpVersion(prefix);
+}
+
+// ─── VERSION COUNTERS ─────────────────────────────────────────────────────────
+// Components that load with cachedGet() inside an effect add useCacheVersion(prefix)
+// to the effect's deps: it changes whenever that area is invalidated (a write or a
+// live event), so the effect re-runs and picks up fresh data.
+var versions = {};      // prefix → number
+var verSubs = [];       // { prefix, fn }
+
+function bumpVersion(prefix) {
+  verSubs.slice().forEach(function(s) {
+    if (s.prefix.indexOf(prefix) === 0 || prefix.indexOf(s.prefix) === 0) {
+      versions[s.prefix] = (versions[s.prefix] || 0) + 1;
+      s.fn();
+    }
+  });
+}
+
+export function useCacheVersion(prefix) {
+  var [, force] = useState(0);
+  useEffect(function() {
+    var sub = { prefix: prefix, fn: function() { force(function(n) { return n + 1; }); } };
+    verSubs.push(sub);
+    return function() { verSubs = verSubs.filter(function(x) { return x !== sub; }); };
+  }, [prefix]);
+  return versions[prefix] || 0;
 }
 
 // React hook: { data, error, loading, reload }. data is the cached value right

@@ -1,5 +1,4 @@
 const express   = require("express");
-const rateLimit = require("express-rate-limit");
 const { randomUUID, createHash, timingSafeEqual } = require("crypto");
 const router    = express.Router();
 const {
@@ -7,25 +6,14 @@ const {
   setActiveToken, clearActiveTokenIfMatches, findOrgById,
   findUsableInvite, signupWithInvite, createOrgWithOwner,
 } = require("../db");
+const realtime = require("../realtime");
 const { jwtSign, checkPassword, hashPassword, setCookie, clearCookie, requireAuth, isAdminRole } = require("../auth");
+const { limiter } = require("../limits");
 const { validateNewUser, cleanNewUser, validateOrg, cleanOrg } = require("../validate");
 
-var loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: { error: "Too many login attempts, please try again later" },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
+var loginLimiter  = limiter(15 * 60 * 1000, 10, "Too many login attempts, please try again later");
 // Signup endpoints share one limiter — share codes and the master code must not be brute-forceable
-var signupLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: { error: "Too many attempts, please try again later" },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+var signupLimiter = limiter(15 * 60 * 1000, 10);
 
 // Hash both sides so timingSafeEqual gets equal-length buffers and the code length doesn't leak
 function masterCodeMatches(input) {
@@ -36,9 +24,12 @@ function masterCodeMatches(input) {
   return timingSafeEqual(a, b);
 }
 
-// Issue a fresh single-session token and the auth cookie; returns the login response body
+// Issue a fresh single-session token and the auth cookie; returns the login response body.
+// One device at a time: any other device signed in to this account is signed out now —
+// its in-progress run is saved as abandoned and its live stream told why.
 async function startSession(res, user) {
   const sessionToken = randomUUID();
+  if (user.activeToken) await realtime.signOutDevices(user.id, "replaced");
   await setActiveToken(user.id, sessionToken);
   await updateLastLogin(user.id);
   const token = jwtSign({ sub: user.id, role: user.role, orgId: user.orgId, sid: sessionToken });
@@ -186,7 +177,10 @@ router.post("/logout", async function(req, res, next) {
         const payload = jwtVerify(token);
         // Only end the session this token belongs to — a stale token from a replaced
         // device must not sign out the user's current active session
-        if (payload && payload.sub && payload.sid) await clearActiveTokenIfMatches(payload.sub, payload.sid);
+        if (payload && payload.sub && payload.sid) {
+          // Other tabs on this device share the token — end their streams too
+          if (await clearActiveTokenIfMatches(payload.sub, payload.sid)) realtime.closeUser(payload.sub, "logout", { onlySid: payload.sid });
+        }
       } catch (_) { /* ignore invalid token on logout */ }
     }
     clearCookie(res);
@@ -197,11 +191,9 @@ router.post("/logout", async function(req, res, next) {
 // POST /api/auth/refresh — extend session while still valid
 router.post("/refresh", requireAuth, async function(req, res, next) {
   try {
-    // Re-use existing session token so sid stays the same — refreshing the JWT doesn't replace the session
-    // requireAuth already verified the JWT's sid matches the user's activeToken
-    const user = await findUserById(req.user.id);
-    if (!user || !user.activeToken) return res.status(401).json({ error: "Session ended" });
-    const token = jwtSign({ sub: req.user.id, role: req.user.role, orgId: req.user.orgId, sid: user.activeToken });
+    // Re-use the session id so refreshing the JWT doesn't replace the session
+    // (requireAuth already verified the JWT's sid matches the user's active session)
+    const token = jwtSign({ sub: req.user.id, role: req.user.role, orgId: req.user.orgId, sid: req.authSid });
     setCookie(res, token);
     res.json({ ok: true, _token: token });
   } catch (err) { next(err); }

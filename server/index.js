@@ -6,7 +6,7 @@ const compression  = require("compression");
 const path         = require("path");
 const fs           = require("fs");
 
-const { pool, initSchema } = require("./db");
+const { pool, initSchema, closeActiveSessions } = require("./db");
 const { runSeed }          = require("./seed");
 const authRoutes    = require("./routes/authRoutes");
 const deckRoutes    = require("./routes/deckRoutes");
@@ -14,6 +14,8 @@ const sessionRoutes = require("./routes/sessionRoutes");
 const adminRoutes   = require("./routes/adminRoutes");
 const orgRoutes     = require("./routes/orgRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const { requireAuth } = require("./auth");
+const realtime      = require("./realtime");
 
 const app      = express();
 const PORT     = process.env.PORT || 3000;
@@ -37,6 +39,9 @@ app.use(cors({
   // Lets the cross-origin (Vercel) client read the stored recording length
   exposedHeaders: ["X-Audio-Duration-Ms", "Content-Range", "Accept-Ranges"],
 }));
+
+// Live event stream — mounted before compression so events are never buffered
+app.get("/api/events", requireAuth, realtime.streamHandler);
 
 // gzip JSON/HTML/JS (session lists are large and highly repetitive); audio/* is skipped by the default filter
 app.use(compression({ threshold: 1024 }));
@@ -113,6 +118,17 @@ async function initSchemaWithRetry(attempts) {
   }
 }
 
+// Runs whose heartbeat stopped (tab closed, phone died, network lost) are closed as
+// abandoned after STALE_MS, keeping the path recorded so far
+var STALE_MS = 10 * 60 * 1000;
+function sweepStaleSessions() {
+  closeActiveSessions({ staleBefore: Date.now() - STALE_MS }).then(function(rows) {
+    rows.forEach(function(r) {
+      realtime.publish({ users: [r.userId], orgAdmins: r.orgId }, "session.finished", { id: r.id, userId: r.userId, abandoned: true });
+    });
+  }).catch(function(err) { console.error("Stale session sweep failed:", err.message); });
+}
+
 async function start() {
   await initSchemaWithRetry(5);
 
@@ -125,6 +141,8 @@ async function start() {
     }
     console.log("OverCard server listening on http://localhost:" + PORT);
     console.log("Mode: " + (process.env.NODE_ENV || "development"));
+
+    setInterval(sweepStaleSessions, 60 * 1000).unref();
 
     // Seed after server is up — runs in background, won't block requests
     runSeed().catch(function(err) {

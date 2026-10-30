@@ -9,7 +9,8 @@ import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
 import { PlayDesktop } from "./desktop/PlayDesktop";
 import { useRecorder, buildAudioSegments } from "../lib/useRecorder";
-import { uploadSessionAudio } from "../lib/audioUpload";
+import { uploadSessionAudio, savePendingAudio } from "../lib/audioUpload";
+import { useLiveBeat, onSignedOut } from "../lib/liveBeat";
 import { RecordingSetup, RecIndicator } from "./RecordingSetup";
 import { StudyPopout, intendedOutline } from "./StudyCard";
 import { ReferencePicker, ReferencePanel } from "./ReferenceSession";
@@ -118,7 +119,7 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
       var _cc = _inObj2 ? objMode.stack.cards : deck.cards;
       var _ci = _inObj2 ? objMode.history[objMode.history.length-1] : pitchHist[pitchHist.length-1];
       var _cur = _ci ? _cc[_ci] : null;
-      onNavigationChange({ depth: pitchHist.length, inObj: _inObj2, currentCard: _cur });
+      onNavigationChange({ depth: pitchHist.length, inObj: _inObj2, currentCard: _cur, stackLabel: _inObj2 ? objMode.stack.label : null });
     }
   }, [pitchHist.length, objMode]);
 
@@ -368,6 +369,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
   var [navDepth,  setNavDepth]        = useState(1);
   var [navInObj,  setNavInObj]        = useState(false);
   var [navCardId, setNavCardId]       = useState(null);   // card on screen — syncs the reference strip
+  var [navCard,   setNavCard]         = useState(null);   // the card object on screen (live monitor)
   var [study,     setStudy]           = useState(null);   // null | { kind:"path", index } | { kind:"stack", stackId }
   var [refSel,    setRefSel]          = useState(null);   // chosen reference-session option (live only)
   // Audio recording — shared recorder hook (device list, level meter, releases the mic on unmount)
@@ -468,6 +470,21 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
     });
   }
 
+  // Live: the server keeps a copy of the run so admins can watch it and nothing is lost
+  var liveRun = playView === "active" && activeSession && !saving ? activeSession : null;
+  useLiveBeat(liveRun, sessionEvents, navCard ? {
+    cardId: navCard.id, cardTitle: navCard.title, cardType: navCard.type, inObjection: navInObj, stackLabel: navCard._stackLabel || null,
+  } : null);
+  // Signed out mid-call: the server already saved the path; keep the recording on this
+  // device so it uploads after the next sign-in
+  var signedOutRef = useRef(null);
+  signedOutRef.current = function() {
+    if (!activeSession) return;
+    var id = activeSession.id;
+    rec.stop().then(function(audio) { if (audio) savePendingAudio(id, audio); });
+  };
+  useEffect(function() { return onSignedOut(function() { if (signedOutRef.current) signedOutRef.current(); }); }, []);
+
   if (playView === "active" && activeSession) {
     var st = STYPE[activeSession.sessionType] || STYPE.live;
     return (
@@ -502,7 +519,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
           <ReferencePanel refId={activeSession.referenceSessionId} currentCardId={navCardId} variant="strip"/>
         )}
         <Navigator deck={deck} sessionMode={true} onEvent={handleEvent}
-          onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); setNavCardId(info.currentCard ? info.currentCard.id : null); }}
+          onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); setNavCardId(info.currentCard ? info.currentCard.id : null); setNavCard(info.currentCard ? Object.assign({}, info.currentCard, { _stackLabel: info.stackLabel || null }) : null); }}
           getAudioOffset={rec.offsetMs} flushRef={flushVisitRef}/>
       </div>
     );

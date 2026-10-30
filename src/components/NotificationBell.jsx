@@ -56,7 +56,7 @@ export function NotificationBell({ onOpenSession, size }) {
           <div style={{overflowY:"auto"}}>
             {n.items.length === 0 && (
               <div style={{padding:"28px 16px",textAlign:"center",fontSize:lg?14:12,color:"rgba(255,255,255,.4)",lineHeight:1.6}}>
-                No notifications yet.<br/>You'll be told here when someone leaves feedback on your sessions.
+                No notifications yet.<br/>You'll be told here when someone leaves feedback on your sessions or shares one with you.
               </div>
             )}
             {n.items.map(function(item) {
@@ -68,7 +68,7 @@ export function NotificationBell({ onOpenSession, size }) {
                   <span style={{width:8,height:8,borderRadius:"50%",marginTop:6,flexShrink:0,background:isNew?"#00B4FF":"transparent"}}/>
                   <span style={{flex:1,minWidth:0}}>
                     <span style={{display:"block",fontSize:lg?14:12,color:"#fff",lineHeight:1.45}}>
-                      <strong>{item.actorName || "Someone"}</strong> left feedback on <strong>{item.sessionName || "your session"}</strong>
+                      <strong>{item.actorName || "Someone"}</strong>{item.type === "share" ? " shared " : " left feedback on "}<strong>{item.sessionName || (item.type === "share" ? "a session" : "your session")}</strong>{item.type === "share" ? " with you" : ""}
                     </span>
                     {item.text && <span style={{display:"block",fontSize:lg?13:11,color:"rgba(255,255,255,.55)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>“{item.text}”</span>}
                     <span style={{display:"block",fontSize:lg?12:10,color:"rgba(255,255,255,.35)",marginTop:3}}>{timeAgo(item.createdAt)}</span>

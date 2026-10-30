@@ -1,5 +1,6 @@
 const { Pool, types } = require("pg");
 const crypto = require("crypto");
+const { runMigrations } = require("./migrations");
 
 // Parse BIGINT (int8, oid 20) columns as JS numbers instead of strings
 types.setTypeParser(20, function(val) { return parseInt(val, 10); });
@@ -264,17 +265,12 @@ async function initSchema() {
 
     await client.query("COMMIT");
 
-    // ── One-time migrations (run outside transaction so they can operate freely) ──
+    // deck_dedup_v1 (a one-time cleanup that deleted every non-seed deck) is retired:
+    // record it as applied so it can never run against a database holding real decks
+    await pool.query("INSERT INTO migrations (name, applied_at) VALUES ('deck_dedup_v1', $1) ON CONFLICT DO NOTHING", [Date.now()]);
 
-    // deck_dedup_v1: remove legacy random-ID seed decks that were created before
-    // deterministic IDs were introduced. Only runs if both old AND new decks coexist.
-    var migCheck = await pool.query("SELECT 1 FROM migrations WHERE name='deck_dedup_v1' LIMIT 1");
-    if (migCheck.rows.length === 0) {
-      var SEED_DECK_IDS = ['d_apex_ent','d_apex_smb','d_apex_exec','d_merd_out','d_merd_partner'];
-      await pool.query("DELETE FROM decks WHERE id <> ALL($1::text[])", [SEED_DECK_IDS]);
-      await pool.query("INSERT INTO migrations (name, applied_at) VALUES ('deck_dedup_v1', $1)", [Date.now()]);
-      console.log("Migration deck_dedup_v1: removed legacy deck duplicates");
-    }
+    // Numbered, run-once migrations (server/migrations/) — every schema change from here on
+    await runMigrations(pool);
     return; // already committed above
   } catch (e) {
     await client.query("ROLLBACK");
@@ -356,12 +352,19 @@ async function getAdminTeamIds(userId) {
   return rows.map(function(r) { return r.teamId; });
 }
 
-async function setActiveToken(userId, token) {
-  await pool.query('UPDATE users SET "activeToken"=$1 WHERE id=$2', [token, userId]);
+// The active session id (JWT "sid") is stored only as a SHA-256 hash, so a database
+// read never yields a usable session identifier. null signs the user out everywhere.
+function hashSid(sid) {
+  return crypto.createHash("sha256").update(String(sid)).digest("hex");
+}
+
+async function setActiveToken(userId, sid) {
+  await pool.query('UPDATE users SET "activeToken"=$1 WHERE id=$2', [sid ? hashSid(sid) : null, userId]);
 }
 
 async function clearActiveTokenIfMatches(userId, sid) {
-  await pool.query('UPDATE users SET "activeToken"=NULL WHERE id=$1 AND "activeToken"=$2', [userId, sid]);
+  const r = await pool.query('UPDATE users SET "activeToken"=NULL WHERE id=$1 AND "activeToken"=$2', [userId, hashSid(sid)]);
+  return r.rowCount > 0;
 }
 
 async function setUserTeams(userId, teamIds) {
@@ -717,6 +720,22 @@ async function getOrgDecks(orgId, userId, userTeamIds) {
   });
 }
 
+// May this user run a session on this deck? Same rules as the deck list: same org,
+// admins any deck, users only active decks that are public or shared with them/their team.
+async function deckUsableBy(deckId, user, opts) {
+  if (typeof deckId !== "string" || !deckId) return null;
+  const deck = await getDeckById(deckId);
+  if (!deck || deck.orgId !== user.orgId) return null;
+  if (user.role === "admin" || user.role === "owner") return deck;
+  if (deck.archivedAt && !(opts && opts.allowArchived)) return null;
+  if (deck.visibility === "public") return deck;
+  const teamIds = await getUserTeams(user.id);
+  var ok = deck.accessList.some(function(a) {
+    return (a.entityType === "user" && a.entityId === user.id) || (a.entityType === "team" && teamIds.indexOf(a.entityId) !== -1);
+  });
+  return ok ? deck : null;
+}
+
 async function getDeckById(id) {
   const { rows } = await pool.query("SELECT * FROM decks WHERE id = $1", [id]);
   var deck = parseDeck(rows[0] || null);
@@ -785,6 +804,8 @@ function buildSessionWhere(scope, orgId, userId, filters) {
     conds.push('"userId" = ' + push(userId));
   }
 
+  // In-progress runs are only shown in the live monitor (GET /sessions/live)
+  conds.push("status <> 'active'");
   if (filters.deckId)  { conds.push('"deckId" = ' + push(filters.deckId)); }
   if (filters.mode)    { conds.push('mode = '      + push(filters.mode));   }
   if (filters.outcome) { conds.push('outcome = '   + push(filters.outcome)); }
@@ -852,7 +873,7 @@ async function getSessions(scope, orgId, userId, filters) {
 
 // Sessions other users shared with userId (same filters as the caller's own list)
 async function getSharedWithUser(userId, f, limitSql) {
-  const sharedConds = ['ss."toUserId" = $1'];
+  const sharedConds = ['ss."toUserId" = $1', "s.status <> 'active'"];
   const sharedVals  = [userId];
   var sp = 2;
   function spush(val) { sharedVals.push(val); return "$" + (sp++); }
@@ -911,6 +932,74 @@ async function upsertSession(session, userId, orgId) {
     typeof session.referenceSessionId === "string" && session.referenceSessionId ? session.referenceSessionId : null,
   ]);
   return rows[0] ? parseSession(rows[0]) : null;
+}
+
+// ─── LIVE SESSIONS ────────────────────────────────────────────────────────────
+// A run is stored when it starts (status 'active', outcome 'in_progress'), refreshed by
+// heartbeats, and completed by the normal upsert when the rep finishes. Runs whose
+// heartbeat stops are closed as 'abandoned' by closeActiveSessions (events kept).
+var LIVE_COLS = 's.id, s."orgId", s."userId", s."deckId", s."deckName", s."deckColor", s."deckIcon", s.name, s.account,' +
+  ' s.mode, s."startTs", s."lastBeatTs", s.live, s.events, s."referenceSessionId"';
+
+async function startLiveSession(session, userId, orgId) {
+  const now = Date.now();
+  const { rows } = await pool.query(`
+    INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
+      name,account,contact,mode,status,outcome,"startTs",sold,events,notes,"referenceSessionId","lastBeatTs",live)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active','in_progress',$12,false,$13,'[]',$14,$15,$16)
+    ON CONFLICT (id) DO UPDATE SET "lastBeatTs"=$15, live=$16
+    WHERE sessions."userId"=$3 AND sessions.status='active'
+    RETURNING id
+  `, [
+    session.id, orgId, userId,
+    session.deckId, session.deckName || null, session.deckColor || "#F5A623", session.deckIcon || "💼",
+    session.name || null, session.account || null, session.contact || null,
+    session.mode === "practice" ? "practice" : "live",
+    Number.isFinite(session.startTs) ? session.startTs : now,
+    JSON.stringify(Array.isArray(session.events) ? session.events : []),
+    typeof session.referenceSessionId === "string" && session.referenceSessionId ? session.referenceSessionId : null,
+    now, JSON.stringify(session.live || null),
+  ]);
+  return rows[0] ? getLiveSession(session.id, orgId) : null;
+}
+
+// Heartbeat: only the owner, only while the run is still active
+async function beatLiveSession(id, userId, events, live) {
+  const now = Date.now();
+  const { rows } = await pool.query(
+    'UPDATE sessions SET events=$1, live=$2, "lastBeatTs"=$3 WHERE id=$4 AND "userId"=$5 AND status=\'active\' RETURNING "orgId"',
+    [JSON.stringify(events), JSON.stringify(live || null), now, id, userId]
+  );
+  return rows[0] ? getLiveSession(id, rows[0].orgId) : null;
+}
+
+async function getLiveSession(id, orgId) {
+  const { rows } = await pool.query(
+    'SELECT ' + LIVE_COLS + ', u."displayName" AS "userName" FROM sessions s LEFT JOIN users u ON u.id = s."userId"' +
+    ' WHERE s.id = $1 AND s."orgId" = $2 AND s.status = \'active\'', [id, orgId]
+  );
+  return rows[0] ? parseSession(rows[0]) : null;
+}
+
+async function getLiveSessions(orgId) {
+  const { rows } = await pool.query(
+    'SELECT ' + LIVE_COLS + ', u."displayName" AS "userName" FROM sessions s LEFT JOIN users u ON u.id = s."userId"' +
+    ' WHERE s."orgId" = $1 AND s.status = \'active\' ORDER BY s."startTs" DESC', [orgId]
+  );
+  return rows.map(parseSession);
+}
+
+// Close active runs as abandoned (keeping their path): one user's (signed in elsewhere)
+// or every run whose heartbeat is older than staleBefore. Returns the closed rows.
+async function closeActiveSessions(opts) {
+  var where, vals;
+  if (opts.userId) { where = '"userId" = $1'; vals = [opts.userId]; }
+  else { where = 'COALESCE("lastBeatTs", "startTs") < $1'; vals = [opts.staleBefore]; }
+  const { rows } = await pool.query(
+    'UPDATE sessions SET status=\'completed\', outcome=\'abandoned\', "endTs"=COALESCE("lastBeatTs", "startTs"), live=NULL' +
+    ' WHERE status=\'active\' AND ' + where + ' RETURNING id, "orgId", "userId"', vals
+  );
+  return rows;
 }
 
 // ─── SESSION AUDIO ────────────────────────────────────────────────────────────
@@ -1067,11 +1156,13 @@ async function getFeedbackById(id) {
 async function createShare(data) {
   const id  = uid("sh");
   const now = Date.now();
-  await pool.query(
+  const ins = await pool.query(
     'INSERT INTO session_shares (id,"sessionId","fromUserId","toUserId",context,"createdAt") VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT ("sessionId","toUserId") DO NOTHING',
     [id, data.sessionId, data.fromUserId, data.toUserId, data.context || null, now]
   );
-  return getShareRecord(data.sessionId, data.toUserId);
+  const rec = await getShareRecord(data.sessionId, data.toUserId);
+  // created=false: already shared with this person (no second notification)
+  return rec ? Object.assign({}, rec, { created: ins.rowCount > 0 }) : rec;
 }
 
 async function getSharesForSession(sessionId) {
@@ -1088,6 +1179,11 @@ async function deleteShare(shareId, sessionId) {
     'DELETE FROM session_shares WHERE id = $1 AND "sessionId" = $2',
     [shareId, sessionId]
   );
+}
+
+async function getShareRecipientIds(sessionId) {
+  const { rows } = await pool.query('SELECT "toUserId" FROM session_shares WHERE "sessionId" = $1', [sessionId]);
+  return rows.map(function(r) { return r.toUserId; });
 }
 
 async function getShareRecord(sessionId, userId) {
@@ -1108,18 +1204,19 @@ module.exports = {
   createInvite, getOrgInvites, revokeInvite, findUsableInvite, signupWithInvite, createOrgWithOwner, normalizeInviteCode,
   // teams
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, setTeamAdmins, getTeamAdmins,
-  getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches,
+  getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,
   // decks
   getTeamNames,
-  getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived,
+  getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
   // sessions
-  getSessions, getSessionById, upsertSession, deleteSession, insertSession,
+  getSessions, getSessionById, upsertSession,
+  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, deleteSession, insertSession,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   // notifications
   createNotification, getNotifications, markNotificationsRead,
   // feedback
   getFeedback, createFeedback, updateFeedback, deleteFeedback, getFeedbackById,
   // shares
-  createShare, getSharesForSession, deleteShare, getShareRecord,
+  createShare, getSharesForSession, deleteShare, getShareRecord, getShareRecipientIds,
 };

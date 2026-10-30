@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { cachedGet } from "../lib/dataCache";
+import { cachedGet, useCacheVersion } from "../lib/dataCache";
 import { OrgMark } from "./OrgMark";
 import DesktopCtx from "../lib/DesktopCtx";
 import { inputSt } from "../lib/styles";
@@ -25,13 +25,14 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
-  // Load sessions on mount (for search)
+  // Load sessions on mount (for search), and again when sessions change live
+  var sv = useCacheVersion("/sessions");
   useEffect(function() {
     // Search only needs recent sessions; cached so reopening ⌘K is instant
     cachedGet("/sessions?limit=200").then(function(data){
       setSessions(Array.isArray(data) ? data : []);
     }).catch(function(){ setSessions([]); });
-  }, []);
+  }, [sv]);
 
   // Debounce query → debQ
   useEffect(function() {

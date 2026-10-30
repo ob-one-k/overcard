@@ -1,15 +1,18 @@
 import { useState, useEffect } from "react";
 import { apiGet, apiPost } from "./api";
+import { onLive } from "./live";
 
 // ─── IN-APP NOTIFICATIONS ─────────────────────────────────────────────────────
-// Module-level store polled every 30s (and when the tab regains focus) so the bell in the
-// header and the session review (which marks a session's notifications read) stay in sync.
+// Module-level store shared by the bell in the header and the session review (which marks
+// a session's notifications read). Updated live from the event stream; a slow poll and a
+// refresh when the tab regains focus are only a safety net.
 
-var POLL_MS = 30000;
+var POLL_MS = 5 * 60 * 1000;
 var state = { items: [], unreadCount: 0, loaded: false };
 var listeners = [];
 var timer = null;
 var subscribers = 0;
+var offLive = [];
 
 function emit() { listeners.slice().forEach(function(fn) { fn(); }); }
 function apply(data) {
@@ -43,13 +46,17 @@ export function useNotifications() {
     subscribers++;
     if (subscribers === 1) {
       refreshNotifications();
+      offLive = [onLive("notification.new", refreshNotifications), onLive("notification.read", refreshNotifications), onLive("live.resync", refreshNotifications)];
       timer = setInterval(refreshNotifications, POLL_MS);
       document.addEventListener("visibilitychange", onVisible);
     }
     return function() {
       listeners = listeners.filter(function(l) { return l !== fn; });
       subscribers--;
-      if (subscribers === 0) { clearInterval(timer); timer = null; document.removeEventListener("visibilitychange", onVisible); }
+      if (subscribers === 0) {
+        clearInterval(timer); timer = null; document.removeEventListener("visibilitychange", onVisible);
+        offLive.forEach(function(off) { off(); }); offLive = [];
+      }
     };
   }, []);
   return state;
