@@ -138,7 +138,7 @@ async function start() {
   await initSchemaWithRetry(5);
 
   // Start listening first so Render's health check passes immediately
-  app.listen(PORT, function(err) {
+  const server = app.listen(PORT, function(err) {
     // Express 5 passes bind errors (EADDRINUSE, EACCES) here instead of throwing
     if (err) {
       console.error("Failed to listen on port " + PORT + ":", err.message);
@@ -148,6 +148,10 @@ async function start() {
     console.log("Mode: " + (process.env.NODE_ENV || "development"));
 
     setInterval(sweepStaleSessions, 60 * 1000).unref();
+    // Render's proxy reuses connections for up to 60s: keep ours open longer than that so it
+    // never sends a request down a socket Node just closed (sporadic 502s under load)
+    server.keepAliveTimeout = 65 * 1000;
+    server.headersTimeout   = 66 * 1000;
 
     // Demo data is (re)seeded after the server is up — background, won't block requests.
     // DEMO_MODE=off skips it and leaves existing demo records untouched.

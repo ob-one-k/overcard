@@ -393,17 +393,15 @@ async function setUserTeams(userId, teamIds) {
   });
 }
 
+// One query: each user's team memberships come back as an array (was one query per user)
 async function getOrgUsers(orgId) {
   const { rows } = await pool.query(
-    'SELECT id,"orgId","teamId",email,"displayName","firstName","lastName",phone,role,"createdAt","lastLoginAt" FROM users WHERE "orgId" = $1 ORDER BY "displayName"',
+    'SELECT u.id,u."orgId",u."teamId",u.email,u."displayName",u."firstName",u."lastName",u.phone,u.role,u."createdAt",u."lastLoginAt",' +
+    ' COALESCE((SELECT array_agg(ut."teamId" ORDER BY ut."teamId") FROM user_teams ut WHERE ut."userId" = u.id), \'{}\') AS "teamIds"' +
+    ' FROM users u WHERE u."orgId" = $1 ORDER BY u."displayName"',
     [orgId]
   );
-  var result = [];
-  for (var i = 0; i < rows.length; i++) {
-    var teamIds = await getUserTeams(rows[i].id);
-    result.push(Object.assign({}, rows[i], { teamIds: teamIds }));
-  }
-  return result;
+  return rows;
 }
 
 // db is the pool or a transaction client, so signup can create the user atomically with the org/invite
@@ -792,18 +790,23 @@ async function getOrgDecks(orgId, userId, userTeamIds) {
 
 // May this user run a session on this deck? Same rules as the deck list: same org,
 // admins any deck, users only active decks that are public or shared with them/their team.
+// Reads only the deck's identity columns (not its cards) — this runs on every session start.
 async function deckUsableBy(deckId, user, opts) {
   if (typeof deckId !== "string" || !deckId) return null;
-  const deck = await getDeckById(deckId);
-  if (!deck || deck.orgId !== user.orgId) return null;
+  const { rows } = await pool.query(
+    'SELECT id,"orgId",name,color,icon,visibility,"archivedAt" FROM decks WHERE id = $1 AND "orgId" = $2', [deckId, user.orgId]
+  );
+  const deck = rows[0];
+  if (!deck) return null;
   if (user.role === "admin" || user.role === "owner") return deck;
   if (deck.archivedAt && !(opts && opts.allowArchived)) return null;
-  if (deck.visibility === "public") return deck;
-  const teamIds = await getUserTeams(user.id);
-  var ok = deck.accessList.some(function(a) {
-    return (a.entityType === "user" && a.entityId === user.id) || (a.entityType === "team" && teamIds.indexOf(a.entityId) !== -1);
-  });
-  return ok ? deck : null;
+  if (deck.visibility !== "private") return deck;
+  const access = await pool.query(
+    'SELECT 1 FROM deck_access WHERE "deckId" = $1 AND (("entityType" = \'user\' AND "entityId" = $2)' +
+    ' OR ("entityType" = \'team\' AND "entityId" IN (SELECT "teamId" FROM user_teams WHERE "userId" = $2))) LIMIT 1',
+    [deckId, user.id]
+  );
+  return access.rows.length ? deck : null;
 }
 
 async function getDeckById(id) {
@@ -1069,6 +1072,10 @@ async function upsertSession(session, userId, orgId) {
 // heartbeat stops are closed as 'abandoned' by closeActiveSessions (events kept).
 var LIVE_COLS = 's.id, s."orgId", s."userId", s."deckId", s."deckName", s."deckColor", s."deckIcon", s.name, s.account,' +
   ' s.mode, s."startTs", s."lastBeatTs", s.live, s.events, s."referenceSessionId"';
+// The same row shape straight from an INSERT/UPDATE … RETURNING (saves a re-read per heartbeat)
+var LIVE_RETURNING = 'RETURNING id, "orgId", "userId", "deckId", "deckName", "deckColor", "deckIcon", name, account,' +
+  ' mode, "startTs", "lastBeatTs", live, events, "referenceSessionId",' +
+  ' (SELECT "displayName" FROM users WHERE users.id = sessions."userId") AS "userName"';
 
 async function startLiveSession(session, userId, orgId) {
   const now = Date.now();
@@ -1078,8 +1085,7 @@ async function startLiveSession(session, userId, orgId) {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active','in_progress',$12,false,$13,'[]',$14,$15,$16)
     ON CONFLICT (id) DO UPDATE SET "lastBeatTs"=$15, live=$16
     WHERE sessions."userId"=$3 AND sessions.status='active'
-    RETURNING id
-  `, [
+    ` + LIVE_RETURNING, [
     session.id, orgId, userId,
     session.deckId, session.deckName || null, session.deckColor || "#F5A623", session.deckIcon || "💼",
     session.name || null, session.account || null, session.contact || null,
@@ -1089,17 +1095,17 @@ async function startLiveSession(session, userId, orgId) {
     typeof session.referenceSessionId === "string" && session.referenceSessionId ? session.referenceSessionId : null,
     now, JSON.stringify(session.live || null),
   ]);
-  return rows[0] ? getLiveSession(session.id, orgId) : null;
+  return rows[0] ? parseSession(rows[0]) : null;
 }
 
 // Heartbeat: only the owner, only while the run is still active
 async function beatLiveSession(id, userId, events, live) {
   const now = Date.now();
   const { rows } = await pool.query(
-    'UPDATE sessions SET events=$1, live=$2, "lastBeatTs"=$3 WHERE id=$4 AND "userId"=$5 AND status=\'active\' RETURNING "orgId"',
+    'UPDATE sessions SET events=$1, live=$2, "lastBeatTs"=$3 WHERE id=$4 AND "userId"=$5 AND status=\'active\' ' + LIVE_RETURNING,
     [JSON.stringify(events), JSON.stringify(live || null), now, id, userId]
   );
-  return rows[0] ? getLiveSession(id, rows[0].orgId) : null;
+  return rows[0] ? parseSession(rows[0]) : null;
 }
 
 async function getLiveSession(id, orgId) {
