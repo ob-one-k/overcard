@@ -38,6 +38,19 @@ test("team-assigned decks: creator manages, editors edit, others don't see", asy
     assert.equal(after.visibility, "private", "editor can't change who sees it");
     assert.equal((await other.put("/decks/" + deckId + "/access", { accessList: [] })).status, 403, "editor can't change teams");
     assert.equal((await other.put("/decks/" + deckId + "/editors", { userIds: [] })).status, 403, "editor can't change editors");
+    assert.equal(asEditor.accessList, undefined, "non-managers don't receive who the deck is assigned to");
+    assert.equal(asEditor.editorIds, undefined, "…or who may edit it");
+    var memberView = find(await member.get("/decks"), deckId);
+    assert.ok(memberView && memberView.accessList === undefined && memberView.editorIds === undefined, "users don't either");
+    assert.ok(Array.isArray(find(await creator.get("/decks"), deckId).editorIds), "the creator does");
+
+    // Demoting an editor to user revokes their grants (they don't come back on re-promotion)
+    assert.equal((await owner.put("/admin/users/" + other.user.id, { role: "user" })).status, 200);
+    assert.equal((await owner.put("/admin/users/" + other.user.id, { role: "admin" })).status, 200);
+    other = await login("apexAdmin2");
+    var regranted = find(await other.get("/decks"), deckId);
+    assert.ok(!regranted || !regranted.canEdit, "grant removed by the demotion");
+    await creator.put("/decks/" + deckId + "/editors", { userIds: [other.user.id] });
 
     // Archived: only those who may edit still see it
     assert.equal((await other.post("/decks/" + deckId + "/archive")).status, 200, "editors may archive");

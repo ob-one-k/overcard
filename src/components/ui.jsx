@@ -23,9 +23,17 @@ export function IncrementalList({ items, render, step }) {
       if (more && typeof IntersectionObserver === "undefined") setCount(items.length);
       return;
     }
+    // Observe from the nearest scrolling ancestor: rootMargin only widens the root, and a
+    // nested scroller's clip would otherwise hide the sentinel until it's actually on screen
+    var root = sentinel.current.parentElement;
+    while (root && root !== document.body) {
+      var oy = getComputedStyle(root).overflowY;
+      if (oy === "auto" || oy === "scroll") break;
+      root = root.parentElement;
+    }
     var io = new IntersectionObserver(function(entries) {
       if (entries[0].isIntersecting) setCount(function(c) { return c + n; });
-    }, { rootMargin: "600px 0px" });
+    }, { root: root && root !== document.body ? root : null, rootMargin: "600px 0px" });
     io.observe(sentinel.current);
     return function() { io.disconnect(); };
   }, [more, count, items.length, n]);

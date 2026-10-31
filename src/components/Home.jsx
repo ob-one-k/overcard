@@ -355,7 +355,7 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
                               {deckStat.practice > 0 && <span style={{fontSize:10,color:"rgba(0,180,255,.55)"}}>{deckStat.practice} practice</span>}
                             </>
                           ) : (
-                            <span style={{fontSize:10,color:"rgba(255,255,255,.25)"}}>No sessions yet</span>
+                            <span style={{fontSize:10,color:"rgba(255,255,255,.25)"}}>{isLoading ? "Loading stats…" : "No sessions yet"}</span>
                           )}
                         </div>
                       </div>

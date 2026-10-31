@@ -250,6 +250,8 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     </div>
                   </button>
                   {isAdmin && d.canEdit && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[],editorIds:d.editorIds||[]}); setEditingDeck(d); }} style={{width:44,flexShrink:0,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,cursor:"pointer",fontSize:14,color:"rgba(255,255,255,.5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>✏</button>}
+                  {/* Seeing a deck is enough to copy it: admins who can't edit it make their own editable copy */}
+                  {isAdmin && !d.canEdit && <button title="Duplicate — make your own editable copy" aria-label={"Duplicate " + d.name} onClick={function(e){ e.stopPropagation(); onClose(); onDuplicateDeck(d.id); }} style={{width:44,flexShrink:0,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,cursor:"pointer",color:"rgba(255,255,255,.5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}><CopyIcon size={15}/></button>}
                 </div>
               );
             }}/>

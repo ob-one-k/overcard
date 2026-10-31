@@ -4,7 +4,7 @@ const {
   getOrgUsers, createUser, updateUser, deleteUser, findUserById,
   getOrgTeams, getTeamById, createTeam, updateTeam, deleteTeam, uid,
   setUserTeams, getUserTeams, setActiveToken,
-  transferOwnership, removeTeamAdminEverywhere, allInOrg,
+  transferOwnership, removeTeamAdminEverywhere, removeDeckEditorEverywhere, allInOrg,
   createInvite, getOrgInvites, getInvite, updateInvite, getInviteMembers, revokeInvite, createPasswordReset, expirePasswordResets,
 } = require("../db");
 const { requireAdmin, hashPassword } = require("../auth");
@@ -129,8 +129,9 @@ router.put("/users/:id", async function(req, res, next) {
     if (teamId !== undefined) fields.teamId = teamId || null;
     const updated = await updateUser(req.params.id, req.user.orgId, fields);
     if (fields.role === "user") {
-      // A demoted admin no longer administers any team
+      // A demoted admin no longer administers any team or edits decks by grant
       await removeTeamAdminEverywhere(req.params.id);
+      await removeDeckEditorEverywhere(req.params.id);
     }
     if (teamIds !== undefined) {
       await setUserTeams(req.params.id, teamIds);

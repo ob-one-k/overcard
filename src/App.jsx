@@ -35,10 +35,10 @@ var loaders = {
 var chunkMods = {}, chunkLoads = {};
 function loadChunk(key) {
   if (!chunkLoads[key]) {
-    chunkLoads[key] = loaders[key]().then(
-      function(m) { chunkMods[key] = m; return m; },
-      function(err) { delete chunkLoads[key]; throw err; }   // a failed download can be retried
-    );
+    // A failed download stays failed for this page load: React re-rendering a suspended
+    // tab must get the same rejected promise and throw to the ErrorBoundary ("Reload"),
+    // not start a fresh import — that looped forever (a 404 storm after a redeploy)
+    chunkLoads[key] = loaders[key]().then(function(m) { chunkMods[key] = m; return m; });
   }
   return chunkLoads[key];
 }
@@ -63,7 +63,12 @@ var SessionReview  = lazyNamed("sessions", "SessionReview");
 function prefetchChunks(isAdmin, isDesktop) {
   var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home"].concat(isAdmin ? ["admin"] : []).concat(isDesktop ? ["palette"] : []);
   var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 1200); };
-  keys.forEach(function(k, i) { idle(function() { loadChunk(k).catch(function() {}); }, { timeout: 1500 + i * 300 }); });
+  // Prefetch fills the module cache on success only — a failed prefetch (flaky network)
+  // must not count as the tab's failure; opening the tab tries again on its own
+  keys.forEach(function(k, i) { idle(function() {
+    if (chunkMods[k]) return;
+    loaders[k]().then(function(m) { chunkMods[k] = m; }, function() {});
+  }, { timeout: 1500 + i * 300 }); });
 }
 // One tab's container. Its entrance uses the `translate` property with fill-mode
 // "backwards" so nothing is left applied afterwards — a lingering transform would
@@ -470,7 +475,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     var cancelId = idle(function() {
       var d = encodeURIComponent(activeId);
       var urls = ["/sessions?deckId=" + d, "/sessions/highlights?deckId=" + d];
-      if (isAdminRole(authUser.role)) urls.push("/sessions?deckId=" + d + "&scope=org");
+      var cur = decks.find(function(x) { return x.id === activeId; });
+      if (isAdminRole(authUser.role) && desktop.isDesktop && cur && cur.canEdit) urls.push("/sessions?deckId=" + d + "&scope=org");
       urls.forEach(function(u) { cachedGet(u).catch(function() {}); });
     }, { timeout: 2500 });
     return function() { if (window.cancelIdleCallback) window.cancelIdleCallback(cancelId); else clearTimeout(cancelId); };
@@ -508,11 +514,24 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
       dirtyIds.current.clear();
       setSaveStatus("saving");
       var toSave = decks.filter(function(d){ return dirty.indexOf(d.id) !== -1; });
-      Promise.all(toSave.map(function(d){ return apiPut("/decks/" + d.id, d); }))
-        .then(function() { setSaveStatus("saved"); setServerOk(true); lsSet("overcard_activeId", activeId); })
+      var denied = [];
+      Promise.all(toSave.map(function(d){
+        return apiPut("/decks/" + d.id, d).catch(function(err) {
+          // 403/404: this person may no longer edit (or see) the deck — retrying can't succeed
+          if (err && (err.status === 403 || err.status === 404)) { denied.push(d); return null; }
+          throw err;
+        });
+      }))
+        .then(function() {
+          setSaveStatus("saved"); setServerOk(true); lsSet("overcard_activeId", activeId);
+          if (denied.length) {
+            window.alert("Your changes to \"" + denied.map(function(d){ return d.name; }).join("\", \"") + "\" weren't saved — you no longer have permission to edit " + (denied.length > 1 ? "those decks" : "that deck") + ".");
+            if (!dirtyIds.current.size) loadDecks();
+          }
+        })
         .catch(function() {
           // Re-mark as dirty so the failed edits are retried on the next change instead of lost
-          dirty.forEach(function(id) { dirtyIds.current.add(id); });
+          dirty.forEach(function(id) { if (!denied.some(function(d){ return d.id === id; })) dirtyIds.current.add(id); });
           setSaveStatus("error"); setServerOk(false);
         });
     }, SAVE_DELAY);
@@ -578,6 +597,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   function reorderDecks(ids) {
     var pos = {};
     ids.forEach(function(id, i) { pos[id] = i; });
+    var before = decks.map(function(d) { return d.id; });
     setDecks(function(ds) {
       var listed = ds.filter(function(d) { return pos[d.id] !== undefined; }).sort(function(a, b) { return pos[a.id] - pos[b.id]; });
       return listed.concat(ds.filter(function(d) { return pos[d.id] === undefined; }));
@@ -585,7 +605,11 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     apiPut("/decks/order", { ids: ids }).catch(function(err) {
       console.error("overcard:", err);
       window.alert("Couldn't save the deck order: " + err.message);
-      loadDecks();
+      // Put the previous order back without refetching — a reload would replace decks that
+      // still have unsaved edits waiting for autosave
+      var was = {};
+      before.forEach(function(id, i) { was[id] = i; });
+      setDecks(function(ds) { return ds.slice().sort(function(a, b) { return (was[a.id] == null ? 1e9 : was[a.id]) - (was[b.id] == null ? 1e9 : was[b.id]); }); });
     });
   }
   function duplicateDeck(deckId) {

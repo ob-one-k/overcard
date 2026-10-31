@@ -800,9 +800,11 @@ async function getOrgDecks(orgId, user) {
   // The owner's order (Deck switcher / Home drag-to-reorder); name breaks ties
   const { rows } = await pool.query('SELECT * FROM decks WHERE "orgId" = $1 ORDER BY "sortIndex" NULLS LAST, name, id', [orgId]);
   var ids = rows.map(function(r) { return r.id; });
-  var access = await getDeckAccessMap(ids);
-  var editors = await getDeckEditorsMap(ids);
-  var teamIds = user && user.role !== "owner" ? await viewerTeamIds(user) : [];
+  var loaded = await Promise.all([
+    getDeckAccessMap(ids), getDeckEditorsMap(ids),
+    user && user.role !== "owner" ? viewerTeamIds(user) : Promise.resolve([]),
+  ]);
+  var access = loaded[0], editors = loaded[1], teamIds = loaded[2];
   var out = [];
   rows.forEach(function(r) {
     var deck = parseDeck(r);
@@ -813,6 +815,9 @@ async function getOrgDecks(orgId, user) {
     if (!p.see) return;
     deck.canEdit = p.edit;
     deck.canManage = p.manage;
+    // Who a deck is assigned to and who may edit it is for its managers (same rule as
+    // GET /decks/:id/access)
+    if (!p.manage) { delete deck.accessList; delete deck.editorIds; }
     out.push(deck);
   });
   return out;
@@ -822,8 +827,9 @@ async function getOrgDecks(orgId, user) {
 async function deckPermissions(deckId, user) {
   const deck = await getDeckById(deckId);
   if (!deck || deck.orgId !== user.orgId) return null;
-  deck.editorIds = (await getDeckEditorsMap([deck.id]))[deck.id];
-  var teamIds = user.role === "owner" ? [] : await viewerTeamIds(user);
+  var loaded = await Promise.all([getDeckEditorsMap([deck.id]), user.role === "owner" ? Promise.resolve([]) : viewerTeamIds(user)]);
+  deck.editorIds = loaded[0][deck.id];
+  var teamIds = loaded[1];
   return Object.assign({ deck: deck }, deckPermsFor(deck, user, teamIds));
 }
 
@@ -837,15 +843,23 @@ async function deckUsableBy(deckId, user, opts) {
   const deck = rows[0];
   if (!deck) return null;
   if (user.role === "owner") return deck;
-  deck.accessList = await getDeckAccess(deck.id);
-  deck.editorIds = (await getDeckEditorsMap([deck.id]))[deck.id];
-  var teamIds = await viewerTeamIds(user);
+  // Hot path (every session start/save): an active org-wide deck needs no more lookups
+  if (deck.visibility !== "private" && (!deck.archivedAt || (opts && opts.allowArchived))) return deck;
+  var loaded = await Promise.all([getDeckAccess(deck.id), getDeckEditorsMap([deck.id]), viewerTeamIds(user)]);
+  deck.accessList = loaded[0];
+  deck.editorIds = loaded[1][deck.id];
+  var teamIds = loaded[2];
   var p = deckPermsFor(Object.assign({}, deck, { archivedAt: opts && opts.allowArchived ? null : deck.archivedAt }), user, teamIds);
   return p.see ? deck : null;
 }
 
 // Replace a deck's editor list (admins of the deck's org only; the creator and the owner
 // need no entry)
+// An admin demoted to user loses every edit grant (they'd come back on re-promotion otherwise)
+async function removeDeckEditorEverywhere(userId) {
+  await pool.query('DELETE FROM deck_editors WHERE "userId" = $1', [userId]);
+}
+
 async function setDeckEditors(deckId, userIds) {
   await withTransaction(async function(client) {
     await client.query('DELETE FROM deck_editors WHERE "deckId" = $1', [deckId]);
@@ -1511,7 +1525,7 @@ module.exports = {
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,
   // decks
   getTeamNames,
-  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, setDeckEditors, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
+  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
   getDeckAccess, setDeckAccess,
   // passwords
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,
