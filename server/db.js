@@ -949,24 +949,29 @@ function sessionCountsSql(tbl) {
     ' FROM session_feedback f WHERE f."sessionId" = ' + tbl + '.id) fb ON true';
 }
 
-async function getSessions(scope, orgId, userId, filters) {
+// viewer = { id, role } of the caller — decides which highlights are attached
+async function getSessions(scope, orgId, userId, filters, viewer) {
   const f = filters || {};
+  var isOwner = !!(viewer && viewer.role === "owner");
   // sessions stays unaliased: buildSessionWhere's bare column names resolve to it
-  // (the lateral joins only expose their count columns)
+  // (the lateral joins only expose their own columns)
   const { where, vals } = buildSessionWhere(scope, orgId, userId, f);
+  vals.push(userId);
+  var viewerRef = "$" + vals.length;
   var limit = parseInt(f.limit, 10);
   var limitSql = limit > 0 ? " LIMIT " + Math.min(limit, 1000) : "";
   const ownQuery = pool.query(
     'SELECT sessions.*, COALESCE((SELECT "displayName" FROM users WHERE users.id = sessions."userId"), \'Former member\') AS "userName",' +
-    ' fb."feedbackCount", fb."latestFeedbackAt", sh."shareCount"' +
+    ' fb."feedbackCount", fb."latestFeedbackAt", sh."shareCount", hl.*' +
     ' FROM sessions' + sessionCountsSql("sessions") +
     ' LEFT JOIN LATERAL (SELECT COUNT(*) AS "shareCount" FROM session_shares x WHERE x."sessionId" = sessions.id) sh ON true' +
+    highlightJoinSql("sessions", viewerRef, isOwner) +
     where + ' ORDER BY sessions."startTs" DESC' + limitSql, vals
   );
-  const sharedQuery = (!scope || scope === "self") ? getSharedWithUser(userId, orgId, f, limitSql) : Promise.resolve([]);
+  const sharedQuery = (!scope || scope === "self") ? getSharedWithUser(userId, orgId, f, limitSql, isOwner) : Promise.resolve([]);
   const [ownRes, sharedRows] = await Promise.all([ownQuery, sharedQuery]);
   const result = ownRes.rows.map(function(row) {
-    var sess = parseSession(row);
+    var sess = withHighlight(parseSession(row), row);
     sess.feedbackCount = row.feedbackCount || 0;
     sess.shareCount    = row.shareCount || 0;
     return sess;
@@ -977,7 +982,7 @@ async function getSessions(scope, orgId, userId, filters) {
     const ownIds = new Set(result.map(function(s) { return s.id; }));
     sharedRows.forEach(function(row) {
       if (ownIds.has(row.id)) return;
-      const parsed = parseSession(row);
+      const parsed = withHighlight(parseSession(row), row);
       parsed.feedbackCount     = row.feedbackCount || 0;
       delete parsed.shareCount;
       parsed._shared           = true;
@@ -994,7 +999,7 @@ async function getSessions(scope, orgId, userId, filters) {
 
 // Sessions other users shared with userId (same filters as the caller's own list)
 // Shares are only ever created inside one org; the orgId filter makes that a guarantee
-async function getSharedWithUser(userId, orgId, f, limitSql) {
+async function getSharedWithUser(userId, orgId, f, limitSql, isOwner) {
   const sharedConds = ['ss."toUserId" = $1', 's."orgId" = $2', "s.status <> 'active'"];
   const sharedVals  = [userId, orgId];
   var sp = 3;
@@ -1014,11 +1019,101 @@ async function getSharedWithUser(userId, orgId, f, limitSql) {
     'SELECT s.*, ss.context AS "_shareContext", ss."fromUserId" AS "_shareFromUserId",' +
     ' (SELECT "displayName" FROM users WHERE id = ss."fromUserId") AS "_shareFromName",' +
     ' COALESCE((SELECT "displayName" FROM users WHERE id = s."userId"), \'Former member\') AS "userName",' +
-    ' fb."feedbackCount", fb."latestFeedbackAt"' +
+    ' fb."feedbackCount", fb."latestFeedbackAt", hl.*' +
     ' FROM sessions s JOIN session_shares ss ON ss."sessionId" = s.id' + sessionCountsSql("s") +
+    highlightJoinSql("s", "$1", isOwner) +
     ' WHERE ' + sharedConds.join(" AND ");
   const { rows } = await pool.query(sharedSql + ' ORDER BY s."startTs" DESC' + limitSql, sharedVals);
   return rows;
+}
+
+// ─── SESSION HIGHLIGHTS ───────────────────────────────────────────────────────
+// Who sees a highlight: the org's owner sees every one; everyone else (admins too)
+// sees org-wide highlights plus those of teams they belong to or administer.
+// `h` is the session_highlights alias, `userRef` the SQL parameter holding the user id.
+function highlightVisibleSql(h, userRef, isOwner) {
+  // Always true, but still references the parameter — Postgres rejects unused bind values
+  if (isOwner) return "(" + userRef + "::text IS NOT NULL)";
+  return "(" + h + ".scope = 'org' OR " + h + '."teamId" IN (SELECT "teamId" FROM user_teams WHERE "userId" = ' + userRef +
+    ' UNION SELECT "teamId" FROM team_admins WHERE "userId" = ' + userRef + "))";
+}
+
+// LEFT JOIN that adds hl* columns for the session's highlight — only when the caller can see it
+function highlightJoinSql(tbl, userRef, isOwner) {
+  return ' LEFT JOIN LATERAL (SELECT h.scope AS "hlScope", h."teamId" AS "hlTeamId", h.note AS "hlNote", h."createdAt" AS "hlAt",' +
+    ' (SELECT name FROM teams t WHERE t.id = h."teamId") AS "hlTeamName",' +
+    ' (SELECT "displayName" FROM users u WHERE u.id = h."createdBy") AS "hlByName"' +
+    ' FROM session_highlights h WHERE h."sessionId" = ' + tbl + '.id AND h."orgId" = ' + tbl + '."orgId"' +
+    ' AND ' + highlightVisibleSql("h", userRef, isOwner) + ') hl ON true';
+}
+
+// Moves the hl* columns into session.highlight ({ scope, teamId, teamName, note, createdAt, createdByName } | null)
+function withHighlight(sess, row) {
+  if (!sess) return sess;
+  sess.highlight = row.hlScope ? {
+    scope: row.hlScope, teamId: row.hlTeamId || null, teamName: row.hlTeamName || null,
+    note: row.hlNote || null, createdAt: row.hlAt, createdByName: row.hlByName || null,
+  } : null;
+  ["hlScope", "hlTeamId", "hlNote", "hlAt", "hlTeamName", "hlByName"].forEach(function(k) { delete sess[k]; });
+  return sess;
+}
+
+// Highlighted sessions the viewer may see, newest highlight first
+async function getHighlights(viewer, opts) {
+  var o = opts || {};
+  var isOwner = viewer.role === "owner";
+  var vals = [viewer.orgId, viewer.id];
+  var conds = ['s."orgId" = $1', "s.status <> 'active'"];
+  if (o.deckId) { vals.push(o.deckId); conds.push('s."deckId" = $' + vals.length); }
+  var limit = parseInt(o.limit, 10);
+  var limitSql = " LIMIT " + (limit > 0 ? Math.min(limit, 200) : 200);
+  const { rows } = await pool.query(
+    'SELECT s.*, COALESCE((SELECT "displayName" FROM users WHERE users.id = s."userId"), \'Former member\') AS "userName",' +
+    ' fb."feedbackCount", fb."latestFeedbackAt", hl.*' +
+    ' FROM sessions s' + sessionCountsSql("s") + highlightJoinSql("s", "$2", isOwner) +
+    ' WHERE hl."hlScope" IS NOT NULL AND ' + conds.join(" AND ") +
+    ' ORDER BY hl."hlAt" DESC' + limitSql, vals
+  );
+  return rows.map(function(row) {
+    var sess = withHighlight(parseSession(row), row);
+    sess.feedbackCount = row.feedbackCount || 0;
+    sess._highlight = true;
+    return sess;
+  });
+}
+
+async function getHighlight(sessionId) {
+  const { rows } = await pool.query('SELECT * FROM session_highlights WHERE "sessionId" = $1', [sessionId]);
+  return rows[0] || null;
+}
+
+async function isHighlightVisibleTo(sessionId, user) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM session_highlights h WHERE h."sessionId" = $1 AND h."orgId" = $2 AND ' +
+    highlightVisibleSql("h", "$3", user.role === "owner") + " LIMIT 1",
+    [sessionId, user.orgId, user.id]
+  );
+  return rows.length > 0;
+}
+
+// Teams a user belongs to or administers (the teams an admin may highlight for)
+async function getMemberOrAdminTeamIds(userId) {
+  const { rows } = await pool.query(
+    'SELECT "teamId" FROM user_teams WHERE "userId" = $1 UNION SELECT "teamId" FROM team_admins WHERE "userId" = $1', [userId]);
+  return rows.map(function(r) { return r.teamId; });
+}
+
+// Create or change a session's highlight (keeps the original highlight time on edits)
+async function setHighlight(h) {
+  await pool.query(
+    'INSERT INTO session_highlights ("sessionId","orgId",scope,"teamId",note,"createdBy","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7)' +
+    ' ON CONFLICT ("sessionId") DO UPDATE SET scope = $3, "teamId" = $4, note = $5, "createdBy" = $6',
+    [h.sessionId, h.orgId, h.scope, h.teamId || null, h.note || null, h.createdBy, Date.now()]
+  );
+}
+
+async function clearHighlight(sessionId, orgId) {
+  await pool.query('DELETE FROM session_highlights WHERE "sessionId" = $1 AND "orgId" = $2', [sessionId, orgId]);
 }
 
 async function getSessionById(id) {
@@ -1323,6 +1418,7 @@ module.exports = {
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,
   // sessions
   getSessions, getSessionById, upsertSession,
+  getHighlights, getHighlight, isHighlightVisibleTo, getMemberOrAdminTeamIds, setHighlight, clearHighlight,
   startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, countActiveRuns, deleteSession,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   // notifications

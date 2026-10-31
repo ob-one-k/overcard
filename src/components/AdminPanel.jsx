@@ -4,7 +4,7 @@ import { LiveNow } from "./LiveMonitor";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT, themed } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
-import { TypeBadge, Handle, SectionHdr } from "./ui";
+import { TypeBadge, Handle, SectionHdr, CopyIcon } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
 import { BrandingFields } from "./BrandingFields";
@@ -136,8 +136,8 @@ function InviteCard({ inv, isDesktop, fs, fresh, orgTeams, onCopy, onRevoke, onS
         </div>
       ) : (
         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          {st.active && <button onClick={function(){ onCopy(prettyCode(inv.code), "Code"); }} style={ghostSm({fontSize:fs.small,color:"#fff"})}>Copy code</button>}
-          {st.active && <button onClick={function(){ onCopy(link, "Invite link"); }} style={ghostSm({fontSize:fs.small,color:"#00B4FF",borderColor:"rgba(0,180,255,.3)"})}>Copy invite link</button>}
+          {st.active && <button onClick={function(){ onCopy(prettyCode(inv.code), "Code"); }} style={ghostSm({fontSize:fs.small,color:"#fff",display:"inline-flex",alignItems:"center",gap:6})}><CopyIcon size={13}/>Copy code</button>}
+          {st.active && <button onClick={function(){ onCopy(link, "Invite link"); }} style={ghostSm({fontSize:fs.small,color:"#00B4FF",borderColor:"rgba(0,180,255,.3)",display:"inline-flex",alignItems:"center",gap:6})}><CopyIcon size={13}/>Copy invite link</button>}
           <button onClick={startEdit} style={ghostSm({fontSize:fs.small})}>{st.active ? "Edit" : "Edit / reactivate"}</button>
           {st.active && <button onClick={function(){ onRevoke(inv); }} style={ghostSm({fontSize:fs.small,color:"#EF5350",borderColor:"rgba(239,83,80,.3)",marginLeft:"auto"})}>Revoke</button>}
         </div>
@@ -853,7 +853,7 @@ function ResetPasswordDialog({ user, onClose, onDone }) {
           <div style={{display:"flex",gap:8,alignItems:"stretch"}}>
             <input readOnly value={link.url} onFocus={function(e){ e.target.select(); }} aria-label="Reset link"
               style={inputSt({marginBottom:0,flex:1,fontSize:12,fontFamily:"monospace"})}/>
-            <button onClick={copy} style={Object.assign({}, solidBtn("#1565C0"), {flexShrink:0,padding:"0 16px"})}>{copied ? "✓ Copied" : "Copy"}</button>
+            <button onClick={copy} style={Object.assign({}, solidBtn("#1565C0"), {flexShrink:0,padding:"0 16px"})}>{copied ? "✓ Copied" : <><CopyIcon size={14}/>Copy</>}</button>
           </div>
           <div style={{fontSize:12,color:"rgba(255,255,255,.45)",lineHeight:1.5}}>Only share it with {user.displayName} — anyone with the link can set the password.</div>
           <button onClick={onClose} style={ghostBtn()}>Done</button>

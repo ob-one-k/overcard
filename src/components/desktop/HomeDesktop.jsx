@@ -6,6 +6,7 @@ import { cachedGet, useCacheVersion } from "../../lib/dataCache";
 import { solidBtn } from "../../lib/styles";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "../Sessions";
 import { LiveNow } from "../LiveMonitor";
+import { HomeHighlights } from "../Highlights";
 
 // ─── HELPERS (mirrors Home.jsx) ───────────────────────────────────────────────
 // Stats are derived from session arrays that only change when data reloads, so cache
@@ -186,7 +187,7 @@ function EmptyNote({ icon, title, body, action }) {
 //     Me tab:   Recent sessions | Decks (quick launch) | Insights (funnel, objections, ranking, top close)
 //     Team tab: Leaderboard     | Recent team sessions | Insights
 // Mirrors HomeTab data/state — no hooks extracted to avoid conditional-hooks issues
-export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession }) {
+export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession, onOpenHighlight }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");   // "me" | "all" | teamId
@@ -667,6 +668,9 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
           <LiveNow variant="strip" onOpenSession={onOpenSession}/>
         </div>
       )}
+
+      {/* ── Highlighted sessions: the latest 3 this person may see (any deck) ── */}
+      {onOpenHighlight && <HomeHighlights onOpen={onOpenHighlight} style={{flexShrink:0,padding:compact?"0 "+padX+"px 12px":"0 24px 16px"}}/>}
 
       {/* ── Panels ── */}
       <div style={{flex:1,minHeight:0,overflowY:wide?"hidden":"auto",padding:compact?"0 "+padX+"px "+padX+"px":"0 24px 24px",display:"grid",gridTemplateColumns:cols,gridAutoRows:wide?"minmax(0,1fr)":"auto",gap:compact?12:16}}>

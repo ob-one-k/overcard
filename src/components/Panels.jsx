@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT, themed } from "../lib/constants";
 import { apiPost, apiPut, apiDel, setStoredToken, getStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
-import { TypeBadge, Handle, SectionHdr } from "./ui";
+import { TypeBadge, Handle, SectionHdr, CopyIcon } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
 import { useDesktop } from "../lib/useDesktop";
+import { PRESS_CSS } from "../lib/pressFeedback";
 import { OrgMark } from "./OrgMark";
 
 // ─── DECK SWITCHER SHEET ──────────────────────────────────────────────────────
@@ -44,14 +45,12 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
     setShowNew(false); setNf({name:"",icon:"💼",color:"#F5A623",visibility:"public",accessList:[]}); onClose();
   }
 
+  // The single "+ New Deck" button sits in the top bar (sheet header / modal title bar)
+  var newDeckBtn = isAdmin ? <button onClick={function(){setShowNew(function(p){return !p;});}} aria-expanded={showNew} style={ghostSm()}>{showNew ? "Cancel" : "+ New Deck"}</button> : null;
+
   // ── Inner content (shared between mobile sheet and desktop modal) ──
   var innerContent = (
     <div style={{overflowY:"auto",flex:1,padding:"14px 20px"}}>
-      {isAdmin && (
-        <div style={{marginBottom:12}}>
-          <button onClick={function(){setShowNew(function(p){return !p;});}} style={ghostSm({width:"100%",textAlign:"center",padding:"9px"})}>+ New Deck</button>
-        </div>
-      )}
       {showNew && (
             <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"16px",marginBottom:14}}>
               <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:4,fontFamily:"'Lora',serif"}}>New Pitch Deck</div>
@@ -184,7 +183,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     </div>
                     {/* Deck management — duplicate/archive for admins, delete for the owner */}
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid rgba(255,255,255,.08)"}}>
-                      <button disabled={busyId===d.id} onClick={function(){ setEditingDeck(null); onClose(); onDuplicateDeck(d.id); }} style={ghostSm({flex:1,minWidth:90})}>⧉ Duplicate</button>
+                      <button disabled={busyId===d.id} onClick={function(){ setEditingDeck(null); onClose(); onDuplicateDeck(d.id); }} style={ghostSm({flex:1,minWidth:90,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6})}><CopyIcon size={13}/>Duplicate</button>
                       <button disabled={busyId===d.id} onClick={function(){ setEditingDeck(null); run(d.id, onArchiveDeck(d.id)); }} style={ghostSm({flex:1,minWidth:90,color:"#FFB74D",borderColor:"rgba(255,183,77,.3)"})}>🗄 Archive</button>
                       {isOwner && <button disabled={busyId===d.id} onClick={function(){ confirmDelete(d); }} style={ghostSm({flex:1,minWidth:90,color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>🗑 Delete</button>}
                     </div>
@@ -192,7 +191,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                 );
               }
               return (
-                <div key={d.id} style={{position:"relative",display:"flex",alignItems:"center",gap:0}}>
+                <div key={d.id} style={{display:"flex",alignItems:"stretch",gap:6}}>
                   <button onClick={function(){onSelect(d.id);onClose();}}
                     style={{flex:1,background:active?d.color+"14":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?d.color:"rgba(255,255,255,.08)"),borderRadius:16,padding:"13px 15px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
                     <div style={{display:"flex",alignItems:"center",gap:11}}>
@@ -207,7 +206,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                       </div>
                     </div>
                   </button>
-                  {isAdmin && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[]}); setEditingDeck(d); }} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,padding:"10px 8px",color:"rgba(255,255,255,.4)",position:"absolute",right:6,top:"50%",transform:"translateY(-50%)"}}>✏</button>}
+                  {isAdmin && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[]}); setEditingDeck(d); }} style={{width:44,flexShrink:0,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,cursor:"pointer",fontSize:14,color:"rgba(255,255,255,.5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>✏</button>}
                 </div>
               );
             })}
@@ -242,7 +241,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
 
   if (desktop.isDesktop) {
     return (
-      <DesktopModal title="Switch Deck" width={560} onClose={onClose}>
+      <DesktopModal title="Switch Deck" width={560} onClose={onClose} actions={newDeckBtn}>
         {innerContent}
       </DesktopModal>
     );
@@ -256,7 +255,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
         <div style={{padding:"4px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
           <div style={{fontSize:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>Switch Deck</div>
           <div style={{display:"flex",gap:8}}>
-            {isAdmin && <button onClick={function(){setShowNew(function(p){return !p;});}} style={ghostSm()}>+ New Deck</button>}
+            {newDeckBtn}
             <button onClick={onClose} style={iconBtn()}>✕</button>
           </div>
         </div>
@@ -444,10 +443,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
         input::placeholder{color:rgba(255,255,255,.22);}
         input:focus{border-color:rgba(255,255,255,.3)!important;outline:none;}
         @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
-        button:not(:disabled):active{transform:scale(0.95)!important;filter:brightness(0.85);}
-        @media (hover:hover){button:not(:disabled):hover{filter:brightness(1.12);}}
-        button:disabled{opacity:0.45!important;cursor:not-allowed;}
+        ${PRESS_CSS}
       `}</style>
       {split ? (
         <div style={{display:"grid",gridTemplateColumns:lay.isTablet ? "minmax(0,1fr) minmax(400px,1fr)" : "minmax(0,1.1fr) minmax(440px,1fr)",width:"100%",minHeight:"100%"}}>

@@ -49,7 +49,7 @@ function setConnected(v) {
 function dispatch(type, data) {
   // Built-in cache wiring: finished/changed sessions, feedback and shares make cached
   // session reads stale (progress ticks don't — in-progress runs aren't in the lists)
-  if (type === "session.finished" || type === "session.changed" || type === "feedback.changed" || type === "share.changed") invalidate("/sessions");
+  if (type === "session.finished" || type === "session.changed" || type === "feedback.changed" || type === "share.changed" || type === "highlight.changed") invalidate("/sessions");
   if (type === "live.resync") invalidate("/");
   if (type === "users.changed") invalidate("/admin");
   (handlers[type] || []).slice().forEach(function(fn) { try { fn(data); } catch (e) { console.error(e); } });

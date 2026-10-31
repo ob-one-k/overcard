@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { cachedGet, peek, useCacheVersion } from "../lib/dataCache";
+import { cachedGet, peek, useCacheVersion, useCachedGet } from "../lib/dataCache";
 import { onLive } from "../lib/live";
 import { OrgMark } from "./OrgMark";
 import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA, themed } from "../lib/constants";
@@ -13,6 +13,7 @@ import { deleteAudioBlob } from "../lib/audioStore";
 import DesktopCtx from "../lib/DesktopCtx";
 import { DesktopModal } from "./DesktopModal";
 import { SessionsDesktop } from "./desktop/SessionsDesktop";
+import { HighlightChip, HighlightBanner, HighlightEditor, canEditHighlight, HL_COLOR } from "./Highlights";
 
 // ─── SESSION STATS HELPERS ────────────────────────────────────────────────────
 // Analytics call these for every session on every render — cache per events array
@@ -244,6 +245,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
   var [showShare, setShowShare] = useState(false);
   var [pathCardIdx, setPathCardIdx] = useState(null);
   var [reviewShares, setReviewShares] = useState(null);
+  var [hlOpen, setHlOpen] = useState(false);
   // Desktop renders the same review at a larger type scale; mobile sizes are unchanged
   var desktop = useContext(DesktopCtx);
   // Tablet (compact) uses one step less than desktop; touch gets 44px targets on the controls below
@@ -397,6 +399,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
             {session.sold && <span style={{fontSize:fz(9),fontWeight:700,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>sold</span>}
             <span style={{fontSize:fz(9),fontWeight:700,color:st.color,background:st.bg,border:"1px solid "+st.border,padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>{st.label}</span>
             {session._shared && <span style={{fontSize:fz(9),color:"rgba(255,255,255,.35)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 7px",borderRadius:99}}>shared</span>}
+            <HighlightChip highlight={session.highlight} fontSize={fz(9)}/>
           </div>
           {session._shared && session._shareFromName && <div style={{fontSize:fz(9),color:"rgba(255,255,255,.28)",marginBottom:1}}>From: {session._shareFromName}{session._shareContext ? " · "+session._shareContext : ""}</div>}
           {session.description && <div style={{fontSize:fz(10),color:"rgba(255,255,255,.32)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.description}</div>}
@@ -407,6 +410,13 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
         </div>
         {(isOwner || isAdmin) && (
           <div style={{display:"flex",gap:5,alignItems:"center",flexShrink:0}}>
+            {isAdmin && session.status !== "active" && canEditHighlight(authUser, orgTeams, session.highlight) && (
+              <button onClick={function(){ setHlOpen(function(o){ return !o; }); }} aria-expanded={hlOpen}
+                title={session.highlight ? "Edit highlight" : "Highlight this session for your org or a team"}
+                style={ghostSm({fontSize:fz(10),padding:"5px 10px",minHeight:touchMin,color:session.highlight?HL_COLOR:undefined,borderColor:session.highlight?"rgba(255,201,64,.4)":undefined})}>
+                {session.highlight ? "★ Highlighted" : "☆ Highlight"}
+              </button>
+            )}
             {reviewShares && reviewShares.length > 0 && (
               <button onClick={function(){setShowShare(true);}}
                 style={{background:"rgba(0,180,255,.12)",border:"1px solid rgba(0,180,255,.3)",borderRadius:99,padding:"4px 9px",fontSize:fz(10),color:"#00B4FF",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
@@ -418,6 +428,9 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
           </div>
         )}
       </div>
+      {hlOpen
+        ? <HighlightEditor key={session.id} session={session} authUser={authUser} orgTeams={orgTeams} fz={fz} onClose={function(){ setHlOpen(false); }}/>
+        : <HighlightBanner highlight={session.highlight} fz={fz}/>}
       <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
         {[["overview","Overview"],["path","Path"],["playback","Playback"],["notes","Notes"],["feedback","Feedback"]].map(function(t) {
           var on = tab===t[0];
@@ -425,7 +438,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
           var isPlaybackTab = t[0]==="playback";
           return (
             <button key={t[0]} onClick={function(){setTab(t[0]);if(isFbTab){setFeedbackSeenOnce(true);if(onMarkFeedbackSeen)onMarkFeedbackSeen(session.id);}}}
-              style={{flex:1,minHeight:touchMin,background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),padding:"9px 2px",cursor:"pointer",fontFamily:"inherit",fontSize:fz(10),fontWeight:on?700:400,color:on?SESS_COLOR:"rgba(255,255,255,.35)",transition:"all .15s",position:"relative"}}>
+              style={{flex:1,minHeight:touchMin,background:"none",border:"none",borderBottom:"2px solid "+(on?SESS_COLOR:"transparent"),padding:"9px 2px",cursor:"pointer",fontFamily:"inherit",fontSize:fz(10),fontWeight:on?700:400,color:on?SESS_COLOR:"rgba(255,255,255,.35)",transition:"background .15s,border-color .15s,color .15s,box-shadow .15s,opacity .15s,width .15s,height .15s",position:"relative"}}>
               {t[1]}
               {isFbTab && showFbBadge && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:"#EF5350",display:"inline-block"}}/>}
               {isPlaybackTab && (audio.state === "ready" || session.hasAudio) && <span style={{position:"absolute",top:6,right:"calc(50% - 20px)",width:6,height:6,borderRadius:"50%",background:SESS_COLOR,display:"inline-block"}}/>}
@@ -867,6 +880,10 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
   var [suggestOpen,    setSuggestOpen]    = useState(false);
   var [collapsedUsers, setCollapsedUsers] = useState({});
   var [shareTarget, setShareTarget] = useState(null);
+  var [hlOnly, setHlOnly] = useState(false);   // analytics over highlighted sessions only
+  // Highlights this user may see for the current deck (any rep's sessions, read-only)
+  var hlRes = useCachedGet("/sessions/highlights?deckId=" + encodeURIComponent(deckId));
+  var highlights = Array.isArray(hlRes.data) ? hlRes.data : null;
   var [fbSeenTs, setFbSeenTs] = useState(function(){
     try { return JSON.parse(localStorage.getItem("rc_fb_seen") || "{}"); } catch(e){ return {}; }
   });
@@ -940,6 +957,14 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     });
   }
 
+  function getHighlighted() {
+    if (!highlights) return [];
+    return highlights.filter(function(s) {
+      if (fType !== "all" && (s.mode||"live") !== fType) return false;
+      return applyDateFilter(s);
+    });
+  }
+
   function getSharedWithMe() {
     if (!sessions) return [];
     return sessions.filter(function(s) {
@@ -950,7 +975,8 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
   }
 
   if (view === "review" && reviewId) {
-    var reviewSess = sessions ? sessions.find(function(s){return s.id===reviewId;}) : null;
+    var reviewSess = (sessions && sessions.find(function(s){return s.id===reviewId;})) ||
+      (highlights && highlights.find(function(s){return s.id===reviewId;})) || null;
     if (!reviewSess && sessions === null) {
       // Sessions are loaded by the effect below — never fetch during render
       return <div style={{padding:40,textAlign:"center",color:"rgba(255,255,255,.3)",fontSize:13}}>Loading…</div>;
@@ -960,7 +986,8 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
   }
 
   if (view === "analytics") {
-    return <SessionAnalytics sessions={getFiltered()} deckColor={deckColor} deckName={deckName} deckRootCard={deckRootCard}
+    return <SessionAnalytics sessions={hlOnly ? getHighlighted() : getFiltered()} deckColor={deckColor} deckName={deckName} deckRootCard={deckRootCard}
+      hlOnly={hlOnly} setHlOnly={setHlOnly} highlightedCount={getFiltered().filter(function(s){ return !!s.highlight; }).length}
       fType={fType} setFType={setFType}
       fFrom={fFrom} setFFrom={setFFrom} fTo={fTo} setFTo={setFTo}
       filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen}
@@ -1055,6 +1082,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
               {s.sold && <span style={{fontSize:9,fontWeight:700,background:"rgba(102,187,106,.15)",border:"1px solid rgba(102,187,106,.3)",color:"#66BB6A",padding:"1px 7px",borderRadius:99,textTransform:"uppercase",letterSpacing:.4}}>sold</span>}
               {s.outcome==="not_contacted" && <span style={{fontSize:9,fontWeight:700,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.14)",color:"rgba(255,255,255,.4)",padding:"1px 7px",borderRadius:99}}>📵 no contact</span>}
               {s._shared && <span style={{fontSize:9,color:"rgba(255,255,255,.32)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",padding:"1px 7px",borderRadius:99}}>shared</span>}
+              <HighlightChip highlight={s.highlight}/>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
               {sessionOwnerName(s) && (
@@ -1086,6 +1114,44 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
           {n.length>0 && <span style={{fontSize:10,color:"rgba(255,255,255,.3)",background:"rgba(255,255,255,.05)",padding:"2px 6px",borderRadius:99}}>📝 {n.length}</span>}
           {(s.feedbackCount||0) > 0 && <span style={{fontSize:10,color:hasFbNotif?"#EF5350":"rgba(255,255,255,.3)",background:hasFbNotif?"rgba(239,83,80,.1)":"rgba(255,255,255,.05)",padding:"2px 6px",borderRadius:99}}>💬 {s.feedbackCount}</span>}
           {(s.shareCount||0) > 0 && !s._shared && <span style={{fontSize:10,color:"rgba(0,180,255,.7)",background:"rgba(0,180,255,.08)",padding:"2px 6px",borderRadius:99}}>👥 {s.shareCount}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "highlights") {
+    var hlList = getHighlighted();
+    return (
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{padding:"10px 14px 10px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <button onClick={function(){setView("list");}} aria-label="Back" style={Object.assign({},iconBtn(),{padding:"5px 8px"})}>←</button>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:700,color:HL_COLOR}}>★ Highlights</div>
+              <div style={{fontSize:9,color:"rgba(255,255,255,.3)",marginTop:1}}>
+                {highlights===null ? "Loading…" : hlList.length+" session"+(hlList.length!==1?"s":"")+" · "+deckName}
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",background:"rgba(255,255,255,.05)",borderRadius:10,padding:2,gap:1}}>
+            {[["all","All","#FFD54F"],["live","📞 Live","#A8FF3E"],["practice","🎯 Practice","#00B4FF"]].map(function(t){
+              var on=fType===t[0];
+              return <button key={t[0]} onClick={function(){setFType(t[0]);}}
+                style={{flex:1,background:on?"rgba(255,255,255,.1)":"transparent",border:"none",borderRadius:8,padding:"7px 4px",cursor:"pointer",fontFamily:"inherit",color:on?t[2]:"rgba(255,255,255,.4)",fontSize:11,fontWeight:on?700:400}}>{t[1]}</button>;
+            })}
+          </div>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"10px 14px 0"}}>
+          {highlights===null && <div style={{textAlign:"center",color:"rgba(255,255,255,.3)",padding:"32px 0"}}>Loading…</div>}
+          {highlights!==null && hlList.length===0 && (
+            <div style={{textAlign:"center",padding:"48px 20px",lineHeight:1.8}}>
+              <div style={{fontSize:32,marginBottom:12,color:HL_COLOR}}>★</div>
+              <div style={{fontSize:14,color:"rgba(255,255,255,.45)",fontWeight:700,marginBottom:6}}>No highlights for this deck yet</div>
+              <div style={{fontSize:12,color:"rgba(255,255,255,.25)"}}>When an admin highlights a session for your org or team, it appears here.</div>
+            </div>
+          )}
+          {hlList.map(renderSessionRow)}
+          <div style={{height:16}}/>
         </div>
       </div>
     );
@@ -1153,6 +1219,10 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
                 👥{sharedWithMe.length > 0 && <span style={{background:"rgba(0,180,255,.25)",borderRadius:99,padding:"0 5px",fontSize:9,minWidth:14,textAlign:"center"}}>{sharedWithMe.length}</span>}
               </button>
             )}
+            <button onClick={function(){setView("highlights");}} aria-label="Highlights"
+              style={{background:"rgba(255,201,64,.1)",border:"1px solid rgba(255,201,64,.28)",borderRadius:10,color:HL_COLOR,fontSize:11,fontWeight:700,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+              ★{highlights && highlights.length > 0 && <span style={{background:"rgba(255,201,64,.22)",borderRadius:99,padding:"0 5px",fontSize:9,minWidth:14,textAlign:"center"}}>{highlights.length}</span>}
+            </button>
             <button onClick={function(){setView("analytics");}} style={{background:accentA(.1),border:("1px solid "+accentA(.25)),borderRadius:10,color:SESS_COLOR,fontSize:11,fontWeight:700,padding:"6px 12px",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>
               📊 Analytics
             </button>
@@ -1288,7 +1358,9 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
 }
 
 // ─── SESSION ANALYTICS ────────────────────────────────────────────────────────
-export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, fType, setFType, fFrom, setFFrom, fTo, setFTo, filtersOpen, setFiltersOpen, onBack }) {
+// hlOnly / setHlOnly switch every metric to the highlighted sessions; highlightedCount is
+// how many of the current (non-highlight) list are highlighted
+export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, fType, setFType, fFrom, setFFrom, fTo, setFTo, filtersOpen, setFiltersOpen, onBack, hlOnly, setHlOnly, highlightedCount }) {
   var live = sessions.filter(function(s){return (s.sessionType||s.mode||"live")==="live";});
   var practice = sessions.filter(function(s){return (s.sessionType||s.mode||"live")==="practice";});
   var sold = live.filter(function(s){return s.sold;});
@@ -1378,7 +1450,7 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
         <button onClick={onBack} style={Object.assign({},iconBtn(),{padding:"5px 8px"})}>←</button>
-        <span style={{fontSize:13,fontWeight:700,color:"#fff",flex:1}}>Analytics · {deckName}</span>
+        <span style={{fontSize:13,fontWeight:700,color:"#fff",flex:1}}>Analytics · {deckName}{hlOnly ? <span style={{color:HL_COLOR}}> · ★ Highlights</span> : null}</span>
         <span style={{fontSize:9,color:"rgba(255,255,255,.25)"}}>{sessions.length} session{sessions.length!==1?"s":""}</span>
       </div>
       {/* Prominent type filter tabs */}
@@ -1391,6 +1463,22 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
         </div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"0 14px 0"}}>
+        {/* All sessions ↔ highlighted sessions only */}
+        {setHlOnly && (
+          <div role="radiogroup" aria-label="Sessions to analyse" style={{display:"flex",gap:6,marginBottom:10}}>
+            {[[false,"All sessions"],[true,"★ Highlights"]].map(function(o){
+              var on = !!hlOnly === o[0];
+              return <button key={o[1]} role="radio" aria-checked={on} onClick={function(){ setHlOnly(o[0]); }}
+                style={{flex:1,minHeight:36,background:on?(o[0]?"rgba(255,201,64,.12)":"rgba(255,255,255,.1)"):"transparent",border:"1px solid "+(on?(o[0]?"rgba(255,201,64,.4)":"rgba(255,255,255,.18)"):"rgba(255,255,255,.08)"),borderRadius:10,color:on?(o[0]?HL_COLOR:"#fff"):"rgba(255,255,255,.4)",fontSize:11,fontWeight:on?700:500,cursor:"pointer",fontFamily:"inherit"}}>{o[1]}</button>;
+            })}
+          </div>
+        )}
+        {!hlOnly && highlightedCount != null && sessions.length > 0 && (
+          <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,201,64,.05)",border:"1px solid rgba(255,201,64,.18)",borderRadius:10,padding:"9px 12px",marginBottom:12}}>
+            <span style={{fontSize:18,fontWeight:700,color:HL_COLOR,lineHeight:1}}>{highlightedCount}</span>
+            <span style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>highlighted · {Math.round(highlightedCount / sessions.length * 100)}% of these sessions</span>
+          </div>
+        )}
         {/* Date filter (collapsible) */}
         <div style={{background:themed("#081428"),border:"1px solid rgba(255,255,255,.08)",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
           <button onClick={function(){setFiltersOpen(function(p){return !p;});}}

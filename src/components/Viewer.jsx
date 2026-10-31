@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, SESS_COLOR } from "../lib/constants";
+import { TM } from "../lib/constants";
 import { inputSt } from "../lib/styles";
 import { TypeBadge, SectionHdr } from "./ui";
 
@@ -55,7 +55,9 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
               {isCollapsed?"▶":"▼"}
             </button>
           ) : <div style={{width:20,height:20,flexShrink:0}}/>}
-          <button onClick={function(){onEdit(card);}} style={{flex:1,background:card.intendedPath?"rgba(102,187,106,.06)":"rgba(255,255,255,.07)",border:"1px solid "+(card.intendedPath?"rgba(102,187,106,.18)":"rgba(255,255,255,.07)"),borderLeft:"3px solid "+(card.intendedPath?"#66BB6A":meta.color),borderRadius:9,padding:"8px 11px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,fontFamily:"inherit",transition:"background .14s",textAlign:"left",minWidth:0}}>
+          {/* Rows always use the card type's colour (pitch/discovery/close/objection) — intended
+              path is marked by the ★, never by recolouring the row */}
+          <button onClick={function(){onEdit(card);}} style={{flex:1,background:meta.color+"10",border:"1px solid "+meta.color+"30",borderLeft:"3px solid "+meta.color,borderRadius:9,padding:"8px 11px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,fontFamily:"inherit",transition:"background .14s",textAlign:"left",minWidth:0}}>
             <span style={{fontSize:14,flexShrink:0}}>{meta.icon}</span>
             <span style={{fontSize:13,color:"#fff",fontWeight:500,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.title}</span>
             {isRoot && <span style={{fontSize:9,background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.4)",padding:"2px 6px",borderRadius:99,flexShrink:0,textTransform:"uppercase",letterSpacing:.4}}>root</span>}
@@ -98,7 +100,7 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
               {orphans.map(function(c) { var m=TM[c.type]||TM.pitch; return (
                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:5,marginBottom:5}}>
                   <div style={{width:20,flexShrink:0}}/>
-                  <button onClick={function(){onEdit(c);}} style={{flex:1,background:"rgba(255,255,255,.02)",border:"1px dashed rgba(255,255,255,.1)",borderLeft:"3px solid rgba(255,255,255,.12)",borderRadius:9,padding:"8px 11px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,fontFamily:"inherit",textAlign:"left",opacity:.45}}>
+                  <button onClick={function(){onEdit(c);}} style={{flex:1,background:"rgba(255,255,255,.02)",border:"1px dashed rgba(255,255,255,.1)",borderLeft:"3px solid "+m.color,borderRadius:9,padding:"8px 11px",cursor:"pointer",display:"flex",alignItems:"center",gap:7,fontFamily:"inherit",textAlign:"left",opacity:.45}}>
                     <span style={{fontSize:14}}>{m.icon}</span>
                     <span style={{fontSize:13,color:"rgba(255,255,255,.55)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title}</span>
                     <span style={{fontSize:9,color:"rgba(255,255,255,.2)"}}>orphan</span>

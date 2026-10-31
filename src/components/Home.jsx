@@ -4,6 +4,7 @@ import { cachedGet, useCacheVersion } from "../lib/dataCache";
 import { SectionHdr, StatBox, BarRow } from "./ui";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "./Sessions";
 import { LiveNow } from "./LiveMonitor";
+import { HomeHighlights } from "./Highlights";
 
 // ─── STATS COMPUTATION ────────────────────────────────────────────────────────
 // Stats are derived from session arrays that only change when data reloads, so cache
@@ -157,7 +158,7 @@ function computeRankings(sessions, orgUsers) {
 }
 
 // ─── HOME TAB ─────────────────────────────────────────────────────────────────
-export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession }) {
+export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession, onOpenHighlight }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");
@@ -305,6 +306,8 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
           {isAdminRole(authUser.role) && (
             <div style={{marginBottom:14}}><LiveNow variant="strip" onOpenSession={onOpenSession}/></div>
           )}
+          {/* Latest highlights this person may see (any deck) */}
+          {onOpenHighlight && <HomeHighlights onOpen={onOpenHighlight}/>}
 
 
           {/* ── Loading ── */}

@@ -8,6 +8,7 @@ const {
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   createNotification, getShareRecipientIds, getDeckById, deckUsableBy,
   startLiveSession, beatLiveSession, getLiveSessions, countActiveRuns,
+  getHighlights, getHighlight, isHighlightVisibleTo, getMemberOrAdminTeamIds, setHighlight, clearHighlight, getTeamById,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
 const { publish, publishProgress, endProgress, startProgress } = require("../realtime");
@@ -110,7 +111,7 @@ router.get("/", async function(req, res, next) {
       }
     }
 
-    const sessions = await getSessions(parsedScope, req.user.orgId, req.user.id, filters);
+    const sessions = await getSessions(parsedScope, req.user.orgId, req.user.id, filters, req.user);
     res.json(sessions);
   } catch (err) { next(err); }
 });
@@ -146,6 +147,81 @@ router.post("/", async function(req, res, next) {
     endProgress(session.id);
     await publishSession(session, "session.finished", { id: session.id, userId: session.userId });
     res.json({ ok: true, session });
+  } catch (err) { next(err); }
+});
+
+// ─── HIGHLIGHTS ───────────────────────────────────────────────────────────────
+// Admins mark finished sessions as examples for the whole org or one team. Anyone in the
+// audience can open them read-only (review, recording, existing feedback).
+var HIGHLIGHT_NOTE_MAX = 280;
+
+// GET /api/sessions/highlights?deckId=&limit= — the highlights this user may see
+router.get("/highlights", async function(req, res, next) {
+  try {
+    var deckId = typeof req.query.deckId === "string" && req.query.deckId ? req.query.deckId : null;
+    res.json(await getHighlights(req.user, { deckId: deckId, limit: req.query.limit }));
+  } catch (err) { next(err); }
+});
+
+// Org-wide highlights: any admin. Team highlights: the owner for any team in the org;
+// an admin only for teams they belong to or administer.
+async function canHighlightFor(user, scope, teamId) {
+  if (!isAdminRole(user.role)) return false;
+  if (scope === "org") return true;
+  if (user.role === "owner") return true;
+  return (await getMemberOrAdminTeamIds(user.id)).indexOf(teamId) > -1;
+}
+
+// Everyone who might see a highlight change refetches; only the id travels
+function publishHighlight(session) {
+  publish({ org: session.orgId }, "highlight.changed", { sessionId: session.id });
+}
+
+// PUT /api/sessions/:id/highlight  { scope: "org"|"team", teamId?, note? }
+router.put("/:id/highlight", async function(req, res, next) {
+  try {
+    if (!isAdminRole(req.user.role)) return res.status(403).json({ error: "Admin access required" });
+    const session = await getSessionById(req.params.id);
+    if (!session || session.orgId !== req.user.orgId) return res.status(404).json({ error: "Session not found" });
+    if (session.status === "active") return res.status(400).json({ error: "Only finished sessions can be highlighted" });
+    var b = req.body || {};
+    var scope = b.scope;
+    if (scope !== "org" && scope !== "team") return res.status(400).json({ error: "scope must be org or team" });
+    var teamId = scope === "team" ? b.teamId : null;
+    if (scope === "team") {
+      if (typeof teamId !== "string" || !teamId) return res.status(400).json({ error: "teamId is required for a team highlight" });
+      const team = await getTeamById(teamId);
+      if (!team || team.orgId !== req.user.orgId) return res.status(400).json({ error: "Unknown team" });
+    }
+    if (b.note != null && typeof b.note !== "string") return res.status(400).json({ error: "Invalid note" });
+    var note = typeof b.note === "string" ? b.note.trim() : "";
+    if (note.length > HIGHLIGHT_NOTE_MAX) return res.status(400).json({ error: "Note must be " + HIGHLIGHT_NOTE_MAX + " characters or less" });
+    if (!await canHighlightFor(req.user, scope, teamId)) return res.status(403).json({ error: "You can only highlight for teams you belong to or administer" });
+    // Changing an existing highlight needs the same rights over what it is now
+    const existing = await getHighlight(session.id);
+    if (existing && !await canHighlightFor(req.user, existing.scope, existing.teamId)) {
+      return res.status(403).json({ error: "This highlight belongs to a team you don't manage" });
+    }
+    await setHighlight({ sessionId: session.id, orgId: session.orgId, scope: scope, teamId: teamId, note: note || null, createdBy: req.user.id });
+    publishHighlight(session);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/sessions/:id/highlight
+router.delete("/:id/highlight", async function(req, res, next) {
+  try {
+    if (!isAdminRole(req.user.role)) return res.status(403).json({ error: "Admin access required" });
+    const session = await getSessionById(req.params.id);
+    if (!session || session.orgId !== req.user.orgId) return res.status(404).json({ error: "Session not found" });
+    const existing = await getHighlight(session.id);
+    if (!existing) return res.json({ ok: true });
+    if (!await canHighlightFor(req.user, existing.scope, existing.teamId)) {
+      return res.status(403).json({ error: "This highlight belongs to a team you don't manage" });
+    }
+    await clearHighlight(session.id, session.orgId);
+    publishHighlight(session);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
@@ -322,13 +398,17 @@ router.get("/:id/audio", async function(req, res, next) {
 });
 
 // ─── FEEDBACK ─────────────────────────────────────────────────────────────────
+// Read access to a session's feedback and recording: owner, org admin, share recipient,
+// or anyone a highlight of it is visible to (read-only — writing feedback is checked
+// separately in POST /:id/feedback)
 async function canAccessFeedback(session, user) {
   if (!session) return false;
   if (isAdminRole(user.role) && session.orgId === user.orgId) return true;
   if (session.orgId !== user.orgId) return false;
   if (session.userId === user.id) return true;
   const share = await getShareRecord(session.id, user.id);
-  return !!share;
+  if (share) return true;
+  return isHighlightVisibleTo(session.id, user);
 }
 
 // GET /api/sessions/:id/feedback

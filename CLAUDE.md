@@ -81,6 +81,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CR
 | `notifications` | In-app notifications (cascade with user/session) | id, "userId", type, "sessionId", "actorName", text, "createdAt", "readAt" |
 | `session_audio` | Session recordings (BYTEA, one per session; cascades on session delete) | "sessionId" PK, "orgId", "mimeType", "durationMs", "sizeBytes", data |
 | `password_resets` | One-time reset links | id, "userId", "tokenHash" (SHA-256), "createdBy", "expiresAt", "usedAt" |
+| `session_highlights` | Highlighted sessions (one per session; cascades with the session and the team) | "sessionId" PK, "orgId", scope (org/team), "teamId", note (≤280), "createdBy", "createdAt" |
 
 Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org_invites.label`/`"teamId"`, `users."inviteId"`. `users."activeToken"` holds SHA-256 of the session id, never the raw id. Emails are unique case-insensitively (`uniq_users_email_lower`). Deleting a user keeps their sessions (`userId` → NULL, listed as "Former member"), keeps feedback they wrote, removes shares to/from them; deleting a team clears members' `teamId`.
 
@@ -137,7 +138,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler`, `setSessionReplacedHandler`, `setStoredToken`, `getStoredToken`, `fetchWithTimeout` (75s default — covers free-tier cold start), `apiPostWithRetry` (retries network/5xx; used for finished-session saves), `lsGet`/`lsSet` (try/catch-safe localStorage) |
 | `src/lib/styles.js` | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
 | `src/components/ErrorBoundary.jsx` | `ErrorBoundary` (wraps `<App/>` in `main.jsx`; shows reload screen on render crash) |
-| `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow` |
+| `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow`, `CopyIcon` (every copy/duplicate action) |
 | `src/components/Tooltip.jsx` | `TipCtx`, `GlobalInflTooltip`, `InflWord`, `RichPromptDisplay`, `OverviewDisplay`, `OverviewEditor` |
 | `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
 | `src/components/Home.jsx` | `HomeTab` |
@@ -164,6 +165,9 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | `src/components/AdminPanel.jsx` | `AdminPanel` (Users / Teams / Share Codes / Organization; split from Panels.jsx, lazy-loaded), `ResetPasswordDialog`, `InviteCard` |
 | `src/lib/noiseReduction.js` | `createNoiseReduction(ctx)` (high-pass 85 Hz → low-pass 7.5 kHz → adaptive noise gate, bypassable), `playbackNoiseReduction`/`setPlaybackNoiseReduction` (per-device pref, default on) |
 | `public/noise-reduction-worklet.js` | `overcard-noise-gate` AudioWorklet: learns the background-noise floor and turns it down between words (max −18 dB) |
+| `src/components/Highlights.jsx` | `HL_COLOR`, `HighlightChip`, `HighlightBanner`, `HighlightEditor`, `HomeHighlights`, `allowedHighlightTeams`, `canEditHighlight`, `highlightLabel` |
+| `src/lib/pressFeedback.js` | `startPressFeedback` (main.jsx), `PRESS_CSS` — the one button press animation |
+| `src/lib/useSlidingIndicator.js` | `useSlidingIndicator(containerRef, activeKey, deps)` — measures `[data-tab]` children for a sliding highlight |
 | `src/lib/live.js` | `startLive`, `stopLive`, `onLive`, `useLive`, `isLiveConnected` — the live event stream (fetch-based SSE, reconnect + resync) |
 | `src/lib/liveBeat.js` | `useLiveBeat(session, events, live)` — start/heartbeat/pagehide for runs in progress; `onSignedOut` |
 | `src/components/LiveMonitor.jsx` | `LiveNow` (admin "Live now" strip/card + watch view), `useLiveRuns` |
@@ -247,6 +251,15 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 
 Sessions store the chosen reference in `"referenceSessionId"`.
 
+### Session Highlights
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/sessions/highlights?deckId=&limit=` | Any org member | Highlighted sessions the caller may see, newest highlight first (`_highlight:true`, plus `highlight`) |
+| PUT | `/api/sessions/:id/highlight` | Admin/owner | `{scope:"org"|"team", teamId?, note?}` — finished sessions only |
+| DELETE | `/api/sessions/:id/highlight` | Admin/owner | Remove it |
+
+**Who sees a highlight:** the owner sees all of the org's; everyone else (admins too) sees org-wide ones plus those of teams they belong to (`user_teams`) or administer (`team_admins`) — one predicate, `highlightVisibleSql` in db.js. **Who sets one:** any admin for org-wide; for a team, the owner (any team) or an admin of/member of that team; editing/removing needs the same rights over the current highlight. Session lists attach `session.highlight` only when visible to the caller. A visible highlight grants **read** access (`canAccessFeedback`: feedback list, audio, audio meta); writing feedback stays admin/share-recipient only. Changes publish `highlight.changed {sessionId}` on the `org:<orgId>` channel. UI (`src/components/Highlights.jsx`): ★ chip on rows and review header, `HighlightBanner` + admin `HighlightEditor` in `SessionReview`, a deck-specific Highlights filter in the Sessions tab (phone: ★ header button → highlights view; desktop/tablet: "★ Highlights" pill, which also drives the overview analytics), a Highlighted KPI / "All ↔ ★ Highlights" toggle in analytics, and `HomeHighlights` (latest 3, all decks) on Home. A highlight whose deck isn't in the user's decks opens read-only in an overlay (`App.openHighlight`).
+
 ### Notifications
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -256,7 +269,7 @@ Sessions store the chosen reference in `"referenceSessionId"`.
 Created when someone else leaves feedback on your session (`type: "feedback"`) or shares one with you (`type: "share"`). Client store: `src/lib/notifications.js` (updated live; 5-minute safety poll); UI: `NotificationBell` in the desktop shell and mobile header; opening your own session's review marks its notifications read.
 
 ### Live events
-`GET /api/events` (auth: cookie or Bearer) is a Server-Sent Events stream. Channels come from the signed-in user only: `user:<id>` and, for admins/owner, `orgAdmins:<orgId>`. Events: `session.started/progress/finished` (admins), `session.changed`, `feedback.changed`, `share.changed` (owner + share recipients + admins), `notification.new/read`, `users.changed` (admins), `auth.ended {reason: replaced|password|removed|logout}`, `auth.changed`. Payloads carry ids; clients refetch through the normal endpoints (progress carries the live run).
+`GET /api/events` (auth: cookie or Bearer) is a Server-Sent Events stream. Channels come from the signed-in user only: `user:<id>`, `org:<orgId>` (everyone; id-only "refetch" events such as `highlight.changed`) and, for admins/owner, `orgAdmins:<orgId>`. Events: `session.started/progress/finished` (admins), `session.changed`, `feedback.changed`, `share.changed` (owner + share recipients + admins), `notification.new/read`, `users.changed` (admins), `auth.ended {reason: replaced|password|removed|logout}`, `auth.changed`. Payloads carry ids; clients refetch through the normal endpoints (progress carries the live run).
 
 ### Admin (requires admin role)
 | Method | Path | Description |
@@ -305,6 +318,9 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 
 ## Key Patterns
 
+- **Button press feedback:** `startPressFeedback()` sets `data-pressed` (touch: after 70 ms, cancelled by movement/scroll) and `data-press` (animating); `PRESS_CSS` scales with the CSS `scale` property, which composes with a button's inline `transform`. Never reintroduce `:active{transform:…}` — it overrode centred/rotated buttons (the deck-switcher pen jumped). Name transition properties; never `transition:"all …"`.
+- **Tab navigation:** the phone tab bar (`MobileTabBar` in App.jsx) and the sidebar/rail/drawer (`SlideList` in DesktopSidebar.jsx) draw one org-accent (`SESS_COLOR`/`accentA`) indicator that slides between `[data-tab]` items; per-tab colours (`TAB_ACCENTS`) remain only outside the nav. Each tab renders inside `TabPane` (App.jsx), whose `tabIn` entrance uses the `translate` property with fill-mode `backwards` so no transform lingers (it would trap `position:fixed` sheets); phones slide in the direction of travel (`--tab-dx`), desktop/tablet rise (`--tab-dy`).
+- **Tree rows:** `TreeView` rows always use the card type's `TM` colour; intended path is shown by the green ★ only.
 - **Archive vs delete:** admins archive decks/stacks (restorable); only the owner permanently deletes. The server enforces both: `DELETE /decks` is owner-only, and `PUT /decks` from a non-owner keeps any stored stack the payload omits, so stale copies never delete stacks.
 - **Copying cards/stacks:** `ImportPicker` + `deckOps.cloneCards/cloneStack` give every copied card/answer/stack a fresh id and rewrite `next` links through an old→new map; links to cards that weren't copied become `null`, copied cards join off the intended path, and a copied stack's `targetCard` is cleared. `duplicateDeck` keeps intended flags and remaps stack targets.
 - **Objections desktop/tablet:** `ObjectionsDesktop` mirrors CardsDesktop — stack switcher, List (path-ordered card list + CardStage) / Tree (docked editor + TreeView), and an "After resolving" strip. Stack edits save immediately via `onUpdateDeck` (no Save Stack step); phones still use the buffered `ObjStackEditor`. `CardStage` takes `endLabel` to say where a stack returns.

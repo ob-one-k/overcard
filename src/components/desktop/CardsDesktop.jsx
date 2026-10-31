@@ -11,6 +11,7 @@ import { getParents } from "../../lib/cardGraph";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { CardStage, PaneRail } from "../CardStage";
 import { ImportPicker } from "../ImportPicker";
+import { CopyIcon } from "../ui";
 
 // ─── DESKTOP TYPE SCALE ───────────────────────────────────────────────────────
 // body 14–15 · meta 13 · section heading 16–18 · page title 20–24 · badges ≥11
@@ -726,8 +727,8 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
         ) : (
           <>
             <button onClick={function(){ setShowImport(true); }} title="Copy cards from another deck in your organization"
-              style={{height:36,padding:"0 14px",fontSize:14,borderRadius:10,flexShrink:0,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.14)",color:TXT2,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>
-              ⇣ {isTablet ? "Copy" : "From another deck"}
+              style={{height:36,padding:"0 14px",fontSize:14,borderRadius:10,flexShrink:0,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.14)",color:TXT2,cursor:"pointer",fontFamily:"inherit",fontWeight:600,display:"inline-flex",alignItems:"center",gap:7}}>
+              <CopyIcon size={15}/>{isTablet ? "Copy" : "From another deck"}
             </button>
             <button onClick={startNew}
               style={Object.assign({},solidBtn(deck.color),{height:36,padding:"0 18px",fontSize:14,borderRadius:10,flexShrink:0})}>

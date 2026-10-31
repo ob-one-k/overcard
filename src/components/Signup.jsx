@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { apiGet, apiPost, setStoredToken } from "../lib/api";
 import { solidBtn, labelSt, inputSt } from "../lib/styles";
 import { useDesktop } from "../lib/useDesktop";
+import { PRESS_CSS } from "../lib/pressFeedback";
 import { BrandingFields } from "./BrandingFields";
 
 // ─── SIGNUP SCREEN ────────────────────────────────────────────────────────────
@@ -149,10 +150,7 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
         input::placeholder{color:rgba(255,255,255,.22);}
         input:focus{border-color:rgba(255,255,255,.3)!important;outline:none;}
         @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
-        button:not(:disabled):active{transform:scale(0.95)!important;filter:brightness(0.85);}
-        button:not(:disabled):hover{filter:brightness(1.12);}
-        button:disabled{opacity:0.5!important;cursor:not-allowed;}
+        ${PRESS_CSS}
       `}</style>
       <div style={{width:"100%",maxWidth:wide||phoneLand?720:420,margin:wide?"auto":"0 auto",animation:"fadeIn .35s cubic-bezier(.22,1,.36,1) both"}}>
 

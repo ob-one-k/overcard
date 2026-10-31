@@ -26,6 +26,8 @@ test("cross-org access is refused everywhere", async function() {
   var merSid = tid("ms");
   assert.equal((await merUser.post("/sessions", { id: merSid, deckId: MER_DECK, name: "Mer private", mode: "live", startTs: Date.now() - 2000, endTs: Date.now(), events: [] })).status, 200);
   var fb = (await merAdmin.post("/sessions/" + merSid + "/feedback", { text: "Meridian only" })).body;
+  // An org-wide highlight: visible to every Meridian member, never to Apex
+  assert.equal((await merAdmin.put("/sessions/" + merSid + "/highlight", { scope: "org", note: "Meridian example" })).status, 200);
   var merLive = tid("ml");
   assert.equal((await merUser.post("/sessions/" + merLive + "/start", { deckId: MER_DECK, name: "Mer live" })).status, 200);
   await merUser.post("/sessions/" + merLive + "/beat", { events: [], live: { cardId: "x" } });
@@ -63,6 +65,10 @@ test("cross-org access is refused everywhere", async function() {
       denied(await c.get("/sessions/" + merSid + "/audio"), w + "GET audio");
       denied(await c.get("/sessions/" + merSid + "/audio/meta"), w + "GET audio meta");
       denied(await c.get("/sessions/" + merSid + "/reference"), w + "GET reference");
+      denied(await c.put("/sessions/" + merSid + "/highlight", { scope: "org" }), w + "PUT highlight");
+      denied(await c.del("/sessions/" + merSid + "/highlight"), w + "DELETE highlight");
+      assert.ok(!(await c.get("/sessions/highlights")).body.some(function(x) { return x.id === merSid || x.orgId !== c.user.orgId; }), w + "highlights list");
+      assert.ok(!(await c.get("/sessions/highlights?deckId=" + MER_DECK)).body.some(function(x) { return x.id === merSid; }), w + "highlights by deck");
       assert.ok(!(await c.get("/sessions/reference-options")).body.some(function(o) { return o.id === merSid; }), w + "reference options");
       denied(await c.post("/sessions/" + merLive + "/beat", { events: [], live: {} }), w + "beat their run");
       denied(await c.post("/sessions/" + tid("s") + "/start", { deckId: MER_DECK }), w + "start on their deck");

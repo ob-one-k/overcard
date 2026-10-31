@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS, themed } from "../lib/constants";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { keyboardIsOpen } from "../lib/useViewport";
-import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
+import { TypeBadge, Handle, SectionHdr, IntendedBadge, CopyIcon } from "./ui";
 import { TipCtx } from "./Tooltip";
 import { OverviewDisplay, RichPromptDisplay } from "./Tooltip";
 import { CardEditorSheet } from "./Editor";
@@ -146,7 +146,7 @@ function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }
           </div>
           <div style={{flex:1,minWidth:0}}/>
           {readOnly && <span style={{fontSize:9,color:"rgba(255,255,255,.3)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"3px 9px",flexShrink:0}}>📖 View only</span>}
-          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy cards from another deck" title="Copy from another deck" style={ghostSm({height:32,padding:"0 10px",flexShrink:0})}>⇣</button>}
+          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy cards from another deck" title="Copy from another deck" style={ghostSm({height:32,padding:"0 10px",flexShrink:0,display:"inline-flex",alignItems:"center"})}><CopyIcon size={15}/></button>}
           {!readOnly && <button onClick={startNew} style={Object.assign({},solidBtn(deck.color),{height:32,padding:"0 14px",fontSize:13,flexShrink:0})}>+ Card</button>}
         </div>
         {viewMode==="list" && (
@@ -639,7 +639,7 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
             })}
           </div>
           {readOnly && <span style={{fontSize:9,color:"rgba(255,255,255,.3)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"3px 9px",flexShrink:0}}>📖 View only</span>}
-          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy stacks from another deck" title="Copy from another deck" style={ghostSm({padding:"0 10px"})}>⇣</button>}
+          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy stacks from another deck" title="Copy from another deck" style={ghostSm({padding:"0 10px",display:"inline-flex",alignItems:"center"})}><CopyIcon size={15}/></button>}
           {!readOnly && <button onClick={function(){setShowNew(true);}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)"})}>+ New</button>}
         </div>
         {viewMode==="tree" && stacks.length > 0 && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to edit · ⬆ = set entry · ↩ = cross-link · Pinch to zoom</div>}

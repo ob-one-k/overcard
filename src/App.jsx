@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor, themed } from "./lib/constants";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, apiDel, SAVE_DELAY, API_BASE } from "./lib/api";
-import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
+import { solidBtn, ghostBtn, iconBtn, inputSt, overlayFill } from "./lib/styles";
+import { DesktopModal } from "./components/DesktopModal";
 import { TypeBadge, Handle } from "./components/ui";
 import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
 import { PlayTab } from "./components/Play";
@@ -39,15 +40,30 @@ var AdminPanel     = lazyNamed("admin", "AdminPanel");
 var SignupScreen   = lazyNamed("signup", "SignupScreen");
 var ResetPasswordScreen = lazyNamed("reset", "ResetPasswordScreen");
 var CommandPalette = lazyNamed("palette", "CommandPalette");
+var SessionReview  = lazyNamed("sessions", "SessionReview");
 function prefetchChunks(isAdmin, isDesktop) {
   var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home"].concat(isAdmin ? ["admin"] : []).concat(isDesktop ? ["palette"] : []);
   var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 1200); };
   keys.forEach(function(k, i) { idle(function() { loaders[k]().catch(function() {}); }, { timeout: 4000 + i * 500 }); });
 }
+// One tab's container. Its entrance uses the `translate` property with fill-mode
+// "backwards" so nothing is left applied afterwards — a lingering transform would
+// make this pane the containing block for every position:fixed sheet inside it.
+function TabPane({ hidden, children }) {
+  return (
+    <div style={{flex:1,display:hidden?"none":"flex",flexDirection:"column",overflow:"hidden",minHeight:0,
+      animation:"tabIn .28s cubic-bezier(.22,1,.36,1) backwards"}}>
+      {children}
+    </div>
+  );
+}
+
 function TabFallback() {
   return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,.35)",fontSize:13,letterSpacing:.5}}>Loading…</div>;
 }
 import { useDesktop } from "./lib/useDesktop";
+import { PRESS_CSS } from "./lib/pressFeedback";
+import { useSlidingIndicator } from "./lib/useSlidingIndicator";
 import { newDeckTemplate, duplicateDeck as duplicateDeckData, activeDecks, liveStacks } from "./lib/deckOps";
 import DesktopCtx from "./lib/DesktopCtx";
 import { DesktopShell } from "./components/DesktopShell";
@@ -275,6 +291,30 @@ function BootMark() {
 }
 
 // ─── APP ────────────────────────────────────────────────────────────────────
+// ─── PHONE TAB BAR ────────────────────────────────────────────────────────────
+// One org-accent pill slides behind the active tab's icon. Its own component so the
+// indicator hook never sits after MainApp's early returns.
+function MobileTabBar({ tabs, tab, onTabClick }) {
+  var barRef = useRef(null);
+  var ind = useSlidingIndicator(barRef, tab, [tabs.length]);
+  return (
+    // Opaque background, no backdrop blur: a blur over scrolling content janks on phones
+    <div ref={barRef} style={{position:"relative",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,10,28,.98)"),padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"}}>
+      {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:10,background:accentA(.13),border:"1.5px solid "+accentA(.6),boxSizing:"border-box"})}/>}
+      {tabs.map(function(t) {
+        var active = tab === t.id;
+        return (
+          <button key={t.id} onClick={function(){ onTabClick(t.id); }} aria-current={active ? "page" : undefined}
+            style={{position:"relative",zIndex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,fontFamily:"inherit"}}>
+            <div data-tab={t.id} style={{width:34,height:34,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{t.icon}</div>
+            <span style={{fontSize:8,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:active?SESS_COLOR:"rgba(255,255,255,.22)",transition:"color .25s"}}>{t.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var layout      = useDesktop();
   // Tablet = compact desktop: hand the context isDesktop:true so every
@@ -312,10 +352,14 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var [orgTeams,    setOrgTeams]    = useState([]);
   // Profile sheet visibility
   var [showProfile, setShowProfile] = useState(false);
+  // A highlighted session whose deck this user can't open here: reviewed in an overlay
+  var [hlOverlay, setHlOverlay] = useState(null);
   // Command palette visibility (desktop only)
   var [showCmdPalette, setShowCmdPalette] = useState(false);
   // Dirty deck tracking for per-deck autosave
   var dirtyIds = useRef(new Set());
+  // Tab transition direction: +1 when moving to a tab further along the nav, -1 back
+  var tabDirRef = useRef({ tab: null, dir: 1 });
 
   // ── Tab switching helper (persists to localStorage) ─────────────────────────
   function switchTab(newTab) {
@@ -513,6 +557,14 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     switchTab("sessions");
   }
 
+  // Home highlight cards: open in the Sessions tab when the deck is one of ours,
+  // otherwise (private or archived deck) read-only in an overlay
+  function openHighlight(s) {
+    if (activeSession) return;
+    if (liveDecks.some(function(d) { return d.id === s.deckId; })) openSessionFromNotification(s.id, s.deckId);
+    else setHlOverlay(s);
+  }
+
   // ── Tab switching ─────────────────────────────────────────────────────────────
   function handleTabClick(tabId) {
     if (tabId !== "sessions") setPendingReview(null); // clear portal on manual nav
@@ -642,18 +694,32 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var tabAccent = (tab === "play" ? SESS_COLOR : TAB_ACCENTS[tab]) || TAB_ACCENTS.home;
 
   // Shared tab content — rendered in both mobile and desktop layouts
+  // Direction-aware entrance for the tab being shown (phones slide sideways, desktop/
+  // tablet rise slightly — their nav is vertical). Computed once per tab change.
+  if (tabDirRef.current.tab !== tab) {
+    var fromIdx = TABS.findIndex(function(t) { return t.id === tabDirRef.current.tab; });
+    var toIdx   = TABS.findIndex(function(t) { return t.id === tab; });
+    tabDirRef.current = { tab: tab, dir: fromIdx > toIdx ? -1 : 1 };
+  }
+  var tabMotion = desktop.isDesktop
+    ? { "--tab-dx": "0px", "--tab-dy": "8px" }
+    : { "--tab-dx": (tabDirRef.current.dir * 18) + "px", "--tab-dy": "0px" };
+
   var tabContent = (
-    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+    <div style={Object.assign({flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}, tabMotion)}>
       {/* Each lazy tab has its own Suspense boundary so a loading chunk never touches
           the always-mounted Play tab (a live call keeps running underneath) */}
       {tab==="home" && (
+        <TabPane>
         <Suspense fallback={<TabFallback/>}>
         {desktop.isDesktop
-          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification}/>
-          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification}/>}
+          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification} onOpenHighlight={openHighlight}/>
+          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification} onOpenHighlight={openHighlight}/>}
         </Suspense>
+        </TabPane>
       )}
-      <div style={{flex:1,display:tab==="play"?"flex":"none",flexDirection:"column",overflow:"hidden"}}>
+      {/* Always mounted (a live call keeps running); display:none → flex replays the entrance */}
+      <TabPane hidden={tab!=="play"}>
         <PlayTab
           deck={playDeck}
           activeId={activeId}
@@ -666,8 +732,9 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           sessionEvents={sessionEvents}
           setSessionEvents={setSessionEvents}
         />
-      </div>
+      </TabPane>
       {tab==="sessions" && (
+        <TabPane>
         <Suspense fallback={<TabFallback/>}>
         <SessionsTab
           key={deck.id+"-sessions"}
@@ -683,8 +750,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           orgTeams={orgTeams}
         />
         </Suspense>
+        </TabPane>
       )}
       {tab==="cards" && (
+        <TabPane>
         <Suspense fallback={<TabFallback/>}>
         <CardsTab
           key={deck.id+"-cards"}
@@ -696,8 +765,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           readOnly={!isAdminRole(authUser.role)}
         />
         </Suspense>
+        </TabPane>
       )}
       {tab==="objections" && (
+        <TabPane>
         <Suspense fallback={<TabFallback/>}>
         <ObjectionsTab
           key={deck.id+"-obj"}
@@ -708,8 +779,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           isOwner={authUser.role === "owner"}
         />
         </Suspense>
+        </TabPane>
       )}
       {tab==="admin" && isAdminRole(authUser.role) && (
+        <TabPane>
         <Suspense fallback={<TabFallback/>}>
         <AdminPanel
           authUser={authUser}
@@ -721,6 +794,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           onOpenSession={openSessionFromNotification}
         />
         </Suspense>
+        </TabPane>
       )}
     </div>
   );
@@ -734,6 +808,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
           html,body,#root{height:100%;width:100%;}
           body{background:#060d1a;font-family:'Inter',sans-serif;color:#fff;overscroll-behavior:none;}
+          @keyframes tabIn       {from{opacity:0;translate:var(--tab-dx,0px) var(--tab-dy,0px)}to{opacity:1;translate:0 0}}
           @keyframes cardIn      {from{opacity:0;transform:translateX(28px) scale(.97)}to{opacity:1;transform:none}}
           @keyframes cardBack    {from{opacity:0;transform:translateX(-28px) scale(.97)}to{opacity:1;transform:none}}
           @keyframes cardSwipeIn {from{opacity:0;transform:translateX(62px)}to{opacity:1;transform:none}}
@@ -746,10 +821,9 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           @keyframes btnPop    {0%{transform:scale(1)}40%{transform:scale(0.91)}100%{transform:scale(1)}}
           @keyframes modalIn   {from{opacity:0;transform:translate(-50%,-55%)}to{opacity:1;transform:translate(-50%,-50%)}}
           @keyframes pulse     {0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 5px transparent}100%{box-shadow:0 0 0 0 transparent}}
-          button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
-          button:not(:disabled):active{transform:scale(0.92)!important;filter:brightness(0.80);}
-          @media (hover:hover){button:not(:disabled):hover{filter:brightness(1.12);}}
-          button:disabled{opacity:0.45!important;cursor:not-allowed;}
+          ${PRESS_CSS}
+          /* Scroll areas keep their scroll to themselves (no chaining into the page behind) */
+          [style*="overflow-y: auto"],[style*="overflow: auto"]{overscroll-behavior:contain;}
           input,textarea,select{-webkit-appearance:none;}
           input::placeholder,textarea::placeholder{color:rgba(255,255,255,.22);}
           input:focus,textarea:focus{border-color:rgba(255,255,255,.3)!important;outline:none;}
@@ -835,23 +909,26 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           {tabContent}
 
           {/* Tab bar */}
-          <div style={{flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,10,28,.98)"),backdropFilter:"blur(20px)",padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"}}>
-            {TABS.map(function(t) {
-              var active = tab===t.id;
-              var accent = t.accent;
-              return (
-                <button key={t.id} onClick={function(){handleTabClick(t.id);}}
-                  style={{background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,fontFamily:"inherit"}}>
-                  <div style={{width:34,height:34,borderRadius:10,background:active?accent+"22":"transparent",border:"1.5px solid "+(active?accent+"66":"transparent"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,transition:"all .18s"}}>{t.icon}</div>
-                  <span style={{fontSize:8,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:active?accent:"rgba(255,255,255,.22)"}}>{t.label}</span>
-                </button>
-              );
-            })}
-          </div>
+          <MobileTabBar tabs={TABS} tab={tab} onTabClick={handleTabClick}/>
         </div>
         )}
 
         {showDS && deckSwitcher}
+        {hlOverlay && (
+          <Suspense fallback={null}>
+          {desktop.isDesktop ? (
+            <DesktopModal title="★ Highlighted session" width={960} onClose={function(){ setHlOverlay(null); }}>
+              <div style={{height:"min(76vh, 780px)",display:"flex",flexDirection:"column"}}>
+                <SessionReview session={hlOverlay} onBack={function(){ setHlOverlay(null); }} authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams}/>
+              </div>
+            </DesktopModal>
+          ) : (
+            <div style={Object.assign({}, overlayFill(600), {background:themed("#060d1a"),animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"})}>
+              <SessionReview session={hlOverlay} onBack={function(){ setHlOverlay(null); }} authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams}/>
+            </div>
+          )}
+          </Suspense>
+        )}
         {showProfile && (
           <ProfileSheet
             authUser={authUser}

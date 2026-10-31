@@ -7,6 +7,7 @@
 // name a channel — so an event can only reach users of the org it was published to:
 //   user:<userId>         one person's devices/tabs
 //   orgAdmins:<orgId>     admins + owner of one org
+//   org:<orgId>           every member of one org (only for id-only "go refetch" events)
 // Payloads are small (ids + kind); clients refetch through their normal org-scoped
 // endpoints. The only exception is live-session progress, which carries its state.
 
@@ -15,6 +16,7 @@ const { isAdminRole } = require("./auth");
 var clients = new Map();       // client id → { res, userId, orgId, admin, sid }
 var byUser = new Map();        // userId → Set<client id>
 var byOrgAdmins = new Map();   // orgId → Set<client id>
+var byOrg = new Map();         // orgId → Set<client id> (everyone)
 var nextId = 1;
 var MAX_PER_USER = 5;
 var PING_MS = 25000;
@@ -40,6 +42,7 @@ function drop(id) {
   if (!c) return;
   clients.delete(id);
   removeFrom(byUser, c.userId, id);
+  removeFrom(byOrg, c.orgId, id);
   if (c.admin) removeFrom(byOrgAdmins, c.orgId, id);
 }
 
@@ -59,6 +62,7 @@ function streamHandler(req, res) {
   var c = { res: res, userId: u.id, orgId: u.orgId, admin: isAdminRole(u.role), sid: req.authSid || null };
   clients.set(id, c);
   addTo(byUser, u.id, id);
+  addTo(byOrg, u.orgId, id);
   if (c.admin) addTo(byOrgAdmins, u.orgId, id);
 
   // Bound reconnect storms: keep only the newest streams per user
@@ -90,13 +94,15 @@ function sendTo(ids, type, data) {
   ids.forEach(function(id) { var c = clients.get(id); if (c) writeRaw(c, text); });
 }
 
-// Publish to one or more users (duplicates collapse) and/or an org's admins
+// Publish to one or more users (duplicates collapse), an org's admins and/or a whole org
 //   publish({ users:[...], orgAdmins: orgId }, "session.changed", { id })
+//   publish({ org: orgId }, "highlight.changed", { sessionId })
 function publish(target, type, data) {
   var seen = new Set();
   function add(set) { if (set) set.forEach(function(id) { seen.add(id); }); }
   (target.users || []).forEach(function(uid) { if (uid) add(byUser.get(uid)); });
   if (target.orgAdmins) add(byOrgAdmins.get(target.orgAdmins));
+  if (target.org) add(byOrg.get(target.org));
   sendTo(seen, type, data);
 }
 

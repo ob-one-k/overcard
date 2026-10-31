@@ -236,7 +236,7 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
               return (
                 <div key={hid+i} style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
                   <button onClick={function(){if(!isLast)jumpTo(i);}}
-                    style={{width:isLast?30:20,height:isLast?30:20,borderRadius:"50%",border:"2px solid "+hm.color,background:isLast?hm.color+"33":"transparent",cursor:isLast?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isLast?11:8,color:hm.color,transition:"all .2s",flexShrink:0}}>
+                    style={{width:isLast?30:20,height:isLast?30:20,borderRadius:"50%",border:"2px solid "+hm.color,background:isLast?hm.color+"33":"transparent",cursor:isLast?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:isLast?11:8,color:hm.color,transition:"background .2s,border-color .2s,color .2s,box-shadow .2s,opacity .2s,width .2s,height .2s",flexShrink:0}}>
                     {isLast ? hm.icon : "●"}
                   </button>
                   {i < pitchHist.length-1 && <div style={{width:14,height:1,background:"rgba(255,255,255,.12)",flexShrink:0}}/>}
@@ -568,7 +568,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
             var st3 = STYPE[key]; var on = pendingType===key;
             return (
               <button key={key} onClick={function(){setPendingType(key); setPlayView("new");}}
-                style={{flex:1,background:on?st3.bg:"rgba(255,255,255,.07)",border:"1.5px solid "+(on?st3.border:"rgba(255,255,255,.09)"),borderRadius:14,padding:"15px 10px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",transition:"all .15s"}}>
+                style={{flex:1,background:on?st3.bg:"rgba(255,255,255,.07)",border:"1.5px solid "+(on?st3.border:"rgba(255,255,255,.09)"),borderRadius:14,padding:"15px 10px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",transition:"background .15s,border-color .15s,color .15s,box-shadow .15s,opacity .15s,width .15s,height .15s"}}>
                 <div style={{fontSize:22,marginBottom:5}}>{key==="live"?"📞":"🎯"}</div>
                 <div style={{fontSize:12,fontWeight:700,color:on?st3.color:"rgba(255,255,255,.5)"}}>{st3.label}</div>
                 <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:2}}>{key==="live"?"Real call":"Dry run"}</div>

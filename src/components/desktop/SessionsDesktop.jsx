@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext } from "react";
-import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
+import { cachedGet, peek, useCacheVersion, useCachedGet } from "../../lib/dataCache";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR, themed } from "../../lib/constants";
 import { apiDel } from "../../lib/api";
@@ -7,6 +7,7 @@ import { inputSt } from "../../lib/styles";
 import { DarkDatePicker } from "../ui";
 import { SessionReview, sessionVisits, sessionNotes, sessionDurSec, fmtSec, fmtDate, fmtTime } from "../Sessions";
 import { deleteAudioBlob } from "../../lib/audioStore";
+import { HighlightChip, HL_COLOR } from "../Highlights";
 
 // ─── DESKTOP TYPE SCALE ───────────────────────────────────────────────────────
 // body 14–15 · meta 13 · section heading 16–18 · page title 20–24 · badges ≥11
@@ -159,7 +160,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   var [repGroup, setRepGroup] = useState(false);                         // group By-rep rows by team
   var [hoverWeek, setHoverWeek] = useState(null);                        // activity chart tooltip
   var [ovMode,   setOvMode]   = useState("live");   // overview sub-tab: live | practice (metrics never mix)
-  var [fSource,  setFSource]  = useState("all");    // my scope: all | mine | shared (sessions shared with me)
+  var [fSource,  setFSource]  = useState("all");    // all | mine | shared (my scope) | highlights (any scope)
   var [groupRep, setGroupRep] = useState(false);    // team/org scopes: group the list by rep
   var [openGroups, setOpenGroups] = useState({});   // rep id -> expanded
 
@@ -181,6 +182,11 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   useEffect(function() {
     if (onInitialReview) setSelectedId(onInitialReview);
   }, [onInitialReview]);
+
+  // Highlights this user may see for the current deck — any rep's sessions, read-only
+  var hlRes = useCachedGet("/sessions/highlights?deckId=" + encodeURIComponent(deckId));
+  var highlights = Array.isArray(hlRes.data) ? hlRes.data : null;
+  var hlMode = fSource === "highlights";
 
   var sv = useCacheVersion("/sessions");
   function buildUrl() {
@@ -245,9 +251,11 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   }
 
   function getFiltered() {
-    if (!sessions) return [];
+    // Highlights mode lists the highlight feed (it includes other reps' sessions)
+    var base = hlMode ? highlights : sessions;
+    if (!base) return [];
     var q = search.toLowerCase();
-    var list = sessions.filter(function(s) {
+    var list = base.filter(function(s) {
       if (fType !== "all" && (s.mode||"live") !== fType) return false;
       if (!isAdminScope && fSource === "mine" && s._shared) return false;
       if (!isAdminScope && fSource === "shared" && !s._shared) return false;
@@ -268,7 +276,9 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
   }
 
   var filtered = getFiltered();
-  var selectedSession = sessions ? sessions.find(function(s){ return s.id === selectedId; }) : null;
+  var selectedSession = (sessions && sessions.find(function(s){ return s.id === selectedId; })) ||
+    (highlights && highlights.find(function(s){ return s.id === selectedId; })) || null;
+  var hlCount = highlights ? highlights.length : 0;
   var filtersActive = !!(search || fType !== "all" || fFrom || fTo || sortBy !== "date" || fUser || fSource !== "all");
   var sharedCount = sessions ? sessions.filter(function(x){ return x._shared; }).length : 0;
   var stats = sessions !== null && filtered.length > 0 ? computeFilteredStats(filtered) : null;
@@ -431,6 +441,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
           <span style={{fontSize:compact?14:15,fontWeight:700,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{s.name || "Untitled session"}</span>
           {fbUnseen && <span title="New feedback" style={{width:9,height:9,borderRadius:"50%",background:"#EF5350",boxShadow:"0 0 0 3px rgba(239,83,80,.25)",flexShrink:0}}/>}
+          <HighlightChip highlight={s.highlight} fontSize={compact ? 11 : 12}/>
           <OutcomeBadge session={s}/>
         </div>
         {/* Row 2: WHO ran it */}
@@ -476,7 +487,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
 
   // ─── RENDER: overview (no session selected) ───────────────────────────────────
   function renderOverview() {
-    if (sessions === null) {
+    if (hlMode ? highlights === null : sessions === null) {
       return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:TXT3,fontSize:15}}>Loading sessions…</div>;
     }
     var liveN = filtered.filter(function(x){ return (x.mode || "live") === "live"; }).length;
@@ -500,7 +511,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
         <div style={{minWidth:0}}>
           <div style={{display:"flex",alignItems:"baseline",gap:12,flexWrap:"wrap"}}>
             <div style={{fontSize:compact?19:22,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{deckName || "Sessions"}</div>
-            <div style={{fontSize:14,color:TXT3}}>{scopeLabel}{fUser ? " · " + fUserName : ""}{filtersActive && !fUser ? " · filtered" : ""}</div>
+            <div style={{fontSize:14,color:TXT3}}>{hlMode ? <span style={{color:HL_COLOR,fontWeight:700}}>★ Highlights</span> : scopeLabel}{fUser ? " · " + fUserName : ""}{filtersActive && !fUser && !hlMode ? " · filtered" : ""}</div>
           </div>
           <div style={{fontSize:compact?13:14,color:TXT3,marginTop:4}}>{stacked ? "Go back to the list and pick a session to review it." : "Select a session on the left to review its path, notes and feedback."}</div>
         </div>
@@ -545,6 +556,9 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
       { v:avgSec !== null ? fmtSec(avgSec) : "—", l:"Avg run", c:ACCENT },
       { v:(visitsN / n).toFixed(1), l:"Cards per run", c:"#00B4FF" },
     ];
+    // How many of these are highlighted (in highlights mode the whole view is)
+    var hlN = ovList.filter(function(x){ return !!x.highlight; }).length;
+    if (!hlMode) kpis.push({ v:hlN, l:"Highlighted", sub:Math.round(hlN / n * 100) + "% of " + n, c:HL_COLOR });
     var maxMix = mixRows.reduce(function(m, r){ return Math.max(m, r.n); }, 1);
     var slices = isLiveOv ? LIVE_SLICES : PRACTICE_SLICES;
     var showReps = repRows.length > 1 || isAdminScope;
@@ -797,7 +811,12 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
               <div style={{flex:1,fontSize:16,fontWeight:700,color:TXT}}>My Sessions</div>
             )}
             <span style={{fontSize:13,color:TXT3,whiteSpace:"nowrap"}}>
-              {sessions === null ? "…" : filtered.length + (filtered.length !== sessions.length ? " of " + sessions.length : "") + " session" + (sessions.length !== 1 ? "s" : "")}
+              {(function() {
+                // Count against the list being shown (the highlight feed in Highlights mode)
+                var base = hlMode ? highlights : sessions;
+                if (base === null) return "…";
+                return filtered.length + (filtered.length !== base.length ? " of " + base.length : "") + " session" + (base.length !== 1 ? "s" : "");
+              })()}
             </span>
             {stacked && sessions !== null && (
               <button onClick={function(){ setShowOverview(true); }}
@@ -826,13 +845,15 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
           </datalist>
 
           {/* My scope: all / my own / shared with me — team & org scopes: group by rep */}
-          {!isAdminScope && (
-            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-              {[["all","All"],["mine","My runs"],["shared","Shared with me" + (sharedCount ? " · " + sharedCount : "")]].map(function(pair) {
-                return <button key={pair[0]} onClick={function(){ setFSource(pair[0]); }} style={pill(fSource === pair[0], pair[0] === "shared" ? "#00B4FF" : ACCENT)}>{pair[1]}</button>;
-              })}
-            </div>
-          )}
+          {/* Highlights (deck-specific) are offered in every scope */}
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            {!isAdminScope && [["all","All"],["mine","My runs"],["shared","Shared with me" + (sharedCount ? " · " + sharedCount : "")]].map(function(pair) {
+              return <button key={pair[0]} onClick={function(){ setFSource(pair[0]); }} style={pill(fSource === pair[0], pair[0] === "shared" ? "#00B4FF" : ACCENT)}>{pair[1]}</button>;
+            })}
+            <button onClick={function(){ setFSource(hlMode ? "all" : "highlights"); }} aria-pressed={hlMode} style={pill(hlMode, HL_COLOR)}>
+              ★ Highlights{hlCount ? " · " + hlCount : ""}
+            </button>
+          </div>
           {canGroup && (
             // Pill toggle (native checkboxes are unstyled by the app's global input reset)
             <div style={{display:"flex",alignItems:"center",gap:6}}>

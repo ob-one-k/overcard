@@ -1,6 +1,19 @@
-import { useState, useEffect } from "react";
-import { isAdminRole, roleMeta, SESS_COLOR, themed } from "../lib/constants";
+import { useState, useEffect, useRef } from "react";
+import { isAdminRole, roleMeta, SESS_COLOR, accentA, themed } from "../lib/constants";
 import { OrgMark } from "./OrgMark";
+import { useSlidingIndicator } from "../lib/useSlidingIndicator";
+
+// Tab list with one org-accent highlight that slides between the rows
+function SlideList({ activeKey, collapsed, children }) {
+  var ref = useRef(null);
+  var ind = useSlidingIndicator(ref, activeKey, [collapsed]);
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:10,background:accentA(.11),boxShadow:"inset 3px 0 0 " + SESS_COLOR})}/>}
+      {children}
+    </div>
+  );
+}
 
 // ─── DESKTOP SIDEBAR ──────────────────────────────────────────────────────────
 // Left sidebar navigation for desktop layout.
@@ -143,15 +156,16 @@ export function DesktopSidebar({
           {!isCollapsed && (
             <div style={{fontSize:12,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:"rgba(255,255,255,.45)",margin:"0 0 8px 6px"}}>Navigate</div>
           )}
+          <SlideList activeKey={tab} collapsed={isCollapsed}>
           {tabs.map(function(t, idx) {
             var active = tab === t.id;
             var isHov  = hoverOk && hovered === t.id;
             var locked = sessionActive && t.id !== "play";
-            var accent = t.accent;
 
             return (
               <button
                 key={t.id}
+                data-tab={t.id}
                 onClick={function(){ if (!locked) { onTabClick(t.id); if (inDrawer) setDrawerOpen(false); } }}
                 onMouseEnter={hoverOk ? function(){ setHovered(t.id); } : undefined}
                 onMouseLeave={hoverOk ? function(){ setHovered(null); } : undefined}
@@ -167,20 +181,16 @@ export function DesktopSidebar({
                   borderRadius:10, padding: isCollapsed ? "10px 8px" : "10px 12px",
                   cursor: locked ? "not-allowed" : "pointer",
                   fontFamily:"inherit", textAlign:"left",
-                  position:"relative", marginBottom: compact ? 4 : 3,
-                  background: active
-                    ? accent + "1c"
-                    : isHov && !locked
-                    ? "rgba(255,255,255,.06)"
-                    : "transparent",
-                  boxShadow: active ? "inset 3px 0 0 " + accent : "none",
+                  position:"relative", zIndex:1, marginBottom: compact ? 4 : 3,
+                  // The active highlight is the sliding indicator behind the rows
+                  background: !active && isHov && !locked ? "rgba(255,255,255,.06)" : "transparent",
                   opacity: locked ? 0.45 : 1,
                   transition:"background .12s, opacity .12s",
                   justifyContent: isCollapsed ? "center" : "flex-start"
                 }}>
                 <span aria-hidden="true" style={{fontSize:compact?21:19,flexShrink:0,lineHeight:1,width:22,textAlign:"center"}}>{t.icon}</span>
                 {!isCollapsed && (
-                  <span style={{fontSize:15,fontWeight:active?700:500,color:active?accent:"rgba(255,255,255,.78)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  <span style={{fontSize:15,fontWeight:active?700:500,color:active?SESS_COLOR:"rgba(255,255,255,.78)",transition:"color .25s",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {t.label}
                   </span>
                 )}
@@ -196,6 +206,7 @@ export function DesktopSidebar({
               </button>
             );
           })}
+          </SlideList>
         </div>
 
         {/* ── Section C: User block + collapse toggle ── */}

@@ -772,7 +772,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
               var stk = STYPE[key]; var on = pendingType === key;
               return (
                 <button key={key} role="radio" aria-checked={on} onClick={function(){ setPendingType(key); setPlayView("new"); }}
-                  style={{display:"flex",alignItems:"center",gap:14,background:on?stk.bg:"rgba(255,255,255,.04)",border:"1.5px solid "+(on?stk.color:"rgba(255,255,255,.1)"),borderRadius:14,padding:"14px 16px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"all .15s"}}>
+                  style={{display:"flex",alignItems:"center",gap:14,background:on?stk.bg:"rgba(255,255,255,.04)",border:"1.5px solid "+(on?stk.color:"rgba(255,255,255,.1)"),borderRadius:14,padding:"14px 16px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"background .15s,border-color .15s,color .15s,box-shadow .15s,opacity .15s,width .15s,height .15s"}}>
                   <span style={{fontSize:26,flexShrink:0}}>{key==="live"?"📞":"🎯"}</span>
                   <span style={{flex:1}}>
                     <span style={{display:"block",fontSize:16,fontWeight:700,color:on?stk.color:"rgba(255,255,255,.85)"}}>{stk.label}</span>

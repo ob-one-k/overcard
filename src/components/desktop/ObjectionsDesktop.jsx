@@ -6,6 +6,7 @@ import { CardEditorSheet } from "../Editor";
 import { TreeView } from "../Viewer";
 import { DesktopModal } from "../DesktopModal";
 import { ImportPicker } from "../ImportPicker";
+import { CopyIcon } from "../ui";
 import { liveStacks, archivedStacks, upsertStackCard, deleteStackCard, confirmStackDelete } from "../../lib/deckOps";
 import { stripMarkup } from "../../lib/richtext";
 import { CardReadView } from "./CardsDesktop";
@@ -337,7 +338,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
             ) : (
               <>
                 <button onClick={function(){ setShowImport(true); }} title="Copy objection stacks from another deck"
-                  style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.14)",color:TXT2,borderRadius:10,fontSize:13,fontWeight:600,padding:"6px 10px",minHeight:isTablet?40:32,cursor:"pointer",fontFamily:"inherit"}}>⇣ Copy</button>
+                  style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.14)",color:TXT2,borderRadius:10,fontSize:13,fontWeight:600,padding:"6px 10px",minHeight:isTablet?40:32,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",gap:6}}><CopyIcon size={14}/>Copy</button>
                 <button onClick={function(){ setShowNew(function(p){ return !p; }); if (showNew) setNf({label:"",icon:"😐"}); }}
                   style={{background:showNew?"transparent":"rgba(239,83,80,.14)",border:"1px solid rgba(239,83,80,.4)",color:OBJ_COLOR,borderRadius:10,fontSize:14,fontWeight:700,padding:"6px 14px",minHeight:isTablet?40:32,cursor:"pointer",fontFamily:"inherit"}}>
                   {showNew ? "Cancel" : "+ New stack"}
