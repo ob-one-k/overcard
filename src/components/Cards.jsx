@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS, themed } from "../lib/constants";
+import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS, themed, LIMITS } from "../lib/constants";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { keyboardIsOpen } from "../lib/useViewport";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge, CopyIcon } from "./ui";
@@ -420,7 +420,7 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
         ) : (
           <div style={{padding:"8px 20px 14px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
             <label style={labelSt()}>Stack Name</label>
-            <input value={form.label} onChange={function(e){setForm(function(p){return Object.assign({},p,{label:e.target.value});});}} style={inputSt({marginBottom:10})}/>
+            <input value={form.label} onChange={function(e){setForm(function(p){return Object.assign({},p,{label:e.target.value});});}} maxLength={LIMITS.stackLabel} style={inputSt({marginBottom:10})}/>
             <label style={labelSt()}>Icon</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
               {OBJ_ICONS.map(function(ic) {
@@ -854,7 +854,7 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
             <Handle/>
             <div style={{fontSize:18,fontWeight:700,color:"#fff",marginBottom:16,fontFamily:"'Lora',serif"}}>New Objection Stack</div>
             <label style={labelSt()}>Name</label>
-            <input value={nf.label} onChange={function(e){setNf(function(p){return Object.assign({},p,{label:e.target.value});});}} placeholder="e.g. Too Expensive" style={inputSt({marginBottom:14})}/>
+            <input value={nf.label} onChange={function(e){setNf(function(p){return Object.assign({},p,{label:e.target.value});});}} maxLength={LIMITS.stackLabel} placeholder="e.g. Too Expensive" style={inputSt({marginBottom:14})}/>
             <label style={labelSt()}>Icon</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:18}}>
               {OBJ_ICONS.map(function(ic) {

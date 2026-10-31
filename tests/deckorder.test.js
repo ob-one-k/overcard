@@ -14,7 +14,7 @@ test("owner reorders decks; everyone sees the new order; others can't reorder", 
   var made = [];
   try {
     for (var i = 0; i < 2; i++) {
-      var r = await owner.post("/decks", { name: "Z order test " + tid(), cards: {}, objStacks: [] });
+      var r = await owner.post("/decks", { name: "Z" + tid(), cards: {}, objStacks: [] });
       assert.equal(r.status, 201, r.text);
       made.push(r.body.id);
     }

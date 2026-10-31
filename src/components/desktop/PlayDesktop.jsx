@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
 import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA, themed } from "../../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA, themed, LIMITS } from "../../lib/constants";
 import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
@@ -791,7 +791,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
               <label htmlFor="desk-sess-title" style={{display:"block",fontSize:13,fontWeight:600,color:"rgba(255,255,255,.75)",marginBottom:7}}>Title <span style={{color:"#EF5350"}}>*</span></label>
               <input id="desk-sess-title" value={newName} onChange={function(e){setNewName(e.target.value);setNameError(false);}}
                 onKeyDown={function(e){if(e.key==="Enter")startSession();}}
-                placeholder={pendingType==="live"?"e.g. Cold call — Acme Corp":"e.g. Morning practice run"}
+                placeholder={pendingType==="live"?"e.g. Cold call — Acme Corp":"e.g. Morning practice run"} maxLength={LIMITS.sessionName}
                 aria-invalid={nameError || undefined}
                 style={inputSt({fontSize:15,padding:"12px 14px",borderColor:nameError?"rgba(239,83,80,.75)":undefined})} autoFocus/>
               {nameError && <div role="alert" style={{fontSize:13,color:"#EF5350",marginTop:6}}>Give this session a title to start.</div>}

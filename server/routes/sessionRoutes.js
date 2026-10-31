@@ -11,6 +11,7 @@ const {
   getHighlights, getHighlight, isHighlightVisibleTo, getMemberOrAdminTeamIds, setHighlight, clearHighlight, getTeamById,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
+const { LIMITS, clampText } = require("../validate");
 const { publish, publishLive, publishProgress, endProgress, startProgress } = require("../realtime");
 
 router.use(requireAuth);
@@ -48,7 +49,7 @@ function cleanEvents(list) {
     if (!e || typeof e !== "object") return null;
     if (e.type === "visit") {
       out.push({ type: "visit", cardId: str(e.cardId, 100), cardTitle: str(e.cardTitle, 200), cardType: str(e.cardType, 20),
-        isObjCard: !!e.isObjCard, stackLabel: str(e.stackLabel, 100), intendedPath: !!e.intendedPath, ts: num(e.ts),
+        isObjCard: !!e.isObjCard, stackId: str(e.stackId, 100), stackLabel: str(e.stackLabel, 100), intendedPath: !!e.intendedPath, ts: num(e.ts),
         durationMs: num(e.durationMs), audioStartMs: num(e.audioStartMs), audioEndMs: num(e.audioEndMs) });
     } else if (e.type === "note") {
       out.push({ type: "note", cardId: str(e.cardId, 100), cardTitle: str(e.cardTitle, 200), text: str(e.text, 2000), ts: num(e.ts) });
@@ -136,6 +137,8 @@ router.post("/", async function(req, res, next) {
     // Snapshot the deck's look when the client didn't send it (a deleted deck must have been sent)
     // This endpoint only ever saves finished runs; live ones go through /start and /beat
     var body = Object.assign({}, req.body, { status: "completed" });
+    // Over-long titles are cut rather than rejected — a finished call is never lost over its name
+    if (typeof body.name === "string") body.name = clampText(body.name, LIMITS.sessionName);
     body.referenceSessionId = await cleanReference(body.referenceSessionId, req.user.orgId);
     if (!body.deckName) {
       if (!usable) return res.status(400).json({ error: "Unknown deck" });
@@ -245,6 +248,7 @@ router.post("/:id/start", async function(req, res, next) {
       return res.status(429).json({ error: "Finish your other session first" });
     }
     const live = await startLiveSession(Object.assign({}, body, {
+      name: typeof body.name === "string" ? clampText(body.name, LIMITS.sessionName) : body.name,
       id: req.params.id, deckName: deck.name, deckColor: deck.color, deckIcon: deck.icon,
       events: [], live: cleanLive(body.live),
       referenceSessionId: await cleanReference(body.referenceSessionId, req.user.orgId),

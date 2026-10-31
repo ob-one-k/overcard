@@ -110,7 +110,7 @@ test("cross-org access is refused everywhere", async function() {
     denied(await aOwner.post("/admin/transfer-ownership", { userId: MER_USER }), "transfer ownership to their user");
 
     // A deck's access list can't name another org's people or teams
-    var r = await aAdmin.post("/decks", { name: "t_iso " + tid(), visibility: "private",
+    var r = await aAdmin.post("/decks", { name: tid("i"), visibility: "private",
       accessList: [{ entityType: "user", entityId: MER_USER }, { entityType: "team", entityId: MER_TEAM }, { entityType: "team", entityId: F.apexTeam }] });
     assert.equal(r.status, 201);
     createdDeck = r.body.id;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { OrgMark } from "./OrgMark";
-import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA, themed } from "../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA, themed, LIMITS } from "../lib/constants";
 import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge as IntendedBadgeComp } from "./ui";
@@ -633,7 +633,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
             <div style={{fontSize:13,fontWeight:700,color:"#fff",marginBottom:12}}>{st2.label === "Live" ? "📞" : "🎯"} New {st2.label} Session</div>
             <label style={labelSt()}>Title <span style={{color:"#EF5350",fontSize:9}}>*</span></label>
             <input value={newName} onChange={function(e){setNewName(e.target.value);setNameError(false);}} onKeyDown={function(e){if(e.key==="Enter")startSession();}}
-              placeholder={pendingType==="live"?"e.g. Cold call — Acme Corp":"e.g. Morning practice run"}
+              placeholder={pendingType==="live"?"e.g. Cold call — Acme Corp":"e.g. Morning practice run"} maxLength={LIMITS.sessionName}
               style={inputSt({marginBottom:nameError?4:10,borderColor:nameError?"rgba(239,83,80,.7)":undefined})} autoFocus/>
             {nameError && <div style={{fontSize:10,color:"#EF5350",marginBottom:8}}>Session title is required</div>}
             <label style={labelSt()}>Description <span style={{color:"rgba(255,255,255,.25)",fontWeight:400,textTransform:"none",letterSpacing:0,fontSize:10}}>(optional)</span></label>

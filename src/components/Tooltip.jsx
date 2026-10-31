@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, createContext, useContext } from "react";
-import { TM, INFLECTIONS, INFL_MAP, INFL_CATS, themed } from "../lib/constants";
-import { parseRichText } from "../lib/richtext";
+import { TM, INFLECTIONS, INFL_MAP, INFL_CATS, themed, LIMITS } from "../lib/constants";
+import { parseRichText, nameText, fillName } from "../lib/richtext";
 import { inputSt } from "../lib/styles";
 
 // ─── GLOBAL INFLECTION TOOLTIP CONTEXT ───────────────────────────────────────
@@ -62,8 +62,9 @@ export function RichPromptDisplay({ text, accentColor }) {
   return (
     <span>
       {parseRichText(text || "").map(function(seg, i) {
-        if (seg.type === "bold")   return <strong key={i} style={{fontWeight:800,color:"#fff",fontStyle:"normal"}}>{seg.content}</strong>;
-        if (seg.type === "italic") return <InflWord key={i} seg={seg} accent={accentColor} />;
+        if (seg.type === "name")   return <span key={i} style={{fontWeight:700,color:"#fff",fontStyle:"normal"}}>{nameText()}</span>;
+        if (seg.type === "bold")   return <strong key={i} style={{fontWeight:800,color:"#fff",fontStyle:"normal"}}>{fillName(seg.content)}</strong>;
+        if (seg.type === "italic") return <InflWord key={i} seg={Object.assign({}, seg, { content: fillName(seg.content) })} accent={accentColor} />;
         return <span key={i}>{seg.content}</span>;
       })}
     </span>
@@ -109,13 +110,17 @@ export function OverviewEditor({ bullets, onChange, accent }) {
         return (
           <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
             <span style={{color:accent,fontSize:10,flexShrink:0,width:16,textAlign:"center"}}>◆</span>
-            <input value={b} onChange={function(e) { setB(i, e.target.value); }}
-              placeholder={"Bullet "+(i+1)+" (optional)"}
-              style={inputSt({margin:0,fontSize:13})} />
+            <div style={{position:"relative",flex:1,minWidth:0}}>
+              <input value={b} onChange={function(e) { setB(i, e.target.value); }}
+                maxLength={LIMITS.bullet}
+                placeholder={"Bullet "+(i+1)+" (optional)"}
+                style={inputSt({margin:0,fontSize:13,paddingRight:46})} />
+              {b.length > 0 && <span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:10,fontWeight:600,pointerEvents:"none",color:b.length>=LIMITS.bullet?"#EF5350":"rgba(255,255,255,.3)"}}>{b.length}/{LIMITS.bullet}</span>}
+            </div>
           </div>
         );
       })}
-      <div style={{fontSize:10,color:"rgba(255,255,255,.2)",marginTop:4}}>1–3 bullets shown above the script in Play &amp; Cards</div>
+      <div style={{fontSize:10,color:"rgba(255,255,255,.2)",marginTop:4}}>1–3 short bullets ({LIMITS.bullet} characters each) shown above the script in Play &amp; Cards</div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT, themed } from "../lib/constants";
+import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT, themed, LIMITS } from "../lib/constants";
 import { apiPost, apiPut, apiDel, setStoredToken, getStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, CopyIcon } from "./ui";
@@ -58,7 +58,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
               <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:4,fontFamily:"'Lora',serif"}}>New Pitch Deck</div>
               <div style={{fontSize:11,color:"rgba(255,255,255,.4)",marginBottom:14,lineHeight:1.5}}>Starts with an Opening → Discovery → Close path you can edit.</div>
               <label style={labelSt()}>Name</label>
-              <input value={nf.name} onChange={function(e){setNf(function(p){return Object.assign({},p,{name:e.target.value});});}} placeholder="e.g. Enterprise Outbound" style={inputSt({marginBottom:11})}/>
+              <input value={nf.name} onChange={function(e){setNf(function(p){return Object.assign({},p,{name:e.target.value});});}} placeholder="e.g. Enterprise Outbound" maxLength={LIMITS.deckName} style={inputSt({marginBottom:11})}/>
               <label style={labelSt()}>Icon</label>
               <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:11}}>
                 {DECK_ICONS.map(function(ic) {
@@ -128,7 +128,8 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                   <div style={{background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.15)",borderRadius:16,padding:"14px 15px"}}>
                     <div style={{fontSize:12,fontWeight:700,color:"#fff",marginBottom:10}}>Edit Deck</div>
                     <label style={labelSt()}>Name</label>
-                    <input value={ef.name} onChange={function(e){setEf(function(p){return Object.assign({},p,{name:e.target.value});});}} style={inputSt({marginBottom:10})}/>
+                    <input value={ef.name} onChange={function(e){setEf(function(p){return Object.assign({},p,{name:e.target.value});});}} maxLength={Math.max(LIMITS.deckName, ef.name.length)} style={inputSt({marginBottom:ef.name.trim().length > LIMITS.deckName ? 4 : 10})}/>
+                    {ef.name.trim().length > LIMITS.deckName && ef.name.trim() !== (d.name || "").trim() && <div style={{fontSize:11,color:"#EF5350",marginBottom:10}}>Deck names can be up to {LIMITS.deckName} characters ({ef.name.trim().length} now).</div>}
                     <label style={labelSt()}>Icon</label>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
                       {DECK_ICONS.map(function(ic) {
@@ -210,7 +211,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     )}
                     <div style={{display:"flex",gap:8}}>
                       <button onClick={function(){setEditingDeck(null);}} style={Object.assign({},ghostBtn(),{flex:1,padding:"8px",fontSize:12})}>Cancel</button>
-                      <button onClick={function(){if(onEditDeck&&ef.name.trim())onEditDeck(editingDeck.id,ef);setEditingDeck(null);}} style={Object.assign({},solidBtn(ef.color),{flex:2,padding:"8px",fontSize:12})}>Save</button>
+                      <button disabled={ef.name.trim().length > LIMITS.deckName && ef.name.trim() !== (d.name || "").trim()} onClick={function(){if(onEditDeck&&ef.name.trim())onEditDeck(editingDeck.id,ef);setEditingDeck(null);}} style={Object.assign({},solidBtn(ef.color),{flex:2,padding:"8px",fontSize:12})}>Save</button>
                     </div>
                     {/* Deck management — duplicate/archive for admins, delete for the owner */}
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid rgba(255,255,255,.08)"}}>

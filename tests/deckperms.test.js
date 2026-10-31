@@ -13,7 +13,7 @@ function fullDeck(d, changes) { return Object.assign({ name: d.name, color: d.co
 test("team-assigned decks: creator manages, editors edit, others don't see", async function() {
   var creator = await login("apexAdmin"), other = await login("apexAdmin2"), owner = await login("apexOwner");
   var member = await login("apexUser");
-  var r = await creator.post("/decks", { name: "t_team deck " + tid(), visibility: "private", accessList: [{ entityType: "team", entityId: F.apexTeam }], cards: {}, objStacks: [] });
+  var r = await creator.post("/decks", { name: tid("td"), visibility: "private", accessList: [{ entityType: "team", entityId: F.apexTeam }], cards: {}, objStacks: [] });
   assert.equal(r.status, 201, r.text);
   var deckId = r.body.id;
   try {

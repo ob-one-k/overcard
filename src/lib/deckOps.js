@@ -1,4 +1,4 @@
-import { uid, aid, osid } from "./constants.js";
+import { uid, aid, osid, LIMITS } from "./constants.js";
 
 // ─── DECK OPERATIONS ──────────────────────────────────────────────────────────
 // Pure helpers for templates, copying and archiving. Every card id that is
@@ -80,7 +80,8 @@ export function cloneStack(stack, deckIdMap) {
 export function duplicateDeck(deck) {
   var res = cloneCards(deck.cards || {}, Object.keys(deck.cards || {}));
   return {
-    name: deck.name + " (copy)",
+    // "(copy)" is dropped when it wouldn't fit the deck-name limit
+    name: (deck.name + " (copy)").length <= LIMITS.deckName ? deck.name + " (copy)" : (deck.name || "Deck").slice(0, LIMITS.deckName),
     color: deck.color, icon: deck.icon,
     visibility: deck.visibility || "public",
     accessList: (deck.accessList || []).slice(),

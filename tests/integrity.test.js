@@ -20,7 +20,7 @@ test("deleting a user with sessions, feedback and shares keeps the history", asy
     assert.equal((await rep.post("/sessions/" + sid + "/share", { toUserId: mate.user.id })).status, 200);
     assert.equal((await admin.post("/sessions/" + sid + "/feedback", { text: "Good" })).status, 200);
     // A private deck shared with them
-    var d = await admin.post("/decks", { name: "t_del " + tid(), visibility: "private", accessList: [{ entityType: "user", entityId: u.id }] });
+    var d = await admin.post("/decks", { name: tid("d"), visibility: "private", accessList: [{ entityType: "user", entityId: u.id }] });
     deckId = d.body.id;
 
     var r = await admin.del("/admin/users/" + u.id);

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useContext } from "react";
-import { TM, OBJ_COLOR, OBJ_ICONS, osid, uid, aid, themed } from "../../lib/constants";
+import { TM, OBJ_COLOR, OBJ_ICONS, osid, uid, aid, themed, LIMITS } from "../../lib/constants";
 import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, inputSt, labelSt, resizeHandle } from "../../lib/styles";
 import { CardEditorSheet } from "../Editor";
@@ -369,7 +369,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
           {showNew && !readOnly && (
             <div style={{background:"rgba(239,83,80,.06)",border:"1px solid rgba(239,83,80,.2)",borderRadius:12,padding:"14px"}}>
               <label style={Object.assign({}, labelSt(), {fontSize:12})}>Stack name</label>
-              <input value={nf.label} onChange={function(e){setNf(function(p){return Object.assign({},p,{label:e.target.value});});}}
+              <input value={nf.label} onChange={function(e){setNf(function(p){return Object.assign({},p,{label:e.target.value});});}} maxLength={LIMITS.stackLabel}
                 onKeyDown={function(e){ if (e.key === "Enter") createStack(); }}
                 placeholder="e.g. Price Objection" style={inputSt({marginBottom:12,fontSize:15})} autoFocus={!desktop.isTouchPrimary}/>
               <label style={Object.assign({}, labelSt(), {fontSize:12})}>Icon</label>
@@ -744,7 +744,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
         <DesktopModal title="Stack details" width={460} onClose={function(){ setShowMeta(false); }}>
           <div style={{padding:"16px 20px 20px"}}>
             <label style={Object.assign({}, labelSt(), {fontSize:12})}>Stack name</label>
-            <input value={meta.label} onChange={function(e){ setMeta(function(p){ return Object.assign({},p,{label:e.target.value}); }); }}
+            <input value={meta.label} onChange={function(e){ setMeta(function(p){ return Object.assign({},p,{label:e.target.value}); }); }} maxLength={LIMITS.stackLabel}
               onKeyDown={function(e){ if (e.key === "Enter") saveMeta(); }} style={inputSt({marginBottom:12,fontSize:15})}/>
             <label style={Object.assign({}, labelSt(), {fontSize:12})}>Icon</label>
             <IconGrid value={meta.icon} onPick={function(ic){ setMeta(function(p){ return Object.assign({},p,{icon:ic}); }); }}/>

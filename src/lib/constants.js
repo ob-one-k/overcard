@@ -165,3 +165,7 @@ export var INFL_MAP = {};
 INFLECTIONS.forEach(function(inf) { INFL_MAP[inf.label] = inf; });
 export var INFL_CATS = [];
 INFLECTIONS.forEach(function(inf) { if (!INFL_CATS.includes(inf.cat)) INFL_CATS.push(inf.cat); });
+
+// ─── TEXT LIMITS ──────────────────────────────────────────────────────────────
+// Mirrored on the server (server/validate.js LIMITS). Scripts count visible characters.
+export var LIMITS = { cardTitle:21, script:180, bullet:36, deckName:21, stackLabel:21, sessionName:50, clipTitle:50 };

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, use, createElement, Suspense } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor, themed } from "./lib/constants";
+import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor, themed, LIMITS } from "./lib/constants";
+import { setViewerName } from "./lib/viewer";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, apiDel, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt, overlayFill } from "./lib/styles";
 import { DesktopModal } from "./components/DesktopModal";
@@ -249,6 +250,8 @@ export default function App() {
   );
   // Theme the app with the signed-in org's accent (reset to the default when signed out)
   setAccentColor(authUser ? authUser.orgAccent : null);
+  // {{NAME}} blocks in scripts show the signed-in person's first name
+  setViewerName(authUser ? (authUser.firstName || (authUser.displayName || "").split(" ")[0]) : "");
 
   if (resetToken) return (
     <Suspense fallback={<div style={{height:"100%",background:themed("#060d1a")}}/>}>
@@ -827,7 +830,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           addDeck({ name:firstDeckName.trim(), icon:"💼", color:"#F5A623", visibility:"public", accessList:[], objStacks:[] });
         }}
         style={{width:"100%",display:"flex",flexDirection:"column",gap:12}}>
-        <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound Pitch"
+        <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound" maxLength={LIMITS.deckName}
           autoFocus={!layout.isTouchPrimary} style={inputSt({marginBottom:0})}/>
         <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn(SESS_COLOR)}>Create deck</button>
         {archivedDecks.length > 0 && (

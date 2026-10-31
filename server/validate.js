@@ -97,7 +97,71 @@ function cleanOrg(fields) {
   return out;
 }
 
+// ─── TEXT LIMITS ──────────────────────────────────────────────────────────────
+// Mirrors LIMITS in src/lib/constants.js. Content saved before the limits existed stays as it
+// is until someone edits it, so autosave of an old deck never starts failing.
+var LIMITS = { cardTitle: 21, script: 180, bullet: 36, deckName: 21, stackLabel: 21, sessionName: 50, clipTitle: 50 };
+
+function clampText(v, n) { return typeof v === "string" && v.length > n ? v.slice(0, n) : v; }
+
+// Visible characters of a card script ({{NAME}} counts as its "[NAME]" spelling)
+function scriptLength(raw) {
+  if (typeof raw !== "string" || !raw) return 0;
+  return raw.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*\[([^\]]+)\]/g, "$1").replace(/\*(.+?)\*/g, "$1")
+    .replace(/\{\{NAME\}\}/g, "[NAME]").length;
+}
+
+function isObj(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+
+// Cards that are new or changed get their title and bullets cut to the limits (copies of
+// older cards land here too, so cutting beats rejecting). A script edited past its limit is
+// an error — the editor never sends one — unless it only got shorter.
+function limitCards(cards, oldCards) {
+  if (!isObj(cards)) return null;
+  oldCards = isObj(oldCards) ? oldCards : {};
+  for (var id in cards) {
+    var c = cards[id], old = isObj(oldCards[id]) ? oldCards[id] : null;
+    if (!isObj(c)) continue;
+    if (typeof c.title === "string" && (!old || old.title !== c.title)) c.title = clampText(c.title, LIMITS.cardTitle);
+    if (Array.isArray(c.overview)) {
+      var oldOv = old && Array.isArray(old.overview) ? old.overview : [];
+      c.overview = c.overview.map(function(b, i) { return typeof b === "string" && oldOv[i] !== b ? clampText(b, LIMITS.bullet) : b; });
+    }
+    if (typeof c.prompt === "string" && (!old || old.prompt !== c.prompt)) {
+      var len = scriptLength(c.prompt);
+      if (len > LIMITS.script && (!old || len > scriptLength(old.prompt))) {
+        return "Card scripts can be up to " + LIMITS.script + " characters (\"" + String(c.title || "Untitled").slice(0, 40) + "\")";
+      }
+    }
+  }
+  return null;
+}
+
+// Applies the limits to a deck payload in place. existing = the stored deck (null when new).
+// Returns an error message, or null.
+function limitDeck(body, existing) {
+  var name = typeof body.name === "string" ? body.name.trim() : body.name;
+  if (typeof name === "string" && name.length > LIMITS.deckName && (!existing || (existing.name || "").trim() !== name)) {
+    return "Deck names can be up to " + LIMITS.deckName + " characters";
+  }
+  // A brand-new deck's starting cards are a template or a copy — only cut, never reject
+  var err = limitCards(body.cards, existing ? existing.cards : null);
+  if (err && existing) return err;
+  if (Array.isArray(body.objStacks)) {
+    var oldStacks = {};
+    ((existing && existing.objStacks) || []).forEach(function(st) { if (isObj(st) && st.id) oldStacks[st.id] = st; });
+    for (var i = 0; i < body.objStacks.length; i++) {
+      var st = body.objStacks[i], oldSt = oldStacks[st.id] || null;
+      if (typeof st.label === "string" && (!oldSt || oldSt.label !== st.label)) st.label = clampText(st.label, LIMITS.stackLabel);
+      var e2 = limitCards(st.cards, oldSt ? oldSt.cards : null);
+      if (e2 && existing) return e2;
+    }
+  }
+  return null;
+}
+
 module.exports = {
   validatePassword, validateEmail, validateName, validatePhone,
   validateNewUser, cleanNewUser, validateOrg, cleanOrg,
+  LIMITS, clampText, scriptLength, limitDeck,
 };

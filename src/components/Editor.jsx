@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, INFLECTIONS, INFL_CATS, aid, themed } from "../lib/constants";
+import { TM, INFLECTIONS, INFL_CATS, aid, themed, LIMITS } from "../lib/constants";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, labelSt, inputSt, cardBg, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { useKeyboardOpen, keyboardIsOpen, revealOnFocus, isCoarsePointer } from "../lib/useViewport";
 import { TypeBadge, SectionHdr, IntendedBadge, Handle } from "./ui";
 import { TipCtx, OverviewEditor, RichPromptDisplay } from "./Tooltip";
-import { parseRichText, stripMarkup } from "../lib/richtext";
+import { parseRichText, stripMarkup, NAME_TOKEN, scriptLength, oneLine } from "../lib/richtext";
 import { INFL_MAP, uid } from "../lib/constants";
 import { getParents } from "../lib/cardGraph";
 
@@ -31,8 +31,11 @@ function tap(fn) {
 
 // ─── RICH PROMPT EDITOR ───────────────────────────────────────────────────────
 // contentEditable-based editor — renders formatted text inline, no raw markup.
-// Stores/loads our markdown format (*text*[Label], **text**) behind the scenes.
-export function RichPromptEditor({ value, onChange, accentColor }) {
+// Stores/loads our markdown format (*text*[Label], **text**, {{NAME}}) behind the scenes.
+// Scripts are a single line (Enter does nothing, pasted line breaks become spaces) and are
+// capped at maxLen visible characters (a NAME block counts as 6, its "[NAME]" spelling).
+export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
+  var limit = maxLen || LIMITS.script;
   var editorRef      = useRef(null);
   var isInternal     = useRef(false);
   var editNodeRef    = useRef(null); // <em> node being re-inflected
@@ -43,7 +46,10 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   var [pickerMode,   setPickerMode]   = useState("new"); // "new" | "edit"
   var showPickerRef  = useRef(false);
   var lastRange      = useRef(null); // last non-empty selection inside the editor (touch can drop it before a toolbar tap)
+  var lastCaret      = useRef(null); // last caret position inside the editor (where NAME goes)
+  var lastGood       = useRef({ html:"", md:"" }); // last accepted content (restored when an edit goes over the limit)
   var blurTimer      = useRef(null);
+  var [count, setCount] = useState(function() { return scriptLength(oneLine(value)); });
 
   // SECURITY NOTE: escH() is the XSS-prevention mechanism for the contentEditable
   // rich-text editor. All user content is passed through this function before being
@@ -51,22 +57,46 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   // Any change to innerHTML rendering MUST continue to use escH() for all user content.
   function escH(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
+  // The NAME block: a non-editable chip that serializes back to {{NAME}}
+  function chipHtml() {
+    return "<span data-token=\"name\" contenteditable=\"false\" style=\"display:inline-block;padding:0 7px;margin:0 1px;border-radius:6px;background:"+accentColor+"22;border:1px solid "+accentColor+"66;color:"+accentColor+";font-family:'DM Sans',system-ui,sans-serif;font-size:11px;font-weight:800;font-style:normal;letter-spacing:.6px;line-height:1.7;vertical-align:1px;user-select:all;-webkit-user-select:all\">NAME</span>";
+  }
+  // Escaped text with every {{NAME}} turned into a chip
+  function tokHtml(s) { return escH(s).split(NAME_TOKEN).join(chipHtml()); }
+
   function mdToHtml(md) {
     if (!md) return "";
-    return parseRichText(md).map(function(seg) {
+    return parseRichText(oneLine(md)).map(function(seg) {
+      if (seg.type === "name") return chipHtml();
       if (seg.type === "bold")
-        return "<strong style=\"font-weight:800;font-style:normal;color:#fff\">"+escH(seg.content)+"</strong>";
+        return "<strong style=\"font-weight:800;font-style:normal;color:#fff\">"+tokHtml(seg.content)+"</strong>";
       if (seg.type === "italic" && seg.inflection)
-        return "<em data-inf=\""+escH(seg.inflection)+"\" style=\"color:"+accentColor+";border-bottom:1.5px dashed "+accentColor+"80;cursor:pointer;font-style:italic\">"+escH(seg.content)+"</em>";
+        return "<em data-inf=\""+escH(seg.inflection)+"\" style=\"color:"+accentColor+";border-bottom:1.5px dashed "+accentColor+"80;cursor:pointer;font-style:italic\">"+tokHtml(seg.content)+"</em>";
       if (seg.type === "italic")
-        return "<em style=\"font-style:italic;color:rgba(255,255,255,.75)\">"+escH(seg.content)+"</em>";
-      return escH(seg.content).replace(/\n/g,"<br>");
+        return "<em style=\"font-style:italic;color:rgba(255,255,255,.75)\">"+tokHtml(seg.content)+"</em>";
+      return escH(seg.content);
     }).join("");
+  }
+  function isChip(node) { return !!(node && node.nodeType === 1 && node.getAttribute && node.getAttribute("data-token") === "name"); }
+  // Plain text of a node/fragment, keeping NAME chips as {{NAME}} (used when wrapping a selection)
+  function plainOf(node) {
+    if (node.nodeType === 3) return node.textContent;
+    if (isChip(node)) return NAME_TOKEN;
+    if (node.nodeType === 1 && node.tagName === "BR") return " ";
+    return Array.from(node.childNodes || []).map(plainOf).join("");
+  }
+  // A fragment of text nodes and chips for a plain string; returns { frag, last }
+  function fragOf(text) {
+    var tpl = document.createElement("template");
+    tpl.innerHTML = tokHtml(text);
+    var frag = tpl.content;
+    return { frag: frag, last: frag.lastChild };
   }
 
   function nodeToMd(node) {
     if (node.nodeType === 3) return node.textContent;
     if (node.nodeType !== 1) return "";
+    if (isChip(node)) return NAME_TOKEN;
     var tag = node.tagName.toLowerCase();
     var inner = Array.from(node.childNodes).map(nodeToMd).join("");
     if (tag === "strong" || tag === "b") return "**"+inner+"**";
@@ -74,35 +104,104 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
       var inf = node.getAttribute ? node.getAttribute("data-inf") : null;
       return inf ? "*"+inner+"*["+inf+"]" : "*"+inner+"*";
     }
-    if (tag === "br") return "\n";
-    if (tag === "div" || tag === "p") {
-      if (!inner || inner === "\n") return "\n";
-      return inner.replace(/\n+$/,"") + "\n";
-    }
+    // One line only: any break a browser sneaks in becomes a space
+    if (tag === "br") return " ";
+    if (tag === "div" || tag === "p") return inner ? " " + inner : "";
     return inner;
   }
-  function elToMd(el) { return nodeToMd(el).replace(/\n+$/,""); }
+  // A typed "[NAME]" becomes the NAME block
+  function elToMd(el) { return oneLine(nodeToMd(el)).replace(/^ /,"").replace(/\[NAME\]/g, NAME_TOKEN); }
 
-  useEffect(function() {
+  function loadValue() {
     var el = editorRef.current; if (!el) return;
-    if (!isInternal.current) el.innerHTML = mdToHtml(value) || "";
-  }, [value, accentColor]);
-
+    el.innerHTML = mdToHtml(value) || "";
+    lastGood.current = { html: el.innerHTML, md: elToMd(el) };
+    setCount(scriptLength(lastGood.current.md));
+  }
   useEffect(function() {
-    var el = editorRef.current; if (el) el.innerHTML = mdToHtml(value) || "";
-  }, []); // eslint-disable-line
+    if (!isInternal.current) loadValue();
+  }, [value, accentColor]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(function() { loadValue(); }, []); // eslint-disable-line
+
+  // Visible characters currently selected inside the editor (replaced by the next insert)
+  function selectedLen() {
+    var sel = window.getSelection(), el = editorRef.current;
+    if (!sel || sel.isCollapsed || !el || !el.contains(sel.anchorNode)) return 0;
+    return scriptLength(plainOf(sel.getRangeAt(0).cloneContents()));
+  }
+  function caretToEnd() {
+    var el = editorRef.current, sel = window.getSelection(); if (!el || !sel) return;
+    var r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
 
   function handleInput() {
     var el = editorRef.current; if (!el) return;
     lastRange.current = null;
+    var md = elToMd(el), len = scriptLength(md);
+    // Over the limit (IME / autocorrect input that beforeinput couldn't stop): undo it.
+    // Shortening an older over-limit script is always allowed.
+    if (len > limit && len > scriptLength(lastGood.current.md)) {
+      el.innerHTML = lastGood.current.html;
+      caretToEnd();
+      return;
+    }
+    lastGood.current = { html: el.innerHTML, md: md };
+    setCount(len);
     isInternal.current = true;
-    onChange(elToMd(el));
+    onChange(md);
     requestAnimationFrame(function() { isInternal.current = false; });
+  }
+  // Native beforeinput (React's synthetic one lacks inputType): block line breaks and
+  // typing past the limit before it reaches the DOM
+  useEffect(function() {
+    var el = editorRef.current; if (!el) return;
+    function onBeforeInput(e) {
+      var t = e.inputType || "";
+      if (t === "insertParagraph" || t === "insertLineBreak") { e.preventDefault(); return; }
+      if (t === "insertText" || t === "insertReplacementText") {
+        var add = (e.data || "").length;
+        if (add && scriptLength(elToMd(el)) - selectedLen() + add > limit) e.preventDefault();
+      }
+    }
+    el.addEventListener("beforeinput", onBeforeInput);
+    return function() { el.removeEventListener("beforeinput", onBeforeInput); };
+  }, [limit]); // eslint-disable-line react-hooks/exhaustive-deps
+  function handleKeyDown(e) {
+    if (e.key === "Enter") e.preventDefault();
   }
   function handlePaste(e) {
     e.preventDefault();
-    var text = (e.clipboardData||window.clipboardData).getData("text/plain");
+    var el = editorRef.current; if (!el) return;
+    var text = oneLine((e.clipboardData||window.clipboardData).getData("text/plain"));
+    var room = limit - (scriptLength(elToMd(el)) - selectedLen());
+    if (room <= 0) return;
+    if (text.length > room) text = text.slice(0, room);
     document.execCommand("insertText", false, text);
+  }
+
+  // Insert a NAME block at the caret (or in place of the selection)
+  function insertName() {
+    var el = editorRef.current; if (!el) return;
+    if (scriptLength(elToMd(el)) - selectedLen() + 6 > limit) return;
+    el.focus({ preventScroll:true });
+    var sel = window.getSelection(), r = null;
+    if (sel && sel.rangeCount && el.contains(sel.anchorNode)) r = sel.getRangeAt(0);
+    else if (lastRange.current && el.contains(lastRange.current.commonAncestorContainer)) r = lastRange.current.cloneRange();
+    else if (lastCaret.current && el.contains(lastCaret.current.startContainer)) r = lastCaret.current.cloneRange();
+    if (!r) { r = document.createRange(); r.selectNodeContents(el); r.collapse(false); }
+    // Never nest the chip inside another chip
+    var anc = r.startContainer;
+    while (anc && anc !== el) { if (isChip(anc)) { r.setStartAfter(anc); r.collapse(true); break; } anc = anc.parentNode; }
+    var f = fragOf(NAME_TOKEN), chip = f.last;
+    r.deleteContents(); r.insertNode(f.frag);
+    // Keep somewhere to type after a chip at the very end
+    var after = chip;
+    if (!chip.nextSibling) { after = document.createTextNode(" "); chip.parentNode.insertBefore(after, chip.nextSibling); }
+    var nr = document.createRange(); nr.setStartAfter(after); nr.collapse(true);
+    sel.removeAllRanges(); sel.addRange(nr);
+    setHasSel(false); handleInput();
   }
 
   // Walk up from a DOM node to find the nearest formatting ancestor inside editor
@@ -125,6 +224,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     var sel = window.getSelection(), el = editorRef.current;
     var hasSel_ = !!(sel && !sel.isCollapsed && el && el.contains(sel.anchorNode));
     if (hasSel_) lastRange.current = sel.getRangeAt(0).cloneRange();
+    else if (sel && sel.rangeCount && el && el.contains(sel.anchorNode)) lastCaret.current = sel.getRangeAt(0).cloneRange();
     setHasSel(hasSel_);
     if (!hasSel_ && sel && sel.isCollapsed && el && el.contains(sel.anchorNode)) {
       setCursorInFmt(findFmtAncestor(sel.anchorNode));
@@ -175,8 +275,9 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
   function removeNodeFormatting(fmtNode) {
     var el = editorRef.current;
     if (!fmtNode || !fmtNode.parentNode || !el || !el.contains(fmtNode)) return;
-    var text = document.createTextNode(fmtNode.textContent);
-    fmtNode.parentNode.replaceChild(text, fmtNode);
+    var f = fragOf(plainOf(fmtNode)), text = f.last;
+    if (!text) { fmtNode.parentNode.removeChild(fmtNode); handleInput(); return; }
+    fmtNode.parentNode.replaceChild(f.frag, fmtNode);
     var sel = window.getSelection();
     if (sel) {
       try {
@@ -193,10 +294,10 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     var el = editorRef.current; if (!el) return;
     el.focus({ preventScroll:true }); restoreSel();
     var sel = window.getSelection(); if (!sel||sel.isCollapsed) return;
-    var r = sel.getRangeAt(0), text = r.toString(); if (!text) return;
+    var r = sel.getRangeAt(0), text = plainOf(r.cloneContents()); if (!text.trim()) return;
     var node = document.createElement("strong");
     node.style.fontWeight="800"; node.style.fontStyle="normal"; node.style.color="#fff";
-    node.textContent = text;
+    node.appendChild(fragOf(text).frag);
     r.deleteContents(); r.insertNode(node);
     var nr = document.createRange(); nr.setStartAfter(node); nr.collapse(true);
     sel.removeAllRanges(); sel.addRange(nr);
@@ -245,7 +346,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     if (!selRange) return;
     el.focus({ preventScroll:true });
     var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(selRange);
-    var text = selRange.toString(); if (!text) { setSelRange(null); return; }
+    var text = plainOf(selRange.cloneContents()); if (!text.trim()) { setSelRange(null); return; }
     var em = document.createElement("em");
     if (inf) {
       em.setAttribute("data-inf", inf.label);
@@ -256,7 +357,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
       em.style.color = "rgba(255,255,255,.75)";
     }
     em.style.fontStyle = "italic";
-    em.textContent = text;
+    em.appendChild(fragOf(text).frag);
     selRange.deleteContents(); selRange.insertNode(em);
     var nr = document.createRange(); nr.setStartAfter(em); nr.collapse(true);
     sel.removeAllRanges(); sel.addRange(nr);
@@ -268,14 +369,14 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     var el = editorRef.current; if (!el) return;
     el.focus({ preventScroll:true });
     var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-    var text = r.toString(); if (!text) return;
+    var text = plainOf(r.cloneContents()); if (!text.trim()) return;
     var em = document.createElement("em");
     em.setAttribute("data-inf", lbl);
     em.style.color = accentColor;
     em.style.borderBottom = "1.5px dashed "+accentColor+"80";
     em.style.cursor = "pointer";
     em.style.fontStyle = "italic";
-    em.textContent = text;
+    em.appendChild(fragOf(text).frag);
     r.deleteContents(); r.insertNode(em);
     var nr = document.createRange(); nr.setStartAfter(em); nr.collapse(true);
     sel.removeAllRanges(); sel.addRange(nr);
@@ -295,12 +396,12 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
     el.focus({ preventScroll:true }); restoreSel();
     var sel = window.getSelection(); if (!sel || sel.isCollapsed) return;
     var r = sel.getRangeAt(0);
-    var plainText = r.toString(); if (!plainText) return;
+    var plainText = plainOf(r.cloneContents()); if (!plainText) return;
     // Delete the range contents (removes all nodes within selection)
     r.deleteContents();
-    var textNode = document.createTextNode(plainText);
-    r.insertNode(textNode);
-    // If the new text node ended up inside a formatting element, unwrap that element
+    var pf = fragOf(plainText), textNode = pf.last;
+    r.insertNode(pf.frag);
+    // If the new text ended up inside a formatting element, unwrap that element
     var parent = textNode.parentNode;
     while (parent && parent !== el) {
       if (parent.tagName === "EM" || parent.tagName === "I" ||
@@ -342,6 +443,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
           suppressContentEditableWarning={true}
           onInput={handleInput}
           onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
           onMouseUp={handleMouseUp}
           onKeyUp={checkSel}
           onFocus={function() { clearTimeout(blurTimer.current); }}
@@ -352,8 +454,11 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
               if (document.activeElement !== editorRef.current && !showPickerRef.current) { setHasSel(false); setCursorInFmt(null); }
             }, 250);
           }}
-          style={{minHeight:130,padding:"13px 14px 13px 18px",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",borderLeft:"3px solid "+accentColor,borderRadius:12,color:"rgba(255,255,255,.92)",fontSize:15,lineHeight:1.8,fontFamily:"'Lora',Georgia,serif",outline:"none",cursor:"text",wordBreak:"break-word",whiteSpace:"pre-wrap"}}
+          style={{minHeight:130,padding:"13px 14px 13px 18px",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",borderLeft:"3px solid "+accentColor,borderRadius:12,color:"rgba(255,255,255,.92)",fontSize:15,lineHeight:1.8,fontFamily:"'Lora',Georgia,serif",outline:"none",cursor:"text",wordBreak:"break-word",whiteSpace:"normal"}}
         />
+        <div aria-live="polite" style={{textAlign:"right",fontSize:10,fontWeight:600,marginTop:4,color:count>=limit?"#EF5350":count>=limit-20?"rgba(255,255,255,.55)":"rgba(255,255,255,.25)"}}>
+          {count}/{limit}
+        </div>
       </div>
 
       {/* ── Formatting toolbar ── */}
@@ -408,11 +513,14 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
                 <button {...tap(stripFormatting)}
                   title="Remove formatting from selection"
                   style={{background:hasSel?"rgba(239,83,80,.18)":"rgba(255,255,255,.07)",border:"1px solid "+(hasSel?"rgba(239,83,80,.4)":"rgba(255,255,255,.08)"),borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:hasSel?"#EF5350":"rgba(255,255,255,.2)",flexShrink:0,transition:"background .15s,border-color .15s,color .15s,box-shadow .15s,opacity .15s,width .15s,height .15s"}}>✕</button>
+                <button {...tap(insertName)}
+                  title="Insert NAME — shows each viewer's own first name" aria-label="Insert name block"
+                  style={{background:accentColor+"1c",border:"1px solid "+accentColor+"55",borderRadius:8,height:36,padding:"0 10px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:.6,color:accentColor,flexShrink:0}}>[NAME]</button>
                 <div style={{width:1,height:20,background:"rgba(255,255,255,.1)",flexShrink:0}}/>
                 <div style={{flex:1,fontSize:11,color:hasSel?"rgba(255,255,255,.55)":"rgba(255,255,255,.25)",lineHeight:1.4,transition:"color .15s"}}>
                   {hasSel
                     ? <span style={{color:accentColor,fontWeight:700}}>Apply to selection ↑</span>
-                    : <span>Select text to format · click an inflected word to edit it</span>}
+                    : <span>Select text to format · [NAME] shows each viewer's name</span>}
                 </div>
               </div>
               {hasSel && (
@@ -557,7 +665,10 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
   function validate() {
     var e = {};
     if (!form.title.trim()) e.title = "Required";
+    else if (form.title.trim().length > LIMITS.cardTitle) e.title = "Keep the title to " + LIMITS.cardTitle + " characters";
     if (!form.prompt.trim()) e.prompt = "Required";
+    else if (scriptLength(form.prompt) > LIMITS.script) e.prompt = "Keep the script to " + LIMITS.script + " characters";
+    if ((form.overview || []).some(function(b) { return (b || "").length > LIMITS.bullet; })) e.overview = "Each bullet can be up to " + LIMITS.bullet + " characters";
     if (form.answers.some(function(a) { return !a.label.trim(); })) e.answers = "All response labels required";
     setErrs(e);
     return Object.keys(e).length === 0;
@@ -630,6 +741,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
         <div style={{padding:headerPad,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderBottom:"1px solid rgba(255,255,255,.07)"}}>
           <div style={{flex:1,minWidth:0}}>
             <input value={form.title} onChange={function(e){setField("title",e.target.value);}}
+              maxLength={LIMITS.cardTitle}
               placeholder={isBlank ? "New card title" : "Card title"} aria-label="Card title" ref={titleRef}
               className="oc-title-input"
               style={{display:"block",width:"100%",background:"transparent",border:"none",borderBottom:"2px solid "+(errs.title?"#EF5350":"transparent"),borderRadius:0,
@@ -720,7 +832,10 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                 </button>
               </div>
               {showOv ? (
-                <OverviewEditor bullets={form.overview} onChange={function(v){setField("overview",v);}} accent={ac}/>
+                <>
+                  <OverviewEditor bullets={form.overview} onChange={function(v){setField("overview",v);}} accent={ac}/>
+                  {errs.overview && <div style={{fontSize:11,color:"#EF5350",marginTop:4}}>{errs.overview}</div>}
+                </>
               ) : (
                 <div style={{fontSize:11,color:"rgba(255,255,255,.3)",padding:"10px 0",lineHeight:1.6}}>Toggle on to add 1–3 bullet points shown above the script in play mode.</div>
               )}

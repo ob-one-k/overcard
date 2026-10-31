@@ -3,6 +3,7 @@ const router  = express.Router();
 const { getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder, uid, getDeckAccess, setDeckAccess, idsInOrg,
   deckPermissions, setDeckEditors, getOrgUsers } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
+const { limitDeck } = require("../validate");
 
 function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
 // Every objection stack must be an object with a string id — a null/garbage entry would crash Play for the org
@@ -69,6 +70,8 @@ router.post("/", async function(req, res, next) {
       return res.status(400).json({ error: "objStacks must be an array of stacks" });
     }
     if (visibility !== undefined && VISIBILITY.indexOf(visibility) === -1) return res.status(400).json({ error: "visibility must be public or private" });
+    const limitErr = limitDeck(req.body, null);
+    if (limitErr) return res.status(400).json({ error: limitErr });
     // Validated before anything is written, so a bad list can't leave a half-created deck
     const access = await cleanAccessList(accessList, req.user.orgId);
     if (!access) return res.status(400).json({ error: "Invalid access list" });
@@ -131,6 +134,8 @@ router.put("/:id", async function(req, res, next) {
       return res.status(400).json({ error: "objStacks must be an array of stacks" });
     }
     if (body.visibility !== undefined && VISIBILITY.indexOf(body.visibility) === -1) return res.status(400).json({ error: "visibility must be public or private" });
+    const limitErr = limitDeck(body, existing);
+    if (limitErr) return res.status(400).json({ error: limitErr });
     var access = null;
     if (!perms.manage) {
       body = Object.assign({}, body, { visibility: existing.visibility });
