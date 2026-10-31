@@ -761,43 +761,98 @@ async function setDeckAccess(deckId, accessList) {
   });
 }
 
-async function getOrgDecks(orgId, userId, userTeamIds) {
-  // The owner's order (Deck switcher / Home drag-to-reorder); name breaks ties
-  const { rows } = await pool.query('SELECT * FROM decks WHERE "orgId" = $1 ORDER BY "sortIndex" NULLS LAST, name, id', [orgId]);
-  var access = await getDeckAccessMap(rows.map(function(r) { return r.id; }));
-  var decks = rows.map(function(r) { var deck = parseDeck(r); deck.accessList = access[r.id]; return deck; });
-  // Admins (no userId filter) see all decks, archived included
-  if (!userId) return decks;
-  return decks.filter(function(d) {
-    if (d.archivedAt) return false;
-    if (d.visibility === "public") return true;
-    return d.accessList.some(function(a) {
-      if (a.entityType === "user" && a.entityId === userId) return true;
-      if (a.entityType === "team" && (userTeamIds || []).includes(a.entityId)) return true;
-      return false;
-    });
-  });
+// ─── DECK PERMISSIONS ─────────────────────────────────────────────────────────
+// See:    the owner every deck. Anyone else: decks they created or may edit, plus active
+//         decks that are org-wide (public) or assigned (private) to one of their teams or
+//         to them. "Their teams" = member of, plus (admins) teams they administer.
+//         Archived decks are seen only by those who may edit them (to restore them).
+// Edit:   the owner; an admin who created the deck; admins listed in deck_editors.
+// Manage: (teams / visibility / editors) the owner and the deck's creator.
+async function getDeckEditorsMap(deckIds) {
+  var map = {};
+  deckIds.forEach(function(id) { map[id] = []; });
+  if (!deckIds.length) return map;
+  const { rows } = await pool.query('SELECT "deckId","userId" FROM deck_editors WHERE "deckId" = ANY($1::text[])', [deckIds]);
+  rows.forEach(function(r) { if (map[r.deckId]) map[r.deckId].push(r.userId); });
+  return map;
 }
 
-// May this user run a session on this deck? Same rules as the deck list: same org,
-// admins any deck, users only active decks that are public or shared with them/their team.
-// Reads only the deck's identity columns (not its cards) — this runs on every session start.
+async function viewerTeamIds(user) {
+  return isAdminRoleName(user.role) ? getMemberOrAdminTeamIds(user.id) : getUserTeams(user.id);
+}
+function isAdminRoleName(role) { return role === "admin" || role === "owner"; }
+
+// deck needs createdBy, visibility, archivedAt, accessList, editorIds
+function deckPermsFor(deck, user, teamIds) {
+  if (user.role === "owner") return { see: true, edit: true, manage: true };
+  var admin = isAdminRoleName(user.role);
+  var creator = deck.createdBy === user.id;
+  var edit = admin && (creator || (deck.editorIds || []).indexOf(user.id) > -1);
+  var assigned = deck.visibility !== "private" || (deck.accessList || []).some(function(a) {
+    return (a.entityType === "user" && a.entityId === user.id) || (a.entityType === "team" && teamIds.indexOf(a.entityId) > -1);
+  });
+  var see = edit || (!deck.archivedAt && (assigned || (admin && creator)));
+  return { see: see, edit: edit, manage: admin && creator };
+}
+
+// The decks this user may see, in the org's order, each with canEdit / canManage
+async function getOrgDecks(orgId, user) {
+  // The owner's order (Deck switcher / Home drag-to-reorder); name breaks ties
+  const { rows } = await pool.query('SELECT * FROM decks WHERE "orgId" = $1 ORDER BY "sortIndex" NULLS LAST, name, id', [orgId]);
+  var ids = rows.map(function(r) { return r.id; });
+  var access = await getDeckAccessMap(ids);
+  var editors = await getDeckEditorsMap(ids);
+  var teamIds = user && user.role !== "owner" ? await viewerTeamIds(user) : [];
+  var out = [];
+  rows.forEach(function(r) {
+    var deck = parseDeck(r);
+    deck.accessList = access[r.id];
+    deck.editorIds = editors[r.id];
+    if (!user) { out.push(deck); return; }
+    var p = deckPermsFor(deck, user, teamIds);
+    if (!p.see) return;
+    deck.canEdit = p.edit;
+    deck.canManage = p.manage;
+    out.push(deck);
+  });
+  return out;
+}
+
+// { see, edit, manage } for one deck (null when the deck isn't in the user's org)
+async function deckPermissions(deckId, user) {
+  const deck = await getDeckById(deckId);
+  if (!deck || deck.orgId !== user.orgId) return null;
+  deck.editorIds = (await getDeckEditorsMap([deck.id]))[deck.id];
+  var teamIds = user.role === "owner" ? [] : await viewerTeamIds(user);
+  return Object.assign({ deck: deck }, deckPermsFor(deck, user, teamIds));
+}
+
+// May this user run a session on this deck? The same "see" rule (archived decks only with
+// opts.allowArchived — a run saved after its deck was archived mid-call).
 async function deckUsableBy(deckId, user, opts) {
   if (typeof deckId !== "string" || !deckId) return null;
   const { rows } = await pool.query(
-    'SELECT id,"orgId",name,color,icon,visibility,"archivedAt" FROM decks WHERE id = $1 AND "orgId" = $2', [deckId, user.orgId]
+    'SELECT id,"orgId",name,color,icon,visibility,"archivedAt","createdBy" FROM decks WHERE id = $1 AND "orgId" = $2', [deckId, user.orgId]
   );
   const deck = rows[0];
   if (!deck) return null;
-  if (user.role === "admin" || user.role === "owner") return deck;
-  if (deck.archivedAt && !(opts && opts.allowArchived)) return null;
-  if (deck.visibility !== "private") return deck;
-  const access = await pool.query(
-    'SELECT 1 FROM deck_access WHERE "deckId" = $1 AND (("entityType" = \'user\' AND "entityId" = $2)' +
-    ' OR ("entityType" = \'team\' AND "entityId" IN (SELECT "teamId" FROM user_teams WHERE "userId" = $2))) LIMIT 1',
-    [deckId, user.id]
-  );
-  return access.rows.length ? deck : null;
+  if (user.role === "owner") return deck;
+  deck.accessList = await getDeckAccess(deck.id);
+  deck.editorIds = (await getDeckEditorsMap([deck.id]))[deck.id];
+  var teamIds = await viewerTeamIds(user);
+  var p = deckPermsFor(Object.assign({}, deck, { archivedAt: opts && opts.allowArchived ? null : deck.archivedAt }), user, teamIds);
+  return p.see ? deck : null;
+}
+
+// Replace a deck's editor list (admins of the deck's org only; the creator and the owner
+// need no entry)
+async function setDeckEditors(deckId, userIds) {
+  await withTransaction(async function(client) {
+    await client.query('DELETE FROM deck_editors WHERE "deckId" = $1', [deckId]);
+    if (userIds.length) {
+      await client.query('INSERT INTO deck_editors ("deckId","userId") SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING', [deckId, userIds]);
+    }
+  });
 }
 
 async function getDeckById(id) {
@@ -1230,12 +1285,37 @@ async function countActiveRuns(userId, exceptId) {
   return rows[0].n;
 }
 
-async function getLiveSessions(orgId) {
+// ─── WHO MAY WATCH A LIVE RUN ─────────────────────────────────────────────────
+// The owner watches every run. Admins watch every run only while the org has no teams;
+// once it has teams, an admin watches runs by reps who share a team with them (the
+// admin's teams = member of or administering; same for the rep).
+function teamsOfSql(userExpr) {
+  return '(SELECT "teamId" FROM user_teams WHERE "userId" = ' + userExpr + ' UNION SELECT "teamId" FROM team_admins WHERE "userId" = ' + userExpr + ')';
+}
+function adminMayWatchSql(orgExpr, adminExpr, repExpr) {
+  return '(NOT EXISTS (SELECT 1 FROM teams t WHERE t."orgId" = ' + orgExpr + ')' +
+    ' OR EXISTS (SELECT 1 FROM ' + teamsOfSql(adminExpr) + ' mine JOIN ' + teamsOfSql(repExpr) + ' theirs ON theirs."teamId" = mine."teamId"))';
+}
+
+// Runs in progress this viewer may watch (an admin always sees their own)
+async function getLiveSessions(viewer) {
+  var isOwner = viewer.role === "owner";
   const { rows } = await pool.query(
     'SELECT ' + LIVE_COLS + ', u."displayName" AS "userName" FROM sessions s LEFT JOIN users u ON u.id = s."userId"' +
-    ' WHERE s."orgId" = $1 AND s.status = \'active\' ORDER BY s."startTs" DESC', [orgId]
+    ' WHERE s."orgId" = $1 AND s.status = \'active\'' +
+    ' AND ($3::boolean OR s."userId" = $2 OR ' + adminMayWatchSql("$1", "$2", 's."userId"') + ')' +
+    ' ORDER BY s."startTs" DESC', [viewer.orgId, viewer.id, isOwner]
   );
   return rows.map(parseSession);
+}
+
+// User ids that receive a rep's live run (start + progress): owner + admins allowed above
+async function getLiveWatcherIds(orgId, repId) {
+  const { rows } = await pool.query(
+    'SELECT u.id FROM users u WHERE u."orgId" = $1 AND (u.role = \'owner\'' +
+    ' OR (u.role = \'admin\' AND (u.id = $2 OR ' + adminMayWatchSql("$1", "u.id", "$2") + ')))', [orgId, repId]
+  );
+  return rows.map(function(r) { return r.id; });
 }
 
 // Close active runs as abandoned (keeping their path): one user's (signed in elsewhere)
@@ -1431,14 +1511,14 @@ module.exports = {
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,
   // decks
   getTeamNames,
-  getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
+  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, setDeckEditors, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
   getDeckAccess, setDeckAccess,
   // passwords
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,
   // sessions
   getSessions, getSessionById, upsertSession,
   getHighlights, getHighlight, isHighlightVisibleTo, getMemberOrAdminTeamIds, setHighlight, clearHighlight,
-  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, countActiveRuns, deleteSession,
+  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, getLiveWatcherIds, closeActiveSessions, countActiveRuns, deleteSession,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   // notifications
   createNotification, getNotifications, markNotificationsRead,

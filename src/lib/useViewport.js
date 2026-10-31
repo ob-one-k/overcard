@@ -42,6 +42,11 @@ function measure() {
   if (open !== kbOpen) {
     kbOpen = open;
     if (!open) resetStrayScroll();
+    // The keyboard just finished opening: place the field being typed in
+    if (open && isEditable(document.activeElement)) {
+      var el = document.activeElement;
+      setTimeout(function() { if (document.activeElement === el) revealField(el, { center: true }); }, 60);
+    }
     subs.slice().forEach(function(fn) { fn(); });
   }
 }
@@ -64,6 +69,16 @@ function onFocusOut() {
   setTimeout(function() { if (!isEditable(document.activeElement)) resetStrayScroll(); }, 60);
 }
 
+// Any field that gets focus is brought to a comfortable spot once the keyboard has
+// animated in (every screen, so components don't each need an onFocus handler)
+function onFocusIn(e) {
+  var t = e.target;
+  // Touch devices only: there the on-screen keyboard covers the page; with a mouse,
+  // moving a field the person just clicked would be jarring
+  if (!isEditable(t) || !isCoarsePointer()) return;
+  setTimeout(function() { if (document.activeElement === t) revealField(t, { center: true }); }, 340);
+}
+
 export function startViewportTracking() {
   if (started || typeof window === "undefined") return;
   started = true;
@@ -72,6 +87,7 @@ export function startViewportTracking() {
   window.addEventListener("resize", schedule);
   window.addEventListener("orientationchange", schedule);
   document.addEventListener("focusout", onFocusOut);
+  document.addEventListener("focusin", onFocusIn);
   measure();
 }
 
@@ -89,7 +105,10 @@ export function keyboardIsOpen() { return kbOpen; }
 
 // Scroll a focused field into view inside its nearest *scrollable* ancestor only.
 // (Element.scrollIntoView would also scroll overflow:hidden layout containers.)
-export function revealField(el) {
+// opts.center: when the field sits outside the middle of the visible area (or behind the
+// keyboard), glide it to just above the middle — the most comfortable place to type.
+// Tall fields (editors) only get their top edge brought into view.
+export function revealField(el, opts) {
   if (!el) return;
   var p = el.parentElement;
   while (p && p !== document.body) {
@@ -102,7 +121,17 @@ export function revealField(el) {
   var vv = window.visualViewport;
   // Only the part of the scroller above the keyboard counts as visible
   var visBottom = Math.min(pr.bottom, vv ? vv.offsetTop + vv.height : window.innerHeight);
+  var visTop = Math.max(pr.top, vv ? vv.offsetTop : 0);
   var margin = 16;
+  var visH = visBottom - visTop;
+  if (opts && opts.center && visH > 0 && er.height < visH * 0.6) {
+    var mid = er.top + er.height / 2;
+    var comfy = mid > visTop + visH * 0.15 && mid < visTop + visH * 0.7;
+    if (comfy) return;
+    var delta = mid - (visTop + visH * 0.4);
+    try { p.scrollTo({ top: p.scrollTop + delta, behavior: "smooth" }); } catch (_) { p.scrollTop += delta; }
+    return;
+  }
   if (er.bottom > visBottom - margin) p.scrollTop += er.bottom - visBottom + margin;
   else if (er.top < pr.top + margin) p.scrollTop -= pr.top + margin - er.top;
 }

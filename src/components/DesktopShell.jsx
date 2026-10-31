@@ -2,6 +2,7 @@ import { useState, useEffect, useContext } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
 import DesktopCtx from "../lib/DesktopCtx";
 import { isAdminRole, roleMeta, SESS_COLOR, accentA, themed } from "../lib/constants";
+import { TabIcon } from "./TabIcons";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 import { NotificationBell } from "./NotificationBell";
@@ -195,7 +196,7 @@ export function DesktopShell({
           {/* Tab icon + title */}
           {activeTab && (
             <div style={{display:"flex",alignItems:"center",gap:9,flexShrink:0}}>
-              <span aria-hidden="true" style={{fontSize:compact?18:20,lineHeight:1}}>{activeTab.icon}</span>
+              <span aria-hidden="true" style={{color:tabAccent}}><TabIcon id={activeTab.id} size={compact?19:21}/></span>
               <h1 style={{margin:0,fontSize:compact?18:21,fontWeight:700,color:"#fff",letterSpacing:-.2}}>{activeTab.label}</h1>
             </div>
           )}

@@ -11,7 +11,7 @@ const {
   getHighlights, getHighlight, isHighlightVisibleTo, getMemberOrAdminTeamIds, setHighlight, clearHighlight, getTeamById,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
-const { publish, publishProgress, endProgress, startProgress } = require("../realtime");
+const { publish, publishLive, publishProgress, endProgress, startProgress } = require("../realtime");
 
 router.use(requireAuth);
 
@@ -226,11 +226,12 @@ router.delete("/:id/highlight", async function(req, res, next) {
 });
 
 // ─── LIVE SESSIONS ────────────────────────────────────────────────────────────
-// GET /api/sessions/live — the org's runs in progress (admin live monitor)
+// GET /api/sessions/live — runs in progress this admin may watch (live monitor): the owner
+// sees all; admins see all only while the org has no teams, otherwise their teams' reps
 router.get("/live", async function(req, res, next) {
   try {
     if (!isAdminRole(req.user.role)) return res.status(403).json({ error: "Admin access required" });
-    res.json(await getLiveSessions(req.user.orgId));
+    res.json(await getLiveSessions(req.user));
   } catch (err) { next(err); }
 });
 
@@ -250,7 +251,8 @@ router.post("/:id/start", async function(req, res, next) {
     }), req.user.id, req.user.orgId);
     if (!live) return res.status(409).json({ error: "Session can't be started" });
     startProgress(live.id);
-    publish({ orgAdmins: live.orgId }, "session.started", live);
+    // Only the people allowed to watch this rep (owner; admins sharing a team, or all admins with no teams)
+    publishLive(live, "session.started");
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

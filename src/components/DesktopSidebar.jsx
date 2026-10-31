@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { isAdminRole, roleMeta, SESS_COLOR, accentA, themed } from "../lib/constants";
 import { OrgMark } from "./OrgMark";
 import { useSlidingIndicator } from "../lib/useSlidingIndicator";
+import { TabIcon } from "./TabIcons";
 
 // Tab list with one org-accent highlight that slides between the rows
 function SlideList({ activeKey, collapsed, children }) {
@@ -9,7 +10,7 @@ function SlideList({ activeKey, collapsed, children }) {
   var ind = useSlidingIndicator(ref, activeKey, [collapsed]);
   return (
     <div ref={ref} style={{position:"relative"}}>
-      {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:10,background:accentA(.11),boxShadow:"inset 3px 0 0 " + SESS_COLOR})}/>}
+      {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:10,background:accentA(.13),border:"1.5px solid "+accentA(.6),boxSizing:"border-box"})}/>}
       {children}
     </div>
   );
@@ -188,7 +189,7 @@ export function DesktopSidebar({
                   transition:"background .12s, opacity .12s",
                   justifyContent: isCollapsed ? "center" : "flex-start"
                 }}>
-                <span aria-hidden="true" style={{fontSize:compact?21:19,flexShrink:0,lineHeight:1,width:22,textAlign:"center"}}>{t.icon}</span>
+                <span aria-hidden="true" style={{flexShrink:0,width:22,display:"flex",justifyContent:"center",color:active?SESS_COLOR:"rgba(255,255,255,.6)",transition:"color .25s"}}><TabIcon id={t.id} size={compact?22:20}/></span>
                 {!isCollapsed && (
                   <span style={{fontSize:15,fontWeight:active?700:500,color:active?SESS_COLOR:"rgba(255,255,255,.78)",transition:"color .25s",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                     {t.label}

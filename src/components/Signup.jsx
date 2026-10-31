@@ -143,7 +143,8 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
   return (
     // Fills the visible screen (not 100vh) and scrolls inside; margin:auto centres the form
     // on big screens without clipping its top when it's taller than the screen
-    <div style={{width:"100%",height:"100%",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:wide?32:phoneLand?"16px 24px":"24px 16px",overflowY:"auto",boxSizing:"border-box"}}>
+    // Pinned to the visible area (above the keyboard); a little extra room at the bottom
+    <div style={{position:"fixed",left:0,right:0,top:"var(--vvt, 0px)",height:"var(--vvh, 100%)",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:wide?"32px 32px 44px":phoneLand?"16px 24px 28px":"24px 16px calc(36px + env(safe-area-inset-bottom, 0px))",overflowY:"auto",boxSizing:"border-box"}}>
       <style>{`
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
         body{background:#060d1a;color:#fff;}

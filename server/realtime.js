@@ -138,8 +138,29 @@ function refreshUser(userId) {
   });
 }
 
-// Live progress goes to org admins (the monitor). At most one event per run every
-// PROGRESS_MS; the latest state is sent when the window closes, so watchers never lag behind.
+// Live runs (start + progress carry the run's state) go only to the people allowed to
+// watch that rep (db.getLiveWatcherIds: owner, and admins sharing a team — or every admin
+// while the org has no teams). The audience is cached briefly per rep so progress ticks
+// don't each query the database.
+var AUDIENCE_MS = 20000;
+var audience = new Map();      // orgId:userId → { ts, ids: Promise<string[]> }
+function liveAudience(orgId, userId) {
+  var key = orgId + ":" + userId, hit = audience.get(key);
+  if (hit && Date.now() - hit.ts < AUDIENCE_MS) return hit.ids;
+  const { getLiveWatcherIds } = require("./db");
+  var ids = getLiveWatcherIds(orgId, userId).catch(function(err) { audience.delete(key); console.error("live audience:", err.message); return []; });
+  audience.set(key, { ts: Date.now(), ids: ids });
+  if (audience.size > 5000) audience.delete(audience.keys().next().value);
+  return ids;
+}
+// Team or role changes: recompute audiences on the next event
+function resetLiveAudience() { audience.clear(); }
+function publishLive(live, type) {
+  liveAudience(live.orgId, live.userId).then(function(ids) { publish({ users: ids }, type, live); });
+}
+
+// At most one progress event per run every PROGRESS_MS; the latest state is sent when the
+// window closes, so watchers never lag behind.
 var PROGRESS_MS = 2000;
 var progressState = new Map(); // sessionId → { last, timer, pending }
 var endedAt = new Map();       // sessionId → ts it finished: a heartbeat racing the save is dropped
@@ -151,14 +172,14 @@ function publishProgress(live) {
   var now = Date.now();
   if (now - st.last >= PROGRESS_MS && !st.timer) {
     st.last = now;
-    publish({ orgAdmins: live.orgId }, "session.progress", live);
+    publishLive(live, "session.progress");
     return;
   }
   st.pending = live;
   if (!st.timer) {
     st.timer = setTimeout(function() {
       st.timer = null; st.last = Date.now();
-      if (st.pending) { publish({ orgAdmins: st.pending.orgId }, "session.progress", st.pending); st.pending = null; }
+      if (st.pending) { publishLive(st.pending, "session.progress"); st.pending = null; }
     }, Math.max(0, PROGRESS_MS - (now - st.last)));
   }
 }
@@ -191,4 +212,4 @@ async function signOutDevices(userId, reason, opts) {
 
 function stats() { return { streams: clients.size, users: byUser.size }; }
 
-module.exports = { streamHandler, publish, publishProgress, endProgress, startProgress, publishAbandoned, closeUser, refreshUser, signOutDevices, stats };
+module.exports = { streamHandler, publish, publishLive, resetLiveAudience, publishProgress, endProgress, startProgress, publishAbandoned, closeUser, refreshUser, signOutDevices, stats };

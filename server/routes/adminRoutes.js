@@ -13,6 +13,12 @@ const { validatePassword, validateName, validatePhone, validateNewUser, cleanNew
 
 router.use(requireAdmin);
 
+// Any change to people or teams can change who may watch whose live runs
+router.use(function(req, res, next) {
+  if (req.method !== "GET") res.on("finish", function() { if (res.statusCode < 400) realtime.resetLiveAudience(); });
+  next();
+});
+
 // Role hierarchy: owner > admin > user. Admins manage users; only the owner manages admins.
 // Everyone may edit their own profile, but nobody changes their own role.
 function canManage(actor, target) {

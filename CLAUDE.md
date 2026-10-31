@@ -75,6 +75,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CR
 | `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", "firstName", "lastName", phone, role (owner/admin/user) |
 | `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility, "archivedAt" (null = active), "sortIndex" (owner's order; new decks append) |
 | `deck_access` | Deck visibility controls for private decks | "deckId", "entityType" (team/user), "entityId" |
+| `deck_editors` | Admins granted edit rights on a deck (by the owner or the deck's creator) | "deckId", "userId" |
 | `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", "deckColor", "deckIcon", mode, status, outcome, sold, "soldCardId", "soldCardTitle", events (JSONB), notes (JSONB), metrics (JSONB) |
 | `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
 | `session_shares` | Session sharing between users | id, "sessionId", "fromUserId", "toUserId", context |
@@ -202,14 +203,15 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 ### Decks
 | Method | Path | Auth | Admin | Description |
 |--------|------|------|-------|-------------|
-| GET | `/api/decks` | Yes | No | List decks (filtered by visibility for non-admins) |
+| GET | `/api/decks` | Yes | No | Decks this user may see, each with `canEdit` / `canManage` / `editorIds` (see Deck permissions) |
 | POST | `/api/decks` | Yes | Yes | Create new deck — accepts starting `cards`, `rootCard`, `objStacks` (template / duplicate) |
 | PUT | `/api/decks/order` | Yes | Owner | `{ids}` — the deck order every list shows (unknown ids ignored; unlisted decks keep their order after) |
 | PUT | `/api/decks/:id` | Yes | Yes | Update deck fields + access list. Stacks a non-owner omits are kept (only the owner deletes stacks) |
 | POST | `/api/decks/:id/archive` | Yes | Yes | Archive (sets `archivedAt`) |
 | POST | `/api/decks/:id/restore` | Yes | Yes | Restore an archived deck |
-| GET | `/api/decks/:id/access` | Yes | Yes | Get deck access list |
-| PUT | `/api/decks/:id/access` | Yes | Yes | Set deck access list |
+| GET | `/api/decks/:id/access` | Yes | Owner/creator | Get deck access list |
+| PUT | `/api/decks/:id/access` | Yes | Owner/creator | Set deck access list (any team in the org) |
+| PUT | `/api/decks/:id/editors` | Yes | Owner/creator | `{userIds}` — admins who may edit the deck (non-admins dropped) |
 | DELETE | `/api/decks/:id` | Yes | Owner | Permanently delete deck (sessions keep their snapshot) |
 
 ### Sessions
@@ -217,7 +219,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 |--------|------|------|-------------|
 | GET | `/api/sessions` | Yes | List sessions (supports `?scope=`, `?deckId=`, `?mode=`, `?outcome=`, `?from=`, `?to=`, `?limit=`). One query: feedback/share counts are LATERAL joins |
 | POST | `/api/sessions` | Yes | Save a finished run (requires `id`; deck must be in the caller's org). Ends its live row |
-| GET | `/api/sessions/live` | Admin | The org's runs in progress |
+| GET | `/api/sessions/live` | Admin | Runs in progress this admin may watch (owner: all; admins: all only while the org has no teams, else reps sharing a team) |
 | POST | `/api/sessions/:id/start` | Yes | Store a run as `active` when it starts (deck must be usable by the caller) |
 | POST | `/api/sessions/:id/beat` | Owner | `{events, live}` heartbeat while active; 409 once it isn't |
 | DELETE | `/api/sessions/:id` | Yes | Delete session (owner or org admin) |
@@ -326,6 +328,11 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Tab load speed:** `lazyNamed` (App.jsx) renders a chunk's components synchronously once loaded — React.lazy suspends on every first render and holds the reveal ~300ms. Chunks prefetch on idle; MainApp also warms the active deck's `/sessions` + highlights (+ admin `scope=org`) data. `dataCache` keys ignore query-param order. SessionsMobile always revalidates its list (a review opened right after a call waits for it: `listFresh`).
 - **Deck order:** the owner drags decks (`ReorderList`) in the deck switcher or Home's deck quick start; `App.reorderDecks` applies it locally and `PUT /decks/order`. Every deck list renders the `decks` array order — never re-sort decks client-side.
 - **Tree rows:** `TreeView` rows always use the card type's `TM` colour; intended path is shown by the green ★ only.
+- **Deck permissions** (db.js `deckPermsFor`, enforced in deckRoutes + `deckUsableBy`): *see/use* — the owner every deck; everyone else (admins too) decks that are org-wide, assigned to one of their teams (admins: member or team admin) or to them, or that they may edit; archived decks only for those who may edit. *Edit* — owner, the creator (while an admin), admins in `deck_editors`. *Manage* (teams/visibility + editors) — owner and creator; an editor's save keeps visibility as is. The client trusts `deck.canEdit` (Cards/Objections `readOnly`, switcher pen) and `deck.canManage` (who-can-use + editors in the switcher form).
+- **Live monitor audience:** `session.started` / `session.progress` go through `realtime.publishLive` to `getLiveWatcherIds` (owner; admins sharing a team with the rep, or every admin when the org has no teams), cached 20s and reset after any admin people/team change. `GET /sessions/live` applies the same rule.
+- **Deck switch dissolve:** picking a deck (switcher, Home "Play") calls `switchDeckWithDissolve` — a full-screen cover with the deck fades in, the deck swaps while it's opaque (200ms), and it fades out (640ms total); the chosen switcher row shows "✓ opening".
+- **Tab icons:** `TabIcon` (`src/components/TabIcons.jsx`) — flat line icons in `currentColor`; every nav colours the active one `SESS_COLOR`.
+- **Keyboard on phones:** the phone shell, sign-in, sign-up, reset and first-deck screens are pinned to the visible viewport (`position:fixed; top:var(--vvt); height:var(--vvh)`), so typing scrolls one container instead of the page panning; the phone tab bar collapses while the keyboard is open. On touch devices any focused field glides to just above the middle of the visible area (`useViewport` focusin + `revealField(el,{center:true})`).
 - **Archive vs delete:** admins archive decks/stacks (restorable); only the owner permanently deletes. The server enforces both: `DELETE /decks` is owner-only, and `PUT /decks` from a non-owner keeps any stored stack the payload omits, so stale copies never delete stacks.
 - **Copying cards/stacks:** `ImportPicker` + `deckOps.cloneCards/cloneStack` give every copied card/answer/stack a fresh id and rewrite `next` links through an old→new map; links to cards that weren't copied become `null`, copied cards join off the intended path, and a copied stack's `targetCard` is cleared. `duplicateDeck` keeps intended flags and remaps stack targets.
 - **Objections desktop/tablet:** `ObjectionsDesktop` mirrors CardsDesktop — stack switcher, List (path-ordered card list + CardStage) / Tree (docked editor + TreeView), and an "After resolving" strip. Stack edits save immediately via `onUpdateDeck` (no Save Stack step); phones still use the buffered `ObjStackEditor`. `CardStage` takes `endLabel` to say where a stack returns.

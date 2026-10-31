@@ -83,6 +83,8 @@ function TabFallback() {
 import { useDesktop } from "./lib/useDesktop";
 import { PRESS_CSS } from "./lib/pressFeedback";
 import { useSlidingIndicator } from "./lib/useSlidingIndicator";
+import { useKeyboardOpen } from "./lib/useViewport";
+import { TabIcon } from "./components/TabIcons";
 import { newDeckTemplate, duplicateDeck as duplicateDeckData, activeDecks, liveStacks } from "./lib/deckOps";
 import DesktopCtx from "./lib/DesktopCtx";
 import { DesktopShell } from "./components/DesktopShell";
@@ -316,16 +318,20 @@ function BootMark() {
 function MobileTabBar({ tabs, tab, onTabClick }) {
   var barRef = useRef(null);
   var ind = useSlidingIndicator(barRef, tab, [tabs.length]);
+  // Typing: the keyboard covers the bottom of the screen — give that room to the content
+  // (hidden, not unmounted, so the indicator keeps measuring)
+  var kbOpen = useKeyboardOpen();
   return (
     // Opaque background, no backdrop blur: a blur over scrolling content janks on phones
-    <div ref={barRef} style={{position:"relative",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,10,28,.98)"),padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"}}>
+    <div ref={barRef} style={Object.assign({position:"relative",flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,10,28,.98)"),padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"},
+      kbOpen ? {height:0,padding:0,borderTop:"none",visibility:"hidden",overflow:"hidden"} : {})}>
       {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:10,background:accentA(.13),border:"1.5px solid "+accentA(.6),boxSizing:"border-box"})}/>}
       {tabs.map(function(t) {
         var active = tab === t.id;
         return (
           <button key={t.id} onClick={function(){ onTabClick(t.id); }} aria-current={active ? "page" : undefined}
             style={{position:"relative",zIndex:1,background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 10px",borderRadius:12,fontFamily:"inherit"}}>
-            <div data-tab={t.id} style={{width:34,height:34,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{t.icon}</div>
+            <div data-tab={t.id} style={{width:34,height:34,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",color:active?SESS_COLOR:"rgba(255,255,255,.4)",transition:"color .25s"}}><TabIcon id={t.id} size={19}/></div>
             <span style={{fontSize:8,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",color:active?SESS_COLOR:"rgba(255,255,255,.22)",transition:"color .25s"}}>{t.label}</span>
           </button>
         );
@@ -360,7 +366,7 @@ function LandscapeRail({ tabs, tab, onTabClick, deck, decksCount, authUser, onOp
             <button key={t.id} data-tab={t.id} onClick={function(){ onTabClick(t.id); }} aria-current={active ? "page" : undefined} aria-label={t.label}
               style={{position:"relative",zIndex:1,width:58,flex:"1 1 0",maxHeight:50,minHeight:30,background:"none",border:"none",borderRadius:12,cursor:"pointer",
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,fontFamily:"inherit",padding:0}}>
-              <span aria-hidden="true" style={{fontSize:17,lineHeight:1}}>{t.icon}</span>
+              <span aria-hidden="true" style={{color:active?SESS_COLOR:"rgba(255,255,255,.4)",transition:"color .25s"}}><TabIcon id={t.id} size={19}/></span>
               <span data-rail-label aria-hidden="true" style={{fontSize:7.5,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:active?SESS_COLOR:"rgba(255,255,255,.3)",transition:"color .25s"}}>{t.label}</span>
             </button>
           );
@@ -422,6 +428,9 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var dirtyIds = useRef(new Set());
   // Tab transition direction: +1 when moving to a tab further along the nav, -1 back
   var tabDirRef = useRef({ tab: null, dir: 1 });
+  // Deck switch dissolve: { deck, key } while the full-screen cross-fade runs
+  var [deckFade, setDeckFade] = useState(null);
+  var fadeTimers = useRef([]);
 
   // ── Tab switching helper (persists to localStorage) ─────────────────────────
   function switchTab(newTab) {
@@ -617,19 +626,44 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     setActiveSession(null);
     setSessionEvents([]);
   }
+  // Picking a deck (switcher, Home): the whole screen dissolves to the new deck. The swap
+  // happens while the cover is opaque, so the old deck's screen never flashes into the new
+  function switchDeckWithDissolve(id, then) {
+    if (id === activeId || (activeSession && id !== activeId)) { switchDeck(id); if (then) then(); return; }
+    var target = decks.find(function(d) { return d.id === id; });
+    fadeTimers.current.forEach(clearTimeout);
+    setDeckFade({ deck: target || null, key: Date.now() });
+    fadeTimers.current = [
+      setTimeout(function() { switchDeck(id); if (then) then(); }, 200),
+      setTimeout(function() { setDeckFade(null); }, 640),
+    ];
+  }
+  useEffect(function() { return function() { fadeTimers.current.forEach(clearTimeout); }; }, []);
+
+  // Name / colour / icon: anyone who may edit. Who can use it + editors: owner and creator only
   function editDeckMeta(deckId, attrs) {
+    var cur = decks.find(function(d) { return d.id === deckId; });
+    var manage = !!(cur && cur.canManage);
     markDirty(deckId);
     setDecks(function(ds) {
       return ds.map(function(d) {
-        return d.id === deckId ? Object.assign({}, d, { name:attrs.name, color:attrs.color, icon:attrs.icon, visibility:attrs.visibility||d.visibility, accessList:attrs.accessList||d.accessList||[] }) : d;
+        if (d.id !== deckId) return d;
+        var next = Object.assign({}, d, { name:attrs.name, color:attrs.color, icon:attrs.icon });
+        if (manage) Object.assign(next, { visibility:attrs.visibility||d.visibility, accessList:attrs.accessList||d.accessList||[] });
+        return next;
       });
     });
+    var before = (cur && cur.editorIds || []).slice().sort().join(",");
+    if (manage && attrs.editorIds && attrs.editorIds.slice().sort().join(",") !== before) {
+      apiPut("/decks/" + deckId + "/editors", { userIds: attrs.editorIds })
+        .then(function(r) { setDecks(function(ds) { return ds.map(function(d) { return d.id === deckId ? Object.assign({}, d, { editorIds: r.editorIds || [] }) : d; }); }); })
+        .catch(function(err) { window.alert("Couldn't save who can edit this deck: " + err.message); });
+    }
   }
 
   // ── Home tab: switch deck + go to Play ───────────────────────────────────────
   function handleSwitchDeckAndPlay(deckId) {
-    switchDeck(deckId);
-    switchTab("play");
+    switchDeckWithDissolve(deckId, function() { switchTab("play"); });
   }
 
   // ── Portal from Play → Sessions ──────────────────────────────────────────────
@@ -678,7 +712,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     <DeckSwitcherSheet
       decks={decks}
       activeDeckId={deck ? deck.id : null}
-      onSelect={switchDeck}
+      onSelect={function(id){ switchDeckWithDissolve(id); }}
       onAddDeck={addDeck}
       onClose={function(){setShowDS(false);}}
       isAdmin={isAdminRole(authUser.role)}
@@ -754,7 +788,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     // the width (MainApp's global reset isn't mounted yet); margin:auto centres without
     // clipping when the keyboard leaves less room than the content needs
     return (
-      <div style={{width:"100%",height:"100%",display:"flex",overflowY:"auto",background:themed("#060d1a"),fontFamily:"'Inter',sans-serif",padding:phoneLand ? "12px 24px" : 24,boxSizing:"border-box",color:"#fff"}}>
+      <div style={{position:"fixed",left:0,right:0,top:"var(--vvt, 0px)",height:"var(--vvh, 100%)",display:"flex",overflowY:"auto",background:themed("#060d1a"),fontFamily:"'Inter',sans-serif",padding:phoneLand ? "12px 24px" : 24,boxSizing:"border-box",color:"#fff"}}>
         {canCreate && phoneLand ? (
           <div style={{margin:"auto",width:"100%",maxWidth:760,display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(280px,1fr)",gap:28,alignItems:"center"}}>
             {welcome}
@@ -854,7 +888,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           onUpsert={upsertCard}
           onDelete={deleteCard}
           onUpdateDeck={updateDeck}
-          readOnly={!isAdminRole(authUser.role)}
+          readOnly={!deck.canEdit}
         />
         </Suspense>
         </TabPane>
@@ -867,7 +901,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           deck={deck}
           decks={liveDecks}
           onUpdateDeck={updateDeck}
-          readOnly={!isAdminRole(authUser.role)}
+          readOnly={!deck.canEdit}
           isOwner={authUser.role === "owner"}
         />
         </Suspense>
@@ -900,6 +934,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
           html,body,#root{height:100%;width:100%;}
           body{background:#060d1a;font-family:'Inter',sans-serif;color:#fff;overscroll-behavior:none;}
+          @keyframes deckDissolve{0%{opacity:0}30%{opacity:1}60%{opacity:1}100%{opacity:0}}
+          @keyframes deckPop     {0%{opacity:0;transform:scale(.88)}35%{opacity:1;transform:scale(1)}100%{opacity:1;transform:scale(1.03)}}
           @keyframes tabIn       {from{opacity:0;translate:var(--tab-dx,0px) var(--tab-dy,0px)}to{opacity:1;translate:0 0}}
           @keyframes cardIn      {from{opacity:0;transform:translateX(28px) scale(.97)}to{opacity:1;transform:none}}
           @keyframes cardBack    {from{opacity:0;transform:translateX(-28px) scale(.97)}to{opacity:1;transform:none}}
@@ -964,7 +1000,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
 
         {/* ── PHONE, LANDSCAPE: left nav rail + full-height, full-width content ── */}
         {!desktop.isDesktop && desktop.landscape && (
-        <div style={{width:"100%",height:"100dvh",display:"flex",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)")}}>
+        <div style={{position:"fixed",left:0,right:0,top:"var(--vvt, 0px)",height:"var(--vvh, 100dvh)",display:"flex",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)")}}>
           <LandscapeRail tabs={TABS} tab={tab} onTabClick={handleTabClick} deck={deck} decksCount={liveDecks.length}
             authUser={authUser} onOpenDeck={function(){setShowDS(true);}} onOpenProfile={function(){ setShowProfile(true); }}
             onOpenSession={openSessionFromNotification}/>
@@ -979,9 +1015,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         </div>
         )}
 
-        {/* ── PHONE, PORTRAIT ── */}
+        {/* ── PHONE, PORTRAIT ── pinned to the visible area: with the keyboard up the app
+            shrinks above it (one scroll, no page panning) and the tab bar steps aside */}
         {!desktop.isDesktop && !desktop.landscape && (
-        <div style={{width:"100%",maxWidth:430,margin:"0 auto",height:"100dvh",display:"flex",flexDirection:"column",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)"),boxShadow:"0 0 0 1px rgba(255,255,255,.04)"}}>
+        <div style={{position:"fixed",left:0,right:0,top:"var(--vvt, 0px)",height:"var(--vvh, 100dvh)",width:"100%",maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)"),boxShadow:"0 0 0 1px rgba(255,255,255,.04)"}}>
 
           {/* Server offline banner */}
           {!serverOk && (
@@ -1025,6 +1062,18 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         )}
 
         {showDS && deckSwitcher}
+        {deckFade && (
+          <div key={deckFade.key} aria-live="polite" style={{position:"fixed",inset:0,zIndex:950,background:themed("#060d1a"),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,
+            animation:"deckDissolve .64s cubic-bezier(.4,0,.2,1) both",pointerEvents:"none"}}>
+            {deckFade.deck && (
+              <>
+                <div style={{width:72,height:72,borderRadius:22,background:deckFade.deck.color+"26",border:"1.5px solid "+deckFade.deck.color+"88",boxShadow:"0 0 60px "+deckFade.deck.color+"40",
+                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:34,animation:"deckPop .64s cubic-bezier(.22,1,.36,1) both"}}>{deckFade.deck.icon}</div>
+                <div style={{fontSize:16,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",animation:"deckPop .64s cubic-bezier(.22,1,.36,1) .03s both"}}>{deckFade.deck.name}</div>
+              </>
+            )}
+          </div>
+        )}
         {hlOverlay && (
           <Suspense fallback={null}>
           {desktop.isDesktop ? (

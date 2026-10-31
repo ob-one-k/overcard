@@ -20,6 +20,7 @@ var ACCOUNTS = {
   apexUser: "user@apex-test.com", apexUser2: "user2@apex-test.com", apexUser3: "user3@apex-test.com",
   merOwner: "owner@meridian-test.com", merAdmin: "admin@meridian-test.com",
   merUser: "user@meridian-test.com", merUserSouth: "south@meridian-test.com",
+  soloOwner: "owner@solo-test.com", soloAdmin: "admin@solo-test.com", soloUser: "user@solo-test.com",
 };
 
 // ─── FIXTURES ─────────────────────────────────────────────────────────────────
@@ -36,6 +37,11 @@ var FIXTURE_ORGS = [
             { key: "merSouth", name: "South", admin: "merAdmin", members: ["merUserSouth"] }],
     decks: [{ key: "merDeck", name: "Meridian Outbound" },
             { key: "merPartnerDeck", name: "Meridian Partner", privateTo: "merNorth" }] },
+  // An org with no teams (rules that change once an org has teams)
+  { key: "solo", name: "Solo Test Co", owner: "soloOwner",
+    people: [["soloAdmin", "admin"], ["soloUser", "user"]],
+    teams: [],
+    decks: [{ key: "soloDeck", name: "Solo Outbound" }] },
 ];
 
 function starterCards() {
@@ -105,7 +111,7 @@ async function ensureOrg(spec, ids) {
   }
 }
 
-// { apexOrg, apexTeam, apexDeck, merOrg, merNorth, merSouth, merDeck, merPartnerDeck }
+// { apexOrg, apexTeam, apexDeck, merOrg, merNorth, merSouth, merDeck, merPartnerDeck, soloOrg, soloDeck }
 var fixturePromise = null;
 function fixtures() {
   if (!fixturePromise) {

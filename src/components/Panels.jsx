@@ -16,6 +16,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
   var archived = isAdmin ? (allDecks || []).filter(function(d) { return !!d.archivedAt; }) : [];
   var [showArchived, setShowArchived] = useState(false);
   var [busyId, setBusyId] = useState(null);
+  var [pickedId, setPickedId] = useState(null);   // the deck just tapped: marked while the screen dissolves to it
   function run(id, p) { setBusyId(id); Promise.resolve(p).then(function(){ setBusyId(null); }, function(){ setBusyId(null); }); }
   function confirmDelete(d) {
     if (!window.confirm("Permanently delete \"" + d.name + "\"?\n\nIts cards and objection stacks are removed for everyone. Past sessions are kept.")) return;
@@ -72,7 +73,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     style={{width:28,height:28,borderRadius:"50%",background:c,border:"3px solid "+(nf.color===c?"#fff":"transparent"),cursor:"pointer"}}/>;
                 })}
               </div>
-              <label style={labelSt()}>Visibility</label>
+              <label style={labelSt()}>Who can use it</label>
               <div style={{display:"flex",gap:8,marginBottom:14}}>
                 {["public","private"].map(function(v){
                   var on = nf.visibility===v;
@@ -81,7 +82,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     <button key={v} onClick={function(){setNf(function(p){return Object.assign({},p,{visibility:v});});}}
                       style={{flex:1,background:on?accentA(.1):"rgba(255,255,255,.07)",border:"1.5px solid "+(on?accentA(.35):"rgba(255,255,255,.1)"),borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>
                       <div style={{fontSize:14}}>{icon}</div>
-                      <div style={{fontSize:9,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400,marginTop:2}}>{v==="public"?"Public":"Private"}</div>
+                      <div style={{fontSize:9,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400,marginTop:2}}>{v==="public"?"Org-wide":"Teams & people"}</div>
                     </button>
                   );
                 })}
@@ -89,7 +90,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
               {nf.visibility === "private" && (
                 <div style={{marginBottom:14}}>
                   {(orgTeams||[]).length > 0 && <>
-                    <label style={labelSt()}>Team Access</label>
+                    <label style={labelSt()}>Teams</label>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:9}}>
                       {(orgTeams||[]).map(function(t) {
                         var on = (nf.accessList||[]).some(function(a){ return a.entityType==="team"&&a.entityId===t.id; });
@@ -99,7 +100,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     </div>
                   </>}
                   {(orgUsers||[]).length > 0 && <>
-                    <label style={labelSt()}>User Access</label>
+                    <label style={labelSt()}>People</label>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:0}}>
                       {(orgUsers||[]).map(function(u) {
                         var on = (nf.accessList||[]).some(function(a){ return a.entityType==="user"&&a.entityId===u.id; });
@@ -142,7 +143,10 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                           style={{width:26,height:26,borderRadius:"50%",background:c,border:"3px solid "+(ef.color===c?"#fff":"transparent"),cursor:"pointer"}}/>;
                       })}
                     </div>
-                    <label style={labelSt()}>Visibility</label>
+                    {/* Who can use it, and who can edit it: the owner and the deck's creator decide */}
+                    {d.canManage ? (
+                      <>
+                    <label style={labelSt()}>Who can use it</label>
                     <div style={{display:"flex",gap:8,marginBottom:12}}>
                       {["public","private"].map(function(v){
                         var on = ef.visibility===v;
@@ -151,7 +155,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                           <button key={v} onClick={function(){setEf(function(p){return Object.assign({},p,{visibility:v});});}}
                             style={{flex:1,background:on?accentA(.1):"rgba(255,255,255,.07)",border:"1.5px solid "+(on?accentA(.35):"rgba(255,255,255,.1)"),borderRadius:10,padding:"8px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>
                             <div style={{fontSize:14}}>{icon}</div>
-                            <div style={{fontSize:9,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400,marginTop:2}}>{v==="public"?"Public":"Private"}</div>
+                            <div style={{fontSize:9,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400,marginTop:2}}>{v==="public"?"Org-wide":"Teams & people"}</div>
                           </button>
                         );
                       })}
@@ -159,7 +163,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                     {ef.visibility === "private" && (
                       <div style={{marginBottom:12}}>
                         {(orgTeams||[]).length > 0 && <>
-                          <label style={labelSt()}>Team Access</label>
+                          <label style={labelSt()}>Teams</label>
                           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
                             {(orgTeams||[]).map(function(t) {
                               var on = (ef.accessList||[]).some(function(a){ return a.entityType==="team"&&a.entityId===t.id; });
@@ -169,7 +173,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                           </div>
                         </>}
                         {(orgUsers||[]).length > 0 && <>
-                          <label style={labelSt()}>User Access</label>
+                          <label style={labelSt()}>People</label>
                           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:0}}>
                             {(orgUsers||[]).map(function(u) {
                               var on = (ef.accessList||[]).some(function(a){ return a.entityType==="user"&&a.entityId===u.id; });
@@ -178,6 +182,30 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                             })}
                           </div>
                         </>}
+                      </div>
+                    )}
+                    {/* Admins (besides the owner and the creator) who may edit this deck */}
+                    {(function() {
+                      var admins = (orgUsers||[]).filter(function(u){ return u.role === "admin" && u.id !== d.createdBy; });
+                      if (!admins.length) return null;
+                      return (
+                        <div style={{marginBottom:12}}>
+                          <label style={labelSt()}>Can edit</label>
+                          <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:6,lineHeight:1.5}}>The owner and the deck's creator always can. Pick other admins who may edit it.</div>
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                            {admins.map(function(u) {
+                              var on = (ef.editorIds||[]).indexOf(u.id) > -1;
+                              return <button key={u.id} aria-pressed={on} onClick={function(){ setEf(function(p){ var ids = p.editorIds || []; return Object.assign({}, p, { editorIds: on ? ids.filter(function(x){ return x !== u.id; }) : ids.concat([u.id]) }); }); }}
+                                style={{background:on?accentA(.16):"rgba(255,255,255,.05)",border:"1px solid "+(on?accentA(.45):"rgba(255,255,255,.1)"),borderRadius:8,padding:"4px 10px",cursor:"pointer",fontFamily:"inherit",fontSize:10,color:on?SESS_COLOR:"rgba(255,255,255,.4)",fontWeight:on?700:400}}>✎ {u.displayName}</button>;
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                      </>
+                    ) : (
+                      <div style={{fontSize:10,color:"rgba(255,255,255,.35)",marginBottom:12,lineHeight:1.5}}>
+                        {d.visibility === "private" ? "🏷️ Assigned to teams/people" : "🌐 Org-wide"} · only the owner or the deck's creator can change who uses or edits it.
                       </div>
                     )}
                     <div style={{display:"flex",gap:8}}>
@@ -196,21 +224,32 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
               return (
                 <div style={{display:"flex",alignItems:"stretch",gap:6}}>
                   {handle && <div style={{display:"flex",alignItems:"center"}}>{handle}</div>}
-                  <button onClick={function(){onSelect(d.id);onClose();}}
-                    style={{flex:1,background:active?d.color+"14":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?d.color:"rgba(255,255,255,.08)"),borderRadius:16,padding:"13px 15px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
+                  <button onClick={function(){
+                      // Mark the choice at once; the full-screen dissolve covers the sheet before it closes
+                      if (pickedId) return;
+                      setPickedId(d.id);
+                      onSelect(d.id);
+                      setTimeout(onClose, d.id === activeDeckId ? 120 : 220);
+                    }}
+                    aria-current={active ? "true" : undefined}
+                    style={{flex:1,background:pickedId===d.id?d.color+"2a":active?d.color+"14":"rgba(255,255,255,.07)",border:"1.5px solid "+(pickedId===d.id||active?d.color:"rgba(255,255,255,.08)"),
+                      boxShadow:pickedId===d.id?"0 0 0 3px "+d.color+"40, 0 8px 28px "+d.color+"30":"none",borderRadius:16,padding:"13px 15px",cursor:"pointer",textAlign:"left",fontFamily:"inherit",
+                      transition:"background-color .18s, border-color .18s, box-shadow .22s"}}>
                     <div style={{display:"flex",alignItems:"center",gap:11}}>
                       <div style={{width:44,height:44,borderRadius:13,background:d.color+"22",border:"1.5px solid "+d.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:21,flexShrink:0}}>{d.icon}</div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3,flexWrap:"wrap"}}>
                           <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>{d.name}</span>
-                          {active && <span style={{fontSize:9,background:d.color+"22",color:d.color,padding:"1px 8px",borderRadius:99,letterSpacing:.5,textTransform:"uppercase"}}>active</span>}
+                          {pickedId===d.id && !active
+                            ? <span style={{fontSize:9,background:d.color,color:"#000",padding:"1px 8px",borderRadius:99,letterSpacing:.5,textTransform:"uppercase",fontWeight:800,animation:"fadeIn .15s ease both"}}>✓ opening</span>
+                            : active && <span style={{fontSize:9,background:d.color+"22",color:d.color,padding:"1px 8px",borderRadius:99,letterSpacing:.5,textTransform:"uppercase"}}>active</span>}
                           <span style={{fontSize:10,opacity:.55}} title={d.visibility==="private"?"Private — restricted access":"Public — org-wide"}>{d.visibility==="private"?"🔒":"🌐"}</span>
                         </div>
                         <div style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>{Object.keys(d.cards||{}).length} cards · {(d.objStacks||[]).filter(function(st){ return !st.archivedAt; }).length} obj stacks</div>
                       </div>
                     </div>
                   </button>
-                  {isAdmin && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[]}); setEditingDeck(d); }} style={{width:44,flexShrink:0,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,cursor:"pointer",fontSize:14,color:"rgba(255,255,255,.5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>✏</button>}
+                  {isAdmin && d.canEdit && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[],editorIds:d.editorIds||[]}); setEditingDeck(d); }} style={{width:44,flexShrink:0,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,cursor:"pointer",fontSize:14,color:"rgba(255,255,255,.5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>✏</button>}
                 </div>
               );
             }}/>
@@ -439,7 +478,9 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   // scrolls when it must (on-screen keyboard, or an error banner on a short screen).
   // Children centre with margin:auto so tall content never gets clipped at the top.
   return (
-    <div style={{width:"100%",height:"100%",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:split ? 0 : big ? 32 : phoneLand ? "12px 24px" : "16px 20px",overflowY:"auto",boxSizing:"border-box"}}>
+    // Pinned to the visible area (above the on-screen keyboard), so a focused field scrolls
+    // within this one container instead of the browser panning the whole page
+    <div style={{position:"fixed",left:0,right:0,top:"var(--vvt, 0px)",height:"var(--vvh, 100%)",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:split ? 0 : big ? 32 : phoneLand ? "12px 24px" : "16px 20px",overflowY:"auto",boxSizing:"border-box"}}>
       <style>{`
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
         body{background:#060d1a;color:#fff;}
