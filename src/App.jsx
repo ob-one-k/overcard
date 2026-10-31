@@ -191,14 +191,14 @@ export default function App() {
   }, []);
 
   if (!authChecked) return (
-    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit"}}>
+    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit"}}>
       <BootMark/>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {(getBrand() && getBrand().orgName) || "OverCard"}…</div>
       {slowServer && <div style={{color:"rgba(255,255,255,.35)",fontSize:12,maxWidth:280,textAlign:"center",lineHeight:1.5}}>Waking up the server — this can take up to a minute.</div>}
     </div>
   );
   if (serverDown) return (
-    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
       <BootMark/>
       <div style={{color:"#fff",fontSize:15,fontWeight:700}}>Can't reach the OverCard server</div>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,maxWidth:300,textAlign:"center",lineHeight:1.5}}>The server didn't respond. Check your connection and try again.</div>
@@ -209,7 +209,7 @@ export default function App() {
   setAccentColor(authUser ? authUser.orgAccent : null);
 
   if (resetToken) return (
-    <Suspense fallback={<div style={{minHeight:"100vh",background:themed("#060d1a")}}/>}>
+    <Suspense fallback={<div style={{height:"100%",background:themed("#060d1a")}}/>}>
     <ResetPasswordScreen token={resetToken} onDone={function() {
       try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
       setResetToken("");
@@ -219,7 +219,7 @@ export default function App() {
   );
   // Signed in already, but opened someone's invite link: say so instead of silently ignoring it
   if (authUser && joinCode && !joinDismissed) return (
-    <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),padding:16,boxSizing:"border-box"}}>
+    <div style={{width:"100%",minHeight:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),padding:16,boxSizing:"border-box"}}>
       <div style={{maxWidth:420,width:"100%",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:20,padding:"28px 24px",display:"flex",flexDirection:"column",gap:14}}>
         <OrgMark authUser={authUser} size={44}/>
         <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>You're already signed in</div>
@@ -238,7 +238,7 @@ export default function App() {
     </div>
   );
   if (!authUser && showSignup) return (
-    <Suspense fallback={<div style={{minHeight:"100vh",background:themed("#060d1a")}}/>}>
+    <Suspense fallback={<div style={{height:"100%",background:themed("#060d1a")}}/>}>
     <SignupScreen
       initialCode={joinCode}
       onLogin={handleLogin}
@@ -559,7 +559,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
 
   if (saveStatus === "idle") {
     return (
-      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit"}}>
+      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit"}}>
         <OrgMark authUser={authUser} size={screenMark}/>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {authUser.orgName || ""}…</div>
       </div>
@@ -567,7 +567,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   }
   if (!deck && decksError) {
     return (
-      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
+      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit",padding:32,boxSizing:"border-box"}}>
         <OrgMark authUser={authUser} size={screenMark}/>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,textAlign:"center",lineHeight:1.7}}>
           Couldn't load your decks.<br/>The server may be unavailable.
@@ -578,33 +578,62 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   }
   if (!deck) {
     var canCreate = isAdminRole(authUser.role);
-    return (
-      <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"'Inter',sans-serif",padding:24,color:"#fff"}}>
+    // Landscape phones put the welcome text beside the form so it fits the short screen
+    var phoneLand = layout.isMobile && layout.landscape;
+    var signOutBtn = <button type="button" onClick={signOut} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>Sign out</button>;
+    var welcome = (
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:phoneLand ? 10 : 12,textAlign:"center"}}>
         <OrgMark authUser={authUser} size={screenMark}/>
-        {canCreate ? (
-          <form onSubmit={function(e){
-              e.preventDefault();
-              if (!firstDeckName.trim()) return;
-              addDeck({ name:firstDeckName.trim(), icon:"💼", color:"#F5A623", visibility:"public", accessList:[], objStacks:[] });
-            }}
-            style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:12,textAlign:"center"}}>
-            <div style={{fontSize:20,fontWeight:700,fontFamily:"'Lora',serif"}}>Welcome{authUser.orgName ? " to " + authUser.orgName : ""}</div>
-            <div style={{color:"rgba(255,255,255,.5)",fontSize:14,lineHeight:1.6}}>Create your first sales deck to get started. You can invite your team from the Admin tab afterwards.</div>
-            <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound Pitch"
-              autoFocus style={inputSt({marginBottom:0})}/>
-            <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn(SESS_COLOR)}>Create deck</button>
-            {archivedDecks.length > 0 && (
-              <button type="button" onClick={function(){ setShowDS(true); }} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>
-                Restore an archived deck ({archivedDecks.length})
-              </button>
-            )}
-          </form>
+        <div style={{fontSize:20,fontWeight:700,fontFamily:"'Lora',serif",overflowWrap:"anywhere"}}>Welcome{authUser.orgName ? " to " + authUser.orgName : ""}</div>
+        <div style={{color:"rgba(255,255,255,.5)",fontSize:14,lineHeight:1.6}}>Create your first sales deck to get started. You can invite your team from the Admin tab afterwards.</div>
+      </div>
+    );
+    var deckForm = (
+      <form onSubmit={function(e){
+          e.preventDefault();
+          if (!firstDeckName.trim()) return;
+          addDeck({ name:firstDeckName.trim(), icon:"💼", color:"#F5A623", visibility:"public", accessList:[], objStacks:[] });
+        }}
+        style={{width:"100%",display:"flex",flexDirection:"column",gap:12}}>
+        <input value={firstDeckName} onChange={function(e){ setFirstDeckName(e.target.value); }} placeholder="Deck name, e.g. Outbound Pitch"
+          autoFocus={!layout.isTouchPrimary} style={inputSt({marginBottom:0})}/>
+        <button type="submit" disabled={!firstDeckName.trim()} style={solidBtn(SESS_COLOR)}>Create deck</button>
+        {archivedDecks.length > 0 && (
+          <button type="button" onClick={function(){ setShowDS(true); }} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>
+            Restore an archived deck ({archivedDecks.length})
+          </button>
+        )}
+        {phoneLand && signOutBtn}
+      </form>
+    );
+    // height:100% (not 100vh) fits the visible screen; box-sizing keeps the padding inside
+    // the width (MainApp's global reset isn't mounted yet); margin:auto centres without
+    // clipping when the keyboard leaves less room than the content needs
+    return (
+      <div style={{width:"100%",height:"100%",display:"flex",overflowY:"auto",background:themed("#060d1a"),fontFamily:"'Inter',sans-serif",padding:phoneLand ? "12px 24px" : 24,boxSizing:"border-box",color:"#fff"}}>
+        {canCreate && phoneLand ? (
+          <div style={{margin:"auto",width:"100%",maxWidth:760,display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(280px,1fr)",gap:28,alignItems:"center"}}>
+            {welcome}
+            {deckForm}
+          </div>
         ) : (
-          <div style={{color:"rgba(255,255,255,.5)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
-            No decks available yet.<br/>Ask your admin to create a deck.
+          <div style={{margin:"auto",width:"100%",maxWidth:380,display:"flex",flexDirection:"column",alignItems:"center",gap:16}}>
+            {canCreate ? (
+              <>
+                {welcome}
+                {deckForm}
+              </>
+            ) : (
+              <>
+                <OrgMark authUser={authUser} size={screenMark}/>
+                <div style={{color:"rgba(255,255,255,.5)",fontSize:14,textAlign:"center",lineHeight:1.7}}>
+                  No decks available yet.<br/>Ask your admin to create a deck.
+                </div>
+              </>
+            )}
+            {signOutBtn}
           </div>
         )}
-        <button onClick={signOut} style={Object.assign({}, ghostBtn(), {padding:"8px 18px",fontSize:13})}>Sign out</button>
         {showDS && deckSwitcher}
       </div>
     );

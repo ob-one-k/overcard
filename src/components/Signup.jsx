@@ -123,7 +123,9 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
   }
 
   var wide = desktop.isDesktop || desktop.isTablet;
-  var grid = { display:"grid", gridTemplateColumns: wide ? "1fr 1fr" : "1fr", gap:12 };
+  // Landscape phones keep the compact type but have the width for two field columns
+  var phoneLand = desktop.isMobile && desktop.landscape;
+  var grid = { display:"grid", gridTemplateColumns: wide || phoneLand ? "1fr 1fr" : "1fr", gap:12 };
   var sectionHdr = { fontSize:12, fontWeight:700, color:"rgba(255,255,255,.55)", letterSpacing:.4, marginBottom:10, marginTop:4 };
 
   var personFields = (
@@ -138,7 +140,9 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
   );
 
   return (
-    <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:wide?"center":"flex-start",justifyContent:"center",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:wide?32:"24px 16px",overflowY:"auto",boxSizing:"border-box"}}>
+    // Fills the visible screen (not 100vh) and scrolls inside; margin:auto centres the form
+    // on big screens without clipping its top when it's taller than the screen
+    <div style={{width:"100%",height:"100%",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:wide?32:phoneLand?"16px 24px":"24px 16px",overflowY:"auto",boxSizing:"border-box"}}>
       <style>{`
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
         body{background:#060d1a;color:#fff;}
@@ -150,7 +154,7 @@ export function SignupScreen({ initialCode, onLogin, onBack }) {
         button:not(:disabled):hover{filter:brightness(1.12);}
         button:disabled{opacity:0.5!important;cursor:not-allowed;}
       `}</style>
-      <div style={{width:"100%",maxWidth:wide?720:420,animation:"fadeIn .35s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{width:"100%",maxWidth:wide||phoneLand?720:420,margin:wide?"auto":"0 auto",animation:"fadeIn .35s cubic-bezier(.22,1,.36,1) both"}}>
 
         {/* Header */}
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>

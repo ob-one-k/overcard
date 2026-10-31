@@ -11,6 +11,8 @@ import { useState, useEffect } from "react";
 //                  icon rail, and list/detail panes
 //   splitPanes:    true when list + detail panes fit side by side
 //                  (always on desktop; tablet only when the window is >= 960 wide)
+//   landscape:     window wider than tall — phone/tablet screens switch to their
+//                  landscape layouts (desktop ignores it)
 // }
 //
 // Breakpoints:
@@ -51,7 +53,8 @@ export function detectLayout() {
     isMobile:       isMobile,
     isTouchPrimary: touchPrimary,
     compact:        isTablet,
-    splitPanes:     isDesktop || (isTablet && w >= SPLIT_MIN_W)
+    splitPanes:     isDesktop || (isTablet && w >= SPLIT_MIN_W),
+    landscape:      w > h
   };
 }
 

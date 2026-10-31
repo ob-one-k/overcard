@@ -306,28 +306,41 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
     doLogin("/auth/login?force=true", { email: email.trim(), password: pass });
   }
 
-  // Desktop / tablet get a larger sign-in; wide screens split into brand panel + form
-  var big   = lay.isDesktop || lay.isTablet;
-  var split = lay.isDesktop || (lay.isTablet && window.innerWidth >= 960);
+  // Layouts: desktop and landscape tablets split into brand panel + form; portrait tablets
+  // get a larger single column; portrait phones the compact column; landscape phones put
+  // the brand beside the form so it fits the short screen
+  var big       = lay.isDesktop || lay.isTablet;
+  var split     = lay.isDesktop || (lay.isTablet && lay.landscape);
+  var phoneLand = lay.isMobile && lay.landscape;
+  // The brand panel's feature list only fits on taller screens
+  var features  = split && window.innerHeight >= 700;
   var F = big
     ? { label:12, input:16, inPad:"14px 16px", title:26, small:14, btnPad:"15px 20px", btn:16 }
-    : { label:9,  input:14, inPad:"11px 14px", title:14, small:13, btnPad:"12px 20px", btn:14 };
+    : { label:9,  input:14, inPad:phoneLand ? "10px 14px" : "11px 14px", title:14, small:13, btnPad:phoneLand ? "11px 20px" : "12px 20px", btn:14 };
   var lbl = big ? Object.assign({}, labelSt(), { fontSize:12, marginBottom:8 }) : labelSt();
   var inp = inputSt({ marginBottom:0, fontSize:F.input, padding:F.inPad, borderRadius:big ? 14 : 12 });
 
+  // Logo height scales with the screen height (svh = viewport without browser bars) so
+  // the page fits without scrolling; icon.png is 3:2
+  var logoH = split ? "clamp(130px, 28svh, 230px)"
+    : big       ? "clamp(120px, 16svh, 170px)"
+    : phoneLand ? "clamp(100px, 45svh, 190px)"
+    :             "clamp(110px, 25svh, 220px)";
+  var logoGap = split ? 14 : big ? 8 : 6;
+
   var brand = (
-    <div style={{textAlign:split ? "left" : "center",marginBottom:split ? 0 : 16}}>
+    <div style={{textAlign:split ? "left" : "center",marginBottom:split || phoneLand ? 0 : 16}}>
       {/* icon.png's mark ends 1/3 above the image's bottom edge (transparent below), so pull the
-          title up over that empty strip — the remaining gap is the last number */}
-      <div style={{display:"inline-block",marginBottom:split ? 14 - 75 : big ? 8 - 56 : 6 - 73}}>
+          title up over that empty strip — the remaining gap is logoGap */}
+      <div style={{display:"inline-block",marginBottom:"calc(" + logoGap + "px - " + logoH + " / 3)"}}>
         <img src="/icon.png" alt="OverCard"
-          style={{display:"block",width:split ? 340 : big ? 260 : 330,height:split ? 230 : big ? 170 : 220,objectFit:"contain",marginLeft:split ? -70 : 0,filter:"drop-shadow(0 6px 24px rgba(0,180,255,.4))"}}/>
+          style={{display:"block",width:"calc(" + logoH + " * 1.5)",height:logoH,objectFit:"contain",marginLeft:split ? "calc(" + logoH + " * -0.3)" : 0,filter:"drop-shadow(0 6px 24px rgba(0,180,255,.4))"}}/>
       </div>
-      <div style={{fontSize:split ? 52 : big ? 34 : 22,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",marginBottom:split ? 10 : 4,lineHeight:1.1}}>OverCard</div>
+      <div style={{fontSize:split ? 52 : big ? 34 : phoneLand ? 26 : 22,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",marginBottom:split ? 10 : 4,lineHeight:1.1}}>OverCard</div>
       <div style={{fontSize:split ? 20 : big ? 15 : 11,color:split ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.35)",letterSpacing:split ? 0 : .5}}>
         {split ? "Run every sales call like your best rep." : "Sales Deck Platform"}
       </div>
-      {split && (
+      {features && (
         <div style={{display:"flex",flexDirection:"column",gap:18,marginTop:36}}>
           {[
             ["🃏", "Guided call decks", "Branching scripts, objection stacks and delivery cues — live, in the call."],
@@ -350,7 +363,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   );
 
   var form = (
-    <form onSubmit={submit} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.09)",borderRadius:big ? 22 : 18,padding:big ? "32px 32px" : "24px 24px",display:"flex",flexDirection:"column",gap:big ? 18 : 14,boxShadow:big ? "0 24px 60px rgba(0,0,0,.35)" : "none"}}>
+    <form onSubmit={submit} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.09)",borderRadius:big ? 22 : 18,padding:big ? "32px 32px" : phoneLand ? "16px 20px" : "22px 24px",display:"flex",flexDirection:"column",gap:big ? 18 : phoneLand ? 10 : 13,boxShadow:big ? "0 24px 60px rgba(0,0,0,.35)" : "none"}}>
       <div>
         <div style={{fontSize:F.title,fontWeight:700,color:"#fff",fontFamily:big ? "'Lora',serif" : "inherit"}}>{big ? "Welcome back" : "Sign in"}</div>
         {big && <div style={{fontSize:F.small,color:"rgba(255,255,255,.45)",marginTop:4}}>Sign in to your organization's workspace.</div>}
@@ -417,11 +430,14 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   );
 
   var footer = (
-    <div style={{textAlign:"center",marginTop:16,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>OverCard</div>
+    <div style={{textAlign:"center",marginTop:big ? 16 : 12,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>OverCard</div>
   );
 
+  // Fills the visible screen (not 100vh, which includes mobile browser bars) and only
+  // scrolls when it must (on-screen keyboard, or an error banner on a short screen).
+  // Children centre with margin:auto so tall content never gets clipped at the top.
   return (
-    <div style={{width:"100%",minHeight:"100vh",height:split ? "100vh" : undefined,display:"flex",alignItems:split ? "stretch" : "center",justifyContent:"center",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:split ? 0 : big ? 32 : 24,overflowY:"auto",boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100%",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",fontFamily:"'Inter',sans-serif",padding:split ? 0 : big ? 32 : phoneLand ? "12px 24px" : "16px 20px",overflowY:"auto",boxSizing:"border-box"}}>
       <style>{`
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
         body{background:#060d1a;color:#fff;}
@@ -434,21 +450,26 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
         button:disabled{opacity:0.45!important;cursor:not-allowed;}
       `}</style>
       {split ? (
-        <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.1fr) minmax(440px,1fr)",width:"100%",minHeight:"100%"}}>
+        <div style={{display:"grid",gridTemplateColumns:lay.isTablet ? "minmax(0,1fr) minmax(400px,1fr)" : "minmax(0,1.1fr) minmax(440px,1fr)",width:"100%",minHeight:"100%"}}>
           {/* Brand panel */}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 56px",background:"radial-gradient(ellipse at 30% 40%, rgba(0,180,255,.14), transparent 60%), radial-gradient(ellipse at 80% 90%, rgba(168,255,62,.06), transparent 50%)",borderRight:"1px solid rgba(255,255,255,.06)"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:lay.isTablet ? "32px 40px" : "48px 56px",background:"radial-gradient(ellipse at 30% 40%, rgba(0,180,255,.14), transparent 60%), radial-gradient(ellipse at 80% 90%, rgba(168,255,62,.06), transparent 50%)",borderRight:"1px solid rgba(255,255,255,.06)"}}>
             <div style={{maxWidth:520,animation:"fadeIn .5s cubic-bezier(.22,1,.36,1) both"}}>{brand}</div>
           </div>
           {/* Sign-in column */}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 40px",overflowY:"auto"}}>
-            <div style={{width:"100%",maxWidth:480,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) .05s both"}}>
+          <div style={{display:"flex",padding:lay.isTablet ? "24px 32px" : "48px 40px",overflowY:"auto"}}>
+            <div style={{width:"100%",maxWidth:480,margin:"auto",animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) .05s both"}}>
               {form}
               {footer}
             </div>
           </div>
         </div>
+      ) : phoneLand ? (
+        <div style={{width:"100%",maxWidth:760,margin:"auto",display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(300px,1.25fr)",gap:24,alignItems:"center",animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both"}}>
+          {brand}
+          {form}
+        </div>
       ) : (
-        <div style={{width:"100%",maxWidth:big ? 520 : 380,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both",paddingBottom:24}}>
+        <div style={{width:"100%",maxWidth:big ? 520 : 380,margin:"auto",animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both"}}>
           {brand}
           {form}
           {footer}

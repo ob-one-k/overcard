@@ -20,6 +20,7 @@ export function passwordProblem(pw) {
 export function ResetPasswordScreen({ token, onDone }) {
   var desktop = useDesktop();
   var wide = desktop.isDesktop || desktop.isTablet;
+  var phoneLand = desktop.isMobile && desktop.landscape;
   var [info, setInfo]       = useState(null);    // { firstName, email, orgName } | { error }
   var [pw, setPw]           = useState("");
   var [confirm, setConfirm] = useState("");
@@ -98,8 +99,10 @@ export function ResetPasswordScreen({ token, onDone }) {
   }
 
   return (
-    <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:wide?"center":"flex-start",justifyContent:"center",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",padding:wide?32:"40px 16px",boxSizing:"border-box"}}>
-      <div style={{width:"100%",maxWidth:440,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:20,padding:wide?"32px 32px":"24px 20px",display:"flex",flexDirection:"column",gap:16}}>
+    // Fills the visible screen (not 100vh) and scrolls inside; margin:auto centres the card
+    // without clipping its top on short (landscape / keyboard-open) screens
+    <div style={{width:"100%",height:"100%",display:"flex",background:"linear-gradient(135deg,#060d1a 0%,#071025 100%)",padding:wide?32:phoneLand?"16px 24px":"40px 16px",overflowY:"auto",boxSizing:"border-box"}}>
+      <div style={{width:"100%",maxWidth:phoneLand?520:440,margin:wide||phoneLand?"auto":"0 auto",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:20,padding:wide?"32px 32px":"24px 20px",display:"flex",flexDirection:"column",gap:16}}>
         <div style={{width:44,height:44,borderRadius:12,background:"#1565C0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,fontWeight:900,color:"#fff"}}>O</div>
         {body}
       </div>
