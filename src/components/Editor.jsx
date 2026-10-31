@@ -64,9 +64,13 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
   // Escaped text with every {{NAME}} turned into a chip
   function tokHtml(s) { return escH(s).split(NAME_TOKEN).join(chipHtml()); }
 
+  // A zero-width space after a chip that ends the script gives the caret a text node to sit in
+  // (otherwise End / a click after it lands inside the non-editable chip and typing is lost).
+  // It is stripped when serializing.
+  var ZWSP = "\u200B";
   function mdToHtml(md) {
     if (!md) return "";
-    return parseRichText(oneLine(md)).map(function(seg) {
+    var html = parseRichText(oneLine(md)).map(function(seg) {
       if (seg.type === "name") return chipHtml();
       if (seg.type === "bold")
         return "<strong style=\"font-weight:800;font-style:normal;color:#fff\">"+tokHtml(seg.content)+"</strong>";
@@ -76,11 +80,12 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
         return "<em style=\"font-style:italic;color:rgba(255,255,255,.75)\">"+tokHtml(seg.content)+"</em>";
       return escH(seg.content);
     }).join("");
+    return /<\/span>$/.test(html) ? html + ZWSP : html;
   }
   function isChip(node) { return !!(node && node.nodeType === 1 && node.getAttribute && node.getAttribute("data-token") === "name"); }
   // Plain text of a node/fragment, keeping NAME chips as {{NAME}} (used when wrapping a selection)
   function plainOf(node) {
-    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType === 3) return node.textContent.replace(/\u200B/g, "");
     if (isChip(node)) return NAME_TOKEN;
     if (node.nodeType === 1 && node.tagName === "BR") return " ";
     return Array.from(node.childNodes || []).map(plainOf).join("");
@@ -94,7 +99,7 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
   }
 
   function nodeToMd(node) {
-    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType === 3) return node.textContent.replace(/\u200B/g, "");
     if (node.nodeType !== 1) return "";
     if (isChip(node)) return NAME_TOKEN;
     var tag = node.tagName.toLowerCase();
@@ -147,6 +152,10 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
       caretToEnd();
       return;
     }
+    // A chip left at the very end (text after it deleted) gets its caret anchor back
+    var tail = el.lastChild;
+    while (tail && tail.nodeType === 3 && !tail.data.length) { el.removeChild(tail); tail = el.lastChild; }
+    if (isChip(tail)) el.appendChild(document.createTextNode(ZWSP));
     lastGood.current = { html: el.innerHTML, md: md };
     setCount(len);
     isInternal.current = true;
@@ -196,10 +205,18 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
     while (anc && anc !== el) { if (isChip(anc)) { r.setStartAfter(anc); r.collapse(true); break; } anc = anc.parentNode; }
     var f = fragOf(NAME_TOKEN), chip = f.last;
     r.deleteContents(); r.insertNode(f.frag);
-    // Keep somewhere to type after a chip at the very end
-    var after = chip;
-    if (!chip.nextSibling) { after = document.createTextNode(" "); chip.parentNode.insertBefore(after, chip.nextSibling); }
-    var nr = document.createRange(); nr.setStartAfter(after); nr.collapse(true);
+    // Keep somewhere to type after a chip at the very end (a zero-width space, never saved)
+    // (insertNode can leave an empty text node after it — that is no place for a caret either)
+    var nr = document.createRange();
+    var next = chip.nextSibling;
+    if (next && next.nodeType === 3 && next.data.length) {
+      nr.setStart(next, 0);
+    } else {
+      if (next && next.nodeType === 3) next.data = ZWSP;
+      else { next = document.createTextNode(ZWSP); chip.parentNode.insertBefore(next, chip.nextSibling); }
+      nr.setStart(next, 1);
+    }
+    nr.collapse(true);
     sel.removeAllRanges(); sel.addRange(nr);
     setHasSel(false); handleInput();
   }

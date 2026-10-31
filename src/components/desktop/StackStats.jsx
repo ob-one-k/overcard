@@ -163,7 +163,7 @@ export function StackStats({ deck, stack, orderedCards, canOrg, onOpenCard, onOp
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:16}}>
         <div style={{minWidth:0}}>
           {header}
-          <div style={{fontSize:13,color:TXT3,marginTop:6}}>
+          <div style={{fontSize:13,color:TXT3,marginTop:header ? 6 : 0}}>
             Select a card on the left to {onOpenCard ? "open" : "read"} it. Stats below are from {loading ? "…" : st.n + " call" + (st.n !== 1 ? "s" : "")}{scope === "org" ? " across the org" : " you ran"} on this deck.
           </div>
         </div>
@@ -182,7 +182,7 @@ export function StackStats({ deck, stack, orderedCards, canOrg, onOpenCard, onOp
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(" + (compact ? 150 : 140) + "px, 1fr))",gap:12,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:compact ? "repeat(auto-fit, minmax(150px, 1fr))" : "repeat(5, minmax(0, 1fr))",gap:12,marginBottom:16}}>
         {kpis.map(function(k) {
           return (
             <div key={k.l} style={Object.assign({}, panel, {padding:compact?"12px 14px":"14px 16px"})}>
@@ -197,7 +197,7 @@ export function StackStats({ deck, stack, orderedCards, canOrg, onOpenCard, onOp
       {!loading && st.entries === 0 ? (
         <div style={{background:"rgba(239,83,80,.06)",border:"1px dashed rgba(239,83,80,.3)",borderRadius:14,padding:"28px 24px",textAlign:"center",color:TXT2,fontSize:15,lineHeight:1.6}}>
           {st.n === 0 ? "No calls on this deck yet" + (mode !== "all" ? " for this filter" : "") + "." : "None of these " + st.n + " call" + (st.n !== 1 ? "s" : "") + " opened this stack yet."}
-          <div style={{fontSize:13,color:TXT3,marginTop:6}}>Stats fill in as reps open it from Play.</div>
+          <div style={{fontSize:13,color:TXT3,marginTop:header ? 6 : 0}}>Stats fill in as reps open it from Play.</div>
         </div>
       ) : (
         <div style={{display:"grid",gridTemplateColumns:compact?"minmax(0,1fr)":"minmax(0,1fr) minmax(0,1fr)",gap:16,alignItems:"start"}}>

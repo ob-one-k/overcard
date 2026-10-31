@@ -5,6 +5,7 @@ import { apiGetBlob } from "../lib/api";
 import { getAudioBlob } from "../lib/audioStore";
 import { useUploadStatus, retrySessionAudio } from "../lib/audioUpload";
 import { createNoiseReduction, playbackNoiseReduction, setPlaybackNoiseReduction } from "../lib/noiseReduction";
+import { SaveClipDialog, useSavedSegments, HeartIcon, CLIP_COLOR, clipTint } from "./ClipSave";
 
 // ─── SESSION AUDIO PLAYBACK ───────────────────────────────────────────────────
 // useSessionAudio(session) owns ONE <audio> element per session review, so every tab
@@ -59,24 +60,9 @@ function getPlayCtx() {
   return playCtx;
 }
 
-export function useSessionAudio(session) {
-  var [url,       setUrl]       = useState(null);
-  var [state,     setState]     = useState("loading");   // loading | ready | none | error
-  var [source,    setSource]    = useState(null);        // "server" | "device"
-  var [mime,      setMime]      = useState("");
-  var [playing,   setPlaying]   = useState(false);
-  var [currentMs, setCurrentMs] = useState(0);
-  var [mediaDur,  setMediaDur]  = useState(0);
-  var [rate,      setRateSt]    = useState(1);
-  var [clip,      setClip]      = useState(null);        // segment being played out of context
-  var [reloadKey, setReloadKey] = useState(0);
-  var audioRef = useRef(null);
-  var urlRef   = useRef(null);
-  var clipRef  = useRef(null);
-  var queueRef = useRef([]);      // further clips to play after the current one (Play all visits)
-  var rafRef   = useRef(null);
-  var fixDurRef = useRef(false);
-  var upload   = useUploadStatus(session.id);
+// Noise-reduction routing for one <audio> element (audioRef), rebuilt when url changes.
+// ensureGraph() must run inside a user gesture (a play click) the first time.
+export function useNoiseGraph(audioRef, url) {
   var [nrOn, setNrOn] = useState(playbackNoiseReduction);
   var nrOnRef = useRef(nrOn);
   nrOnRef.current = nrOn;
@@ -105,7 +91,7 @@ export function useSessionAudio(session) {
       nr.output.connect(ctx.destination);
     }).catch(function() {});
   }
-  // A new recording (new element) or leaving the review: release this element's nodes
+  // A new recording (new element) or leaving: release this element's nodes
   useEffect(function() {
     return function() {
       var g = graphRef.current;
@@ -113,6 +99,38 @@ export function useSessionAudio(session) {
       if (g) { try { g.source.disconnect(); } catch (_) {} if (g.nr) g.nr.disconnect(); }
     };
   }, [url]);
+
+  return {
+    ensureGraph: ensureGraph,
+    noiseReduction: nrOn,
+    setNoiseReduction: function(on) {
+      setNrOn(on); setPlaybackNoiseReduction(on);
+      var g = graphRef.current;
+      if (g && g.nr) g.nr.setEnabled(on);
+    },
+  };
+}
+
+export function useSessionAudio(session) {
+  var [url,       setUrl]       = useState(null);
+  var [state,     setState]     = useState("loading");   // loading | ready | none | error
+  var [source,    setSource]    = useState(null);        // "server" | "device"
+  var [mime,      setMime]      = useState("");
+  var [playing,   setPlaying]   = useState(false);
+  var [currentMs, setCurrentMs] = useState(0);
+  var [mediaDur,  setMediaDur]  = useState(0);
+  var [rate,      setRateSt]    = useState(1);
+  var [clip,      setClip]      = useState(null);        // segment being played out of context
+  var [reloadKey, setReloadKey] = useState(0);
+  var audioRef = useRef(null);
+  var urlRef   = useRef(null);
+  var clipRef  = useRef(null);
+  var queueRef = useRef([]);      // further clips to play after the current one (Play all visits)
+  var rafRef   = useRef(null);
+  var fixDurRef = useRef(false);
+  var upload   = useUploadStatus(session.id);
+  var nr = useNoiseGraph(audioRef, url);
+  var ensureGraph = nr.ensureGraph;
 
   var segments = normalizeSegments(session);
   var lastSegEnd = segments.length ? segments[segments.length - 1].endMs : 0;
@@ -242,12 +260,8 @@ export function useSessionAudio(session) {
     skip: function(delta) { ctl.seek((audioRef.current ? audioRef.current.currentTime * 1000 : 0) + delta); },
     setRate: function(r) { setRateSt(r); if (audioRef.current) audioRef.current.playbackRate = r; },
     // Noise reduction on playback (remembered on this device; downloads stay the original file)
-    noiseReduction: nrOn,
-    setNoiseReduction: function(on) {
-      setNrOn(on); setPlaybackNoiseReduction(on);
-      var g = graphRef.current;
-      if (g && g.nr) g.nr.setEnabled(on);
-    },
+    noiseReduction: nr.noiseReduction,
+    setNoiseReduction: nr.setNoiseReduction,
     retryUpload: function() { return retrySessionAudio(session.id); },
     reload: function() { setReloadKey(function(k) { return k + 1; }); },
   };
@@ -304,7 +318,7 @@ function scale(size) {
 var RATES = [1, 1.25, 1.5, 2];
 
 // Noise reduction on/off. Shown everywhere a player is, so a listener can compare.
-function NoiseToggle({ ctl, f, compact }) {
+export function NoiseToggle({ ctl, f, compact }) {
   var on = ctl.noiseReduction;
   return (
     <button onClick={function(){ ctl.setNoiseReduction(!on); }} aria-pressed={on}
@@ -315,17 +329,53 @@ function NoiseToggle({ ctl, f, compact }) {
   );
 }
 
-// Click/drag-free progress track with segment blocks coloured by card type
-function SegmentTrack({ ctl, height, onHoverSeg }) {
+// Progress track with segment blocks coloured by card type; click to seek.
+// range + onRange (clip saving): a picked [startMs, endMs] with drag handles (pointer, or
+// ←/→ on a focused handle) — kept at least 1 s and at most 10 min long.
+var MIN_RANGE = 1000, MAX_RANGE = 10 * 60 * 1000;
+function SegmentTrack({ ctl, height, onHoverSeg, range, onRange }) {
   var total = ctl.durationMs || 1;
   var pct = Math.min(100, (ctl.currentMs / total) * 100);
+  var trackRef = useRef(null);
+  var dragRef = useRef(null);
+  function msAt(clientX) {
+    var r = trackRef.current.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * total;
+  }
   function click(e) {
-    var r = e.currentTarget.getBoundingClientRect();
-    ctl.seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * total);
+    if (dragRef.current) return;
+    ctl.seek(msAt(e.clientX));
+  }
+  function setEdge(which, ms) {
+    if (!range || !onRange) return;
+    var st = range.startMs, en = range.endMs;
+    if (which === "start") st = Math.max(0, Math.min(ms, en - MIN_RANGE, total), en - MAX_RANGE);
+    else en = Math.min(total, Math.max(ms, st + MIN_RANGE), st + MAX_RANGE);
+    onRange({ startMs: Math.round(st), endMs: Math.round(en) });
+  }
+  function handle(which) {
+    var ms = which === "start" ? range.startMs : range.endMs;
+    return (
+      <div key={which} role="slider" tabIndex={0} aria-label={which === "start" ? "Clip start" : "Clip end"}
+        aria-valuemin={0} aria-valuemax={Math.round(total / 1000)} aria-valuenow={Math.round(ms / 1000)} aria-valuetext={msToMmss(ms)}
+        onPointerDown={function(e){ e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); dragRef.current = which; }}
+        onPointerMove={function(e){ if (dragRef.current === which) setEdge(which, msAt(e.clientX)); }}
+        onPointerUp={function(){ setTimeout(function(){ dragRef.current = null; }, 0); }}
+        onPointerCancel={function(){ dragRef.current = null; }}
+        onClick={function(e){ e.stopPropagation(); }}
+        onKeyDown={function(e){
+          var step = e.shiftKey ? 5000 : 1000;
+          if (e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); setEdge(which, ms - step); }
+          else if (e.key === "ArrowRight") { e.preventDefault(); e.stopPropagation(); setEdge(which, ms + step); }
+        }}
+        style={{position:"absolute",top:-5,bottom:-5,left:(ms / total * 100) + "%",width:14,marginLeft:-7,cursor:"ew-resize",touchAction:"none",zIndex:3,display:"flex",alignItems:"center",justifyContent:"center",outlineOffset:2}}>
+        <div style={{width:6,height:"100%",borderRadius:3,background:CLIP_COLOR,boxShadow:"0 0 0 2px rgba(0,0,0,.55), 0 0 10px "+clipTint(.7)}}/>
+      </div>
+    );
   }
   return (
-    <div onClick={click} role="slider" aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(total / 1000)} aria-valuenow={Math.round(ctl.currentMs / 1000)}
-      style={{position:"relative",height:height,borderRadius:6,background:"rgba(255,255,255,.07)",cursor:"pointer",overflow:"hidden",userSelect:"none"}}>
+    <div ref={trackRef} onClick={click} role="slider" aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(total / 1000)} aria-valuenow={Math.round(ctl.currentMs / 1000)}
+      style={{position:"relative",height:height,borderRadius:6,background:"rgba(255,255,255,.07)",cursor:"pointer",overflow:range ? "visible" : "hidden",userSelect:"none",touchAction:range ? "none" : undefined}}>
       {ctl.segments.map(function(sg) {
         var on = ctl.activeSeg && ctl.activeSeg.segId === sg.segId;
         return (
@@ -342,8 +392,25 @@ function SegmentTrack({ ctl, height, onHoverSeg }) {
           boxShadow:"inset 0 0 0 2px #fff",borderRadius:3,pointerEvents:"none"}}/>
       )}
       <div style={{position:"absolute",top:0,bottom:0,left:0,width:pct+"%",background:"rgba(255,255,255,.18)",pointerEvents:"none"}}/>
-      <div style={{position:"absolute",top:0,bottom:0,left:pct+"%",width:2,marginLeft:-1,background:"#fff",boxShadow:"0 0 6px rgba(255,255,255,.8)",pointerEvents:"none"}}/>
+      {range && (
+        <div style={{position:"absolute",top:0,bottom:0,left:(range.startMs / total * 100) + "%",width:((range.endMs - range.startMs) / total * 100) + "%",
+          background:clipTint(.22),boxShadow:"inset 0 0 0 2px "+CLIP_COLOR,pointerEvents:"none",zIndex:2}}/>
+      )}
+      <div style={{position:"absolute",top:0,bottom:0,left:pct+"%",width:2,marginLeft:-1,background:"#fff",boxShadow:"0 0 6px rgba(255,255,255,.8)",pointerEvents:"none",zIndex:2}}/>
+      {range && onRange && handle("start")}
+      {range && onRange && handle("end")}
     </div>
+  );
+}
+
+// Small ♥ button: save this segment as a clip (filled once saved)
+function SaveHeart({ saved, onClick, f, lg }) {
+  return (
+    <button onClick={function(e){ e.stopPropagation(); onClick(); }} aria-label={saved ? "Saved to your Library — save again" : "Save this card's audio as a clip"}
+      title={saved ? "Saved to your Library" : "Save as a clip"}
+      style={ghostSm({fontSize:f.xs,padding:lg?"5px 9px":"4px 7px",color:saved?CLIP_COLOR:"rgba(255,255,255,.55)",borderColor:saved?clipTint(.5):"rgba(255,255,255,.14)",background:saved?clipTint(.12):"transparent",display:"inline-flex",alignItems:"center",flexShrink:0})}>
+      <HeartIcon filled={saved} size={lg ? 14 : 12}/>
+    </button>
   );
 }
 
@@ -375,7 +442,8 @@ export function UploadNotice({ ctl, size }) {
 // Listening tools for the card you have open (Path tab expansion, Playback tab selection):
 // every visit to that card as a clip with its own scrubber, "Play all visits" back to back,
 // and "Play call from here" to hear it in context.
-export function CardClipPlayer({ ctl, segs, size }) {
+// onSave(seg) / saved {segId:true} (optional): a ♥ per visit to save it as a clip
+export function CardClipPlayer({ ctl, segs, size, onSave, saved }) {
   var f = scale(size);
   var lg = size === "lg";
   if (ctl.state === "loading") return <div style={{fontSize:f.sm,color:"rgba(255,255,255,.35)"}}>Loading recording…</div>;
@@ -424,6 +492,7 @@ export function CardClipPlayer({ ctl, segs, size }) {
               </div>
               <button onClick={function(){ ctl.playFrom(sg.startMs); }} title="Hear it in context — keep playing the call from here"
                 style={ghostSm({fontSize:f.xs,padding:lg?"5px 10px":"4px 8px",flexShrink:0})}>In context</button>
+              {onSave && <SaveHeart saved={!!(saved && saved[String(sg.segId)])} onClick={function(){ onSave(sg); }} f={f} lg={lg}/>}
             </div>
           );
         })}
@@ -473,10 +542,25 @@ export function AudioMiniBar({ ctl, size }) {
 }
 
 // ─── PLAYBACK TAB ─────────────────────────────────────────────────────────────
-export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
+// session + canClip: ♥ on each segment and "Save a part" (a dragged range) save clips
+export function AudioPlayback({ ctl, size, canDownload, sessionName, session, canClip }) {
   var f = scale(size);
   var lg = size === "lg";
   var [grouped, setGrouped] = useState(false);
+  var [saveTarget, setSaveTarget] = useState(null);   // what the Save clip dialog is saving
+  var [range, setRange] = useState(null);             // picked part of the call (range mode)
+  var saved = useSavedSegments(session ? session.id : null);
+  var clipping = !!(canClip && session);
+  function saveSeg(sg) {
+    setSaveTarget({ startMs: sg.startMs, endMs: sg.endMs, segId: sg.segId, cardTitle: sg.cardTitle, cardType: sg.cardType, isObjCard: !!sg.isObjCard, stackLabel: sg.stackLabel || null });
+  }
+  function startRange() {
+    var total = ctl.durationMs || 0;
+    var st = Math.max(0, Math.min(ctl.currentMs, total - 1000));
+    var en = Math.min(total, st + 15000);
+    if (en - st < 1000) st = Math.max(0, en - 15000);
+    setRange({ startMs: Math.round(st), endMs: Math.round(en) });
+  }
   var [hoverSeg, setHoverSeg] = useState(null);
   var [selCard, setSelCard] = useState(null);   // { cardId, isObjCard } of the row clicked
 
@@ -553,6 +637,7 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
           style={ghostSm({fontSize:f.xs,padding:lg?"5px 10px":"4px 8px"})}>
           From here
         </button>
+        {clipping && <SaveHeart saved={!!saved[String(sg.segId)]} onClick={function(){ saveSeg(sg); }} f={f} lg={lg}/>}
       </div>
     );
   }
@@ -567,7 +652,7 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
             <span style={{fontSize:f.md,fontWeight:700,color:"#fff"}}>{selSegs[0].cardTitle}</span>
             <button onClick={function(){ setSelCard(null); }} aria-label="Close card audio" style={ghostSm({fontSize:f.xs,padding:"2px 8px"})}>✕</button>
           </div>
-          <CardClipPlayer ctl={ctl} segs={selSegs} size={size}/>
+          <CardClipPlayer ctl={ctl} segs={selSegs} size={size} onSave={clipping ? saveSeg : null} saved={saved}/>
         </div>
       )}
       <div style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+(curSeg ? segColor(curSeg) : "rgba(255,255,255,.2)"),borderRadius:"0 12px 12px 0",padding:lg?"12px 14px":"9px 12px",marginBottom:14,minHeight:lg?58:44}}>
@@ -582,7 +667,7 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
           <div style={{fontSize:f.md,color:"rgba(255,255,255,.4)",lineHeight:lg?2.3:1.8}}>{ctl.playing ? "Between cards" : "Press play to listen to the full call"}</div>
         )}
       </div>
-      <SegmentTrack ctl={ctl} height={lg?28:22} onHoverSeg={setHoverSeg}/>
+      <SegmentTrack ctl={ctl} height={lg?28:22} onHoverSeg={setHoverSeg} range={range} onRange={setRange}/>
       <div style={{display:"flex",justifyContent:"space-between",marginTop:6,marginBottom:14,fontSize:f.xs,color:"rgba(255,255,255,.4)",fontVariantNumeric:"tabular-nums"}}>
         <span>{msToMmss(ctl.currentMs)}</span>
         <span style={{color:"rgba(255,255,255,.6)"}}>{hoverSeg ? hoverSeg.cardTitle : ""}</span>
@@ -607,7 +692,54 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
           <a href={ctl.url} download={(sessionName || "session").replace(/[\\/:*?"<>|]+/g, "-") + ctl.fileExt}
             style={Object.assign({}, ghostSm({fontSize:f.xs,padding:"4px 10px"}), {textDecoration:"none"})}>⬇ Download</a>
         )}
+        {clipping && !range && (
+          <button onClick={startRange} title="Pick any part of the call and save it as a clip"
+            style={ghostSm({fontSize:f.xs,padding:"4px 10px",color:CLIP_COLOR,borderColor:clipTint(.45),display:"inline-flex",alignItems:"center",gap:5})}>
+            <HeartIcon size={12}/> Save a part…
+          </button>
+        )}
       </div>
+      {clipping && range && (
+        <div style={{marginTop:14,background:clipTint(.07),border:"1px solid "+clipTint(.35),borderRadius:12,padding:lg?"12px 14px":"10px 12px",animation:"fadeIn .15s ease both"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <span style={{color:CLIP_COLOR}}><HeartIcon size={14}/></span>
+            <span style={{fontSize:f.md,fontWeight:700,color:"#fff",flex:1}}>Save a part of the call</span>
+            <span style={{fontSize:f.sm,color:"rgba(255,255,255,.6)",fontVariantNumeric:"tabular-nums"}}>{msToMmss(range.endMs - range.startMs)}</span>
+          </div>
+          <div style={{fontSize:f.xs,color:"rgba(255,255,255,.45)",marginBottom:10,lineHeight:1.5}}>Drag the pink handles on the timeline, or set them from where you are now.</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+            {[["start","Start",range.startMs],["end","End",range.endMs]].map(function(e) {
+              return (
+                <div key={e[0]} style={{display:"flex",alignItems:"center",gap:6,background:"rgba(255,255,255,.04)",borderRadius:9,padding:"6px 8px"}}>
+                  <span style={{fontSize:f.xs,color:"rgba(255,255,255,.45)",width:lg?34:28}}>{e[1]}</span>
+                  <span style={{fontSize:f.md,fontWeight:700,color:"#fff",fontVariantNumeric:"tabular-nums",flex:1}}>{msToMmss(e[2])}</span>
+                  <button onClick={function(){
+                      var now = Math.round(ctl.currentMs);
+                      setRange(function(r) {
+                        var st = r.startMs, en = r.endMs;
+                        if (e[0] === "start") { st = now; if (en - st < MIN_RANGE || en - st > MAX_RANGE) en = Math.min(ctl.durationMs || now + 15000, st + 15000); }
+                        else { en = now; if (en - st < MIN_RANGE || en - st > MAX_RANGE) st = Math.max(0, en - 15000); }
+                        return { startMs: st, endMs: Math.max(en, st + MIN_RANGE) };
+                      });
+                    }}
+                    style={ghostSm({fontSize:f.xs,padding:"3px 8px"})}>Now</button>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={function(){ ctl.playClip({ segId: "__range", startMs: range.startMs, endMs: range.endMs, cardTitle: "Your selection" }); }}
+              style={ghostSm({fontSize:f.sm,padding:f.btn})}>{ctl.clip && ctl.clip.segId === "__range" && ctl.playing ? "❚❚ Previewing" : "▶ Preview"}</button>
+            <button onClick={function(){
+                var seg = ctl.segments.find(function(sg) { return range.startMs >= sg.startMs && range.startMs < sg.endMs; });
+                setSaveTarget({ startMs: range.startMs, endMs: range.endMs, cardTitle: seg ? seg.cardTitle : null });
+              }}
+              style={Object.assign({}, solidBtn(CLIP_COLOR), {padding:f.btn,fontSize:f.sm,flex:1,minWidth:120})}>♥ Save clip…</button>
+            <button onClick={function(){ setRange(null); if (ctl.clip && ctl.clip.segId === "__range") ctl.continueFull(); }}
+              style={ghostSm({fontSize:f.sm,padding:f.btn})}>Cancel</button>
+          </div>
+        </div>
+      )}
       <div style={{fontSize:f.xs,color:"rgba(255,255,255,.3)",textAlign:"center",marginTop:12}}>
         {ctl.source === "device" ? "Playing this device's copy" : "Stored with the session"}{lg ? " · Space play/pause · ←/→ 5s · J/L 15s" : ""}
       </div>
@@ -653,6 +785,11 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName }) {
 
   return (
     <div style={{paddingBottom:24}}>
+      {saveTarget && session && (
+        <SaveClipDialog session={session} target={saveTarget}
+          onClose={function(){ setSaveTarget(null); }}
+          onSaved={function(){ if (saveTarget.segId == null) setRange(null); }}/>
+      )}
       <UploadNotice ctl={ctl} size={size}/>
       {lg ? (
         <div style={{display:"grid",gridTemplateColumns:"minmax(320px,1fr) minmax(320px,1fr)",gap:24,alignItems:"start",marginTop:ctl.upload && ctl.upload.state !== "done" ? 12 : 0}}>

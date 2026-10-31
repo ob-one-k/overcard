@@ -525,7 +525,8 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
   }
 
   // ── Open stack: stats when no card is on the stage (like the Cards tab overview) ──
-  function renderStackStats(stack, editable) {
+  // inRead: inside StackReadView, which already shows the stack's heading
+  function renderStackStats(stack, editable, inRead) {
     var list = orderedStackCards(stack);
     var h = stackHealth(stack);
     var target = stack.targetCard && deck.cards[stack.targetCard];
@@ -550,7 +551,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
       </>
     );
     return (
-      <StackStats key={stack.id} deck={deck} stack={stack} orderedCards={list} canOrg={!!isAdmin} header={header}
+      <StackStats key={stack.id} deck={deck} stack={stack} orderedCards={list} canOrg={!!isAdmin} header={inRead ? null : header}
         onOpenCard={editable ? function(c){ openCard(c, null); } : null}
         onOpenSession={onOpenSession}/>
     );
@@ -751,7 +752,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
             </select>
           </div>
           <StackReadView key={selectedStack.id} stack={selectedStack} deckCards={deck.cards} isTablet={isTablet}
-            renderEmpty={!isTablet || desktop.splitPanes ? function(){ return renderStackStats(selectedStack, false); } : null}/>
+            renderEmpty={!isTablet || desktop.splitPanes ? function(){ return renderStackStats(selectedStack, false, true); } : null}/>
         </div>
       )}
 

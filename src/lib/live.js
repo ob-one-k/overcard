@@ -52,6 +52,7 @@ function dispatch(type, data) {
   if (type === "session.finished" || type === "session.changed" || type === "feedback.changed" || type === "share.changed" || type === "highlight.changed") invalidate("/sessions");
   if (type === "live.resync") invalidate("/");
   if (type === "users.changed") invalidate("/admin");
+  if (type === "clip.changed" || (type === "notification.new" && data && data.clipId)) invalidate("/clips");
   (handlers[type] || []).slice().forEach(function(fn) { try { fn(data); } catch (e) { console.error(e); } });
   (handlers["*"] || []).slice().forEach(function(fn) { try { fn(type, data); } catch (e) { console.error(e); } });
 }

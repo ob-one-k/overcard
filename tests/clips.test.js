@@ -75,8 +75,9 @@ test("clips: saving, playing, sharing and who may do what", async function() {
     assert.equal((await mer.post("/clips", { sessionId: sid, startMs: 0, endMs: 2000, title: "x" })).status, 404);
 
     // Clips are private to their owner (and the org owner)
-    var mine = (await rep.get("/clips")).body.map(function(c) { return c.id; });
-    assert.deepEqual(mine, [clip.id], "a person's library holds their own clips");
+    var mine = (await rep.get("/clips")).body;
+    assert.ok(mine.some(function(c) { return c.id === clip.id; }), "the rep's library has their clip");
+    assert.ok(mine.every(function(c) { return c.userId === rep.user.id; }), "…and only their own clips");
     assert.equal((await other.get("/clips/" + clip.id)).status, 404);
     assert.equal((await admin.get("/clips/" + clip.id)).status, 404, "admins don't see others' clips");
     assert.equal((await owner.get("/clips/" + clip.id)).status, 200, "the owner does");

@@ -9,6 +9,8 @@ import { TipCtx, GlobalInflTooltip } from "./components/Tooltip";
 import { PlayTab } from "./components/Play";
 import { DeckSwitcherSheet, LoginScreen, ProfileSheet } from "./components/Panels";
 import { NotificationBell } from "./components/NotificationBell";
+import { LibraryButton } from "./components/ClipSave";
+import { openLibrary, onOpenLibrary } from "./lib/library";
 import { OrgMark } from "./components/OrgMark";
 import { getBrand, syncBrand, setBrand, cachedLogoVer } from "./lib/brand";
 import { clearCache, cachedGet } from "./lib/dataCache";
@@ -28,6 +30,7 @@ var loaders = {
   signup:   function() { return import("./components/Signup"); },
   reset:    function() { return import("./components/ResetPassword"); },
   palette:  function() { return import("./components/CommandPalette"); },
+  library:  function() { return import("./components/Library"); },
 };
 // Like React.lazy, but once a chunk has loaded (usually by the idle prefetch below) its
 // components render synchronously. React.lazy suspends on every component's first
@@ -61,6 +64,7 @@ var SignupScreen   = lazyNamed("signup", "SignupScreen");
 var ResetPasswordScreen = lazyNamed("reset", "ResetPasswordScreen");
 var CommandPalette = lazyNamed("palette", "CommandPalette");
 var SessionReview  = lazyNamed("sessions", "SessionReview");
+var LibrarySheet   = lazyNamed("library", "LibrarySheet");
 function prefetchChunks(isAdmin, isDesktop) {
   var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home", "palette"].concat(isAdmin ? ["admin"] : []);
   var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 1200); };
@@ -386,6 +390,9 @@ function LandscapeRail({ tabs, tab, onTabClick, deck, decksCount, authUser, onOp
       </div>
       <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
         <NotificationBell onOpenSession={onOpenSession} side="right"/>
+      </div>
+      <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
+        <LibraryButton small/>
         <button onClick={onOpenProfile} aria-label="Profile"
           style={{width:30,height:30,borderRadius:"50%",background:admin?accentA(.12):"rgba(255,255,255,.06)",border:"1px solid "+(admin?accentA(.3):"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,cursor:"pointer",color:admin?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700,padding:0}}>
           {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
@@ -425,6 +432,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var [sessionEvents,  setSessionEvents]  = useState([]);
   // Track whether we're in an active session — must come after activeSession is declared
   var sessionActive = !!activeSession;
+  var activeSessionRef = useRef(null);
+  activeSessionRef.current = activeSession;
   // Admin scope for SessionsTab
   var [viewScope,   setViewScope]   = useState("self");
   // Admin org data
@@ -434,6 +443,9 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var [showProfile, setShowProfile] = useState(false);
   // A highlighted session whose deck this user can't open here: reviewed in an overlay
   var [hlOverlay, setHlOverlay] = useState(null);
+  // The Library sheet (saved clips + highlights), opened from anywhere via lib/library.js
+  var [libReq, setLibReq] = useState(null);
+  useEffect(function() { return onOpenLibrary(function(r) { if (!activeSessionRef.current) setLibReq(r); }); }, []);
   // Command palette visibility (desktop only)
   var [showCmdPalette, setShowCmdPalette] = useState(false);
   // A card to open once Cards / Objections show the right deck (from search): { deckId, cardId, stackId?, nonce }
@@ -1013,6 +1025,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           @keyframes savePulse {0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
           @keyframes btnPop    {0%{transform:scale(1)}40%{transform:scale(0.91)}100%{transform:scale(1)}}
           @keyframes modalIn   {from{opacity:0;transform:translate(-50%,-55%)}to{opacity:1;transform:translate(-50%,-50%)}}
+          @keyframes popIn     {from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
           @keyframes pulse     {0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 5px transparent}100%{box-shadow:0 0 0 0 transparent}}
           ${PRESS_CSS}
           /* Multi-column flows (landscape phones): a section never splits across columns */
@@ -1102,7 +1115,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
               <div style={{width:28,height:28,borderRadius:9,background:deck.color+"22",border:"1.5px solid "+deck.color+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{deck.icon}</div>
               <div style={{textAlign:"left"}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#fff",lineHeight:1}}>{deck.name}</div>
-                <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:1}}>{liveDecks.length} deck{liveDecks.length!==1?"s":""} · tap to switch</div>
+                <div style={{fontSize:9,color:"rgba(255,255,255,.28)",marginTop:1,whiteSpace:"nowrap"}}>{liveDecks.length} deck{liveDecks.length!==1?"s":""} · tap to switch</div>
               </div>
               <span style={{fontSize:10,color:"rgba(255,255,255,.28)",marginLeft:2}}>⌄</span>
             </button>
@@ -1113,6 +1126,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
                 style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(255,255,255,.82)",padding:0,fontFamily:"inherit"}}>
                 <SearchIcon size={16}/>
               </button>
+              <LibraryButton/>
               <NotificationBell onOpenSession={openSessionFromNotification}/>
               <button onClick={function(){ setShowProfile(true); }}
                 style={{width:34,height:34,borderRadius:"50%",background:isAdminRole(authUser.role)?accentA(.12):"rgba(255,255,255,.06)",border:"1px solid "+(isAdminRole(authUser.role)?accentA(.3):"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,cursor:"pointer",color:isAdminRole(authUser.role)?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700}}
@@ -1143,6 +1157,14 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
             )}
           </div>
         )}
+        {libReq && (
+          <Suspense fallback={null}>
+            <LibrarySheet authUser={authUser} request={libReq}
+              onClose={function(){ setLibReq(null); }}
+              onOpenHighlight={openHighlight}
+              onOpenSession={openSessionFromNotification}/>
+          </Suspense>
+        )}
         {hlOverlay && (
           <Suspense fallback={null}>
           {desktop.isDesktop ? (
@@ -1172,12 +1194,12 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         {showCmdPalette && (
           <Suspense fallback={null}>
           <CommandPalette
-            tabs={TABS}
+            tabs={TABS.concat([{ id:"library", label:"Library" }])}
             decks={liveDecks}
             activeDeckId={activeId}
             authUser={authUser}
             sessionActive={sessionActive}
-            onNavigateTab={function(tabId){ handleTabClick(tabId); }}
+            onNavigateTab={function(tabId){ if (tabId === "library") openLibrary({ tab:"clips" }); else handleTabClick(tabId); }}
             onOpen={openFromSearch}
             onClose={function(){ setShowCmdPalette(false); }}
           />

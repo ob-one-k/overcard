@@ -83,8 +83,10 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CR
 | `session_audio` | Session recordings (BYTEA, one per session; cascades on session delete) | "sessionId" PK, "orgId", "mimeType", "durationMs", "sizeBytes", data |
 | `password_resets` | One-time reset links | id, "userId", "tokenHash" (SHA-256), "createdBy", "expiresAt", "usedAt" |
 | `session_highlights` | Highlighted sessions (one per session; cascades with the session and the team) | "sessionId" PK, "orgId", scope (org/team), "teamId", note (≤280), "createdBy", "createdAt" |
+| `audio_clips` | Saved clips — a cut of a recording in its own audio + a snapshot of the session (`meta`). Survive the session ("sessionId" → NULL), go with their owner | id, "orgId", "userId", "sessionId", title (≤50), kind (segment/range), "segId", "cardId", "startMs", "endMs", "durationMs", meta (JSONB), "mimeType", "sizeBytes", data (BYTEA) |
+| `clip_shares` | Clips shared with teammates | id, "clipId", "orgId", "fromUserId", "toUserId", note (≤1000); UNIQUE("clipId","toUserId") |
 
-Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org_invites.label`/`"teamId"`, `users."inviteId"`. `users."activeToken"` holds SHA-256 of the session id, never the raw id. Emails are unique case-insensitively (`uniq_users_email_lower`). Deleting a user keeps their sessions (`userId` → NULL, listed as "Former member"), keeps feedback they wrote, removes shares to/from them; deleting a team clears members' `teamId`.
+Also: `notifications."clipId"` (clip shares), `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org_invites.label`/`"teamId"`, `users."inviteId"`. `users."activeToken"` holds SHA-256 of the session id, never the raw id. Emails are unique case-insensitively (`uniq_users_email_lower`). Deleting a user keeps their sessions (`userId` → NULL, listed as "Former member"), keeps feedback they wrote, removes shares to/from them; deleting a team clears members' `teamId`.
 
 **Column naming:** All camelCase column names are double-quoted in every SQL string throughout db.js to preserve case in PostgreSQL (e.g., `"orgId"`, `"userId"`, `"startTs"`).
 
@@ -94,7 +96,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 
 **Migrations:** every schema change goes in a numbered file in `server/migrations/` (`{ name, up(client) }`, listed in `index.js`), applied once each in its own transaction under an advisory lock and recorded in `migrations`. Never edit or reorder a shipped migration. Don't add new `ALTER`s to the `initSchema` baseline.
 
-**Audio size budget:** recordings are ~0.24 MB/min (32 kbps). The free Render database is 1 GB, which is roughly 60 hours of audio in total.
+**Audio size budget:** recordings are ~0.24 MB/min (32 kbps); saved clips add their own cut (same rate). The free Render database is 1 GB, which is roughly 60 hours of audio in total.
 
 **Helper functions:** `parseDeck(row)` and `parseSession(row)` in db.js set defaults for JSONB fields that may be null (no JSON parsing needed).
 
@@ -103,7 +105,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 **Deck** — A structured sales pitch deck:
 - `cards: {}` — Map of card ID to card object. Each card has: `id`, `title`, `type` (pitch/discovery/close/objection), `prompt` (rich-text string), `overview[]` (bullet points), `answers[]` (each with `id`, `label`, `next` card ID), `intendedPath` (boolean)
 - `rootCard` — ID of the entry card
-- `objStacks[]` — Objection stacks, each with: `id`, `label`, `icon`, `rootCard`, `cards{}` (own card sub-tree), `targetCard` (optional — card ID to navigate to after resolution instead of returning)
+- `objStacks[]` — Objection stacks, each with: `id`, `label`, `icon`, `rootCard`, `cards{}` (own card sub-tree), `targetCard` (optional — card ID to navigate to after resolution instead of returning), and deck-style permissions `createdBy`, `visibility` (public/private), `accessList`, `editorIds` (see Stack permissions). Array order = the owner's order everywhere.
 - `visibility` — "public" (all org users) or "private" (specific teams/users via deck_access)
 - `archivedAt` — set when an admin archives the deck. Archived decks are hidden from users (server-side) and from every admin view except the deck switcher's "Archived" section. Objection stacks archive the same way via an `archivedAt` field inside the stack JSON; Play/Study only ever see `liveStacks(deck)`.
 - New decks start from `newDeckTemplate()` (Opening → Discovery → Close, all on the intended path).
@@ -115,7 +117,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 - `sold` — boolean; true when outcome is a successful close
 - `soldCardId` / `soldCardTitle` — card where the close was recorded (nullable)
 - `deckColor` / `deckIcon` — snapshot of deck appearance at time of session (denormalized)
-- `events[]` — Array of `{ type:"visit", cardId, cardTitle, cardType, isObjCard, stackLabel, intendedPath, ts, durationMs }`
+- `events[]` — Array of `{ type:"visit", cardId, cardTitle, cardType, isObjCard, stackId, stackLabel, intendedPath, ts, durationMs }` (`stackId` on runs recorded since stack stats; older ones match stacks by card id, then label)
 - `notes[]` — Array of `{ cardId, cardTitle, text, ts }`
 - `metrics` — Computed stats: totalVisits, intendedVisits, intendedPct, noteCount, objectionVisits, uniqueCards, totalMs, etc.
 - `feedbackCount` / `latestFeedbackAt` — Attached by getSessions() query (not stored)
@@ -135,7 +137,14 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 |------|---------|
 | `src/App.jsx` | `App` (root with auth), `MainApp` (authenticated shell with tabs, autosave) |
 | `src/lib/constants.js` | `uid`, `aid`, `osid`, `sid`, `themed`, `setAccentColor`, `accentA`, `TM`, `OBJ_COLOR`, `SESS_COLOR`, `STYPE`, `DECK_COLORS`, `DECK_ICONS`, `OBJ_ICONS`, `INFLECTIONS`, `INFL_MAP`, `INFL_CATS` |
-| `src/lib/richtext.js` | `parseRichText`, `stripMarkup` |
+| `src/lib/richtext.js` | `parseRichText`, `stripMarkup` (fills `{{NAME}}`), `NAME_TOKEN`, `nameText`, `fillName`, `scriptLength` (visible chars, NAME = 6), `oneLine` |
+| `src/lib/viewer.js` | `setViewerName`, `getViewerName` — the signed-in first name shown by `{{NAME}}` blocks |
+| `src/lib/library.js` | `openLibrary({tab, clipId})`, `onOpenLibrary` — opens the Library sheet from anywhere |
+| `src/components/ClipSave.jsx` | `SaveClipDialog`, `useSavedSegments`, `LibraryButton`, `HeartIcon`, `LibraryIcon`, `CLIP_COLOR`, `clipTint` |
+| `src/components/Library.jsx` | `LibrarySheet` (lazy chunk "library": ♥ Clips — mine/shared — and ★ Highlights; clip pop-out card with player, session details, share/rename/delete), `useClipAudio` |
+| `src/components/AccessFields.jsx` | `AccessFields` (who can use / who can edit an objection stack), `accessSummary` |
+| `src/components/desktop/StackStats.jsx` | `StackStats`, `computeStackStats` — the Objections stage when no card is open |
+| `server/routes/clipRoutes.js` | `/api/clips` — save (ffmpeg cut), list, play, rename, delete, share |
 | `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler`, `setSessionReplacedHandler`, `setStoredToken`, `getStoredToken`, `fetchWithTimeout` (75s default — covers free-tier cold start), `apiPostWithRetry` (retries network/5xx; used for finished-session saves), `lsGet`/`lsSet` (try/catch-safe localStorage) |
 | `src/lib/styles.js` | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
 | `src/components/ErrorBoundary.jsx` | `ErrorBoundary` (wraps `<App/>` in `main.jsx`; shows reload screen on render crash) |
@@ -154,11 +163,11 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | `src/components/NotificationBell.jsx` | `NotificationBell` |
 | `src/lib/cardGraph.js` | `getParents`, `orderParents`, `getChildren` |
 | `src/components/Signup.jsx` | `SignupScreen` (join with share code, or create organization with master code) |
-| `src/components/AudioPlayer.jsx` | `useSessionAudio`, `AudioMiniBar`, `AudioPlayback`, `UploadNotice`, `wallClockToAudioMs`, `segColor`, `msToMmss` |
+| `src/components/AudioPlayer.jsx` | `useSessionAudio`, `useNoiseGraph` (playback noise-reduction routing for any `<audio>`), `AudioMiniBar`, `AudioPlayback` (♥ per segment + "Save a part…" range picker when `canClip`), `CardClipPlayer`, `NoiseToggle`, `UploadNotice`, `wallClockToAudioMs`, `segColor`, `msToMmss` |
 | `src/components/RecordingSetup.jsx` | `RecordingSetup` (mic picker, level, test, call audio), `RecIndicator` |
 | `src/lib/useRecorder.js` | `useRecorder`, `buildAudioSegments`, `pickMimeType`, `recorderSupported`, `callAudioSupported` |
 | `src/lib/audioUpload.js` | `uploadSessionAudio`, `retrySessionAudio`, `useUploadStatus` |
-| `src/lib/deckOps.js` | `newDeckTemplate`, `collectBranch`, `cloneCards`, `cloneStack`, `duplicateDeck`, `activeDecks`, `liveStacks`, `archivedStacks`, `upsertStackCard`, `deleteStackCard`, `confirmStackDelete` |
+| `src/lib/deckOps.js` | `newDeckTemplate`, `collectBranch`, `cloneCards`, `cloneStack`, `duplicateDeck`, `activeDecks`, `liveStacks`, `archivedStacks`, `canEditStack`, `canManageStack`, `reorderStacks`, `upsertStackCard`, `deleteStackCard`, `confirmStackDelete` |
 | `src/lib/dataCache.js` | `cachedGet`, `useCachedGet`, `peek`, `invalidate`, `clearCache` — stale-while-revalidate GET cache |
 | `src/lib/useViewport.js` | `startViewportTracking`, `useKeyboardOpen`, `keyboardIsOpen`, `revealOnFocus`, `revealField`, `resetStrayScroll`, `isCoarsePointer` |
 | `src/lib/brand.js` | `getBrand`, `syncBrand`, `setBrand`, `cachedLogoVer` — org name/logo/accent store + device cache |
@@ -212,6 +221,8 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | GET | `/api/decks/:id/access` | Yes | Owner/creator | Get deck access list |
 | PUT | `/api/decks/:id/access` | Yes | Owner/creator | Set deck access list (any team in the org) |
 | PUT | `/api/decks/:id/editors` | Yes | Owner/creator | `{userIds}` — admins who may edit the deck (non-admins dropped) |
+
+`PUT /api/decks/:id` also carries the stacks' permission fields — see Stack permissions. Stack-only editors (no deck rights) may PUT too; only their stacks change.
 | DELETE | `/api/decks/:id` | Yes | Owner | Permanently delete deck (sessions keep their snapshot) |
 
 ### Sessions
@@ -263,6 +274,20 @@ Sessions store the chosen reference in `"referenceSessionId"`.
 | DELETE | `/api/sessions/:id/highlight` | Admin/owner | Remove it |
 
 **Who sees a highlight:** the owner sees all of the org's; everyone else (admins too) sees org-wide ones plus those of teams they belong to (`user_teams`) or administer (`team_admins`) — one predicate, `highlightVisibleSql` in db.js. **Who sets one:** any admin for org-wide; for a team, the owner (any team) or an admin of/member of that team; editing/removing needs the same rights over the current highlight. Session lists attach `session.highlight` only when visible to the caller. A visible highlight grants **read** access (`canAccessFeedback`: feedback list, audio, audio meta); writing feedback stays admin/share-recipient only. Changes publish `highlight.changed {sessionId}` on the `org:<orgId>` channel. UI (`src/components/Highlights.jsx`): ★ chip on rows and review header, `HighlightBanner` + admin `HighlightEditor` in `SessionReview`, a deck-specific Highlights filter in the Sessions tab (phone: ★ header button → highlights view; desktop/tablet: "★ Highlights" pill, which also drives the overview analytics), a Highlighted KPI / "All ↔ ★ Highlights" toggle in analytics, and `HomeHighlights` (latest 3, all decks) on Home. A highlight whose deck isn't in the user's decks opens read-only in an overlay (`App.openHighlight`).
+
+### Saved Clips
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/clips?view=mine\|shared` | Yes | The caller's clips, or clips shared with them (`sharedByName`, `shareNote`) — never the audio |
+| POST | `/api/clips` | Anyone who can read the session | `{sessionId, startMs, endMs, title (≤50), segId?}` → 201 clip. 1 s–10 min, inside the recording; cut with ffmpeg (WebM/Opus, or MP4/AAC for MP4 recordings); `meta` is built server-side. 30/15 min per account, 2 cuts at once |
+| GET | `/api/clips/:id` | Owner of the clip, share recipient, org owner | Clip + meta |
+| GET | `/api/clips/:id/audio` | Same | The clip's own audio; honours `Range` |
+| PUT | `/api/clips/:id` | Clip's owner | `{title}` |
+| DELETE | `/api/clips/:id` | Clip's owner or org owner | |
+| POST | `/api/clips/:id/share` | Clip's owner or org owner | `{toUserId, note?}` → notification `clip_share` |
+| GET / DELETE | `/api/clips/:id/shares[/:shareId]` | Clip's owner or org owner | List / revoke |
+
+Who may *save* a clip is `db.canReadSession` (the session-read rule: owner and admins org-wide, the rep, share recipients, people a highlight is visible to). Clips publish `clip.changed {clipId}` to the owner and recipients; `live.js` invalidates `/clips`.
 
 ### Notifications
 | Method | Path | Auth | Description |
@@ -329,6 +354,12 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 - **Deck order:** the owner drags decks (`ReorderList`) in the deck switcher or Home's deck quick start; `App.reorderDecks` applies it locally and `PUT /decks/order`. Every deck list renders the `decks` array order — never re-sort decks client-side.
 - **Tree rows:** `TreeView` rows always use the card type's `TM` colour; intended path is shown by the green ★ only.
 - **Deck permissions** (db.js `deckPermsFor`, enforced in deckRoutes + `deckUsableBy`): *see/use* — the owner every deck; everyone else (admins too) decks that are org-wide, assigned to one of their teams (admins: member or team admin) or to them, or that they may edit; archived decks only for those who may edit. *Edit* — owner, the creator (while an admin), admins in `deck_editors`. *Manage* (teams/visibility + editors) — owner and creator; an editor's save keeps visibility as is. The client trusts `deck.canEdit` (Cards/Objections `readOnly`, switcher pen) and `deck.canManage` (who-can-use + editors in the switcher form).
+- **Stack permissions** (db.js `stackPermsFor` / `viewStacks` / `viewDeck`, deckRoutes `mergeStacks`): *see* — deck viewers when the stack is org-wide or assigned to them/their team (archived only for its editors); *edit* — owner, the stack's creator (admin), admins in its `editorIds` (deck editors do NOT edit other people's stacks, but may create new ones); *manage* (visibility/assignees/editors) — owner + creator. GET /decks drops hidden stacks and adds `canEdit`/`canManage`. PUT merges stack by stack: stacks the caller can't edit keep the stored copy, non-managers keep the stored perm fields, only the owner's order and deletes count. Client: `canEditStack(stack, readOnly)` — a stack made on this device (no flags yet) is editable. Migration 011 credited existing stacks to their deck's creator.
+- **Objections desktop/tablet:** opens on the last-opened stack (per deck, `overcard_obj_sel_<deckId>`) or the first; with no card open the stage shows `StackStats` (comes up in, times raised, avg time, close rate when raised vs deck, back on pitch; where it comes up, path reach, exits, recent calls → review). The owner drags stacks (`ReorderList`) on desktop and phone; read-only stacks open `StackReadView` with the stats.
+- **Text limits:** `LIMITS` in constants.js / validate.js — card title 21, script 180 visible chars, bullet 36, deck name 21, stack label 21, session title 50, clip title 50. The server cuts new/changed titles, bullets and labels, refuses a changed deck name or an edited script past the limit (unless it only got shorter), never touches unchanged older content, and truncates session titles.
+- **Scripts are one line:** `RichPromptEditor` blocks Enter (`beforeinput` insertParagraph/insertLineBreak + keydown), flattens pasted breaks, and enforces 180 visible chars in `beforeinput`/paste with a revert fallback; live counter under the editor.
+- **NAME block:** stored as `{{NAME}}` (a bare `[NAME]` would read as an inflection); the toolbar `[NAME]` button inserts a non-editable chip (a typed `[NAME]` converts too). A trailing chip gets a zero-width-space text node so the caret never lands inside it (stripped on save). Every display shows the viewer's first name: `RichPromptDisplay` and `stripMarkup` read `lib/viewer.js`, set by `App` from `authUser.firstName`.
+- **Saved clips & Library:** Playback tab ♥ (per segment and per visit in `CardClipPlayer`) and "Save a part…" (pink drag handles on `SegmentTrack`, ←/→ on a focused handle, "Now" buttons, preview) open `SaveClipDialog`; only offered when the recording came from the server. The Library (header button next to the bell on desktop, phone top bar and landscape rail; command palette "Library"; `clip_share` notifications) shows clips (mine / shared with me, search, deck filter) and highlights; a clip opens as a pop-out card (desktop: right pane; phone: sheet over the list) with its own player (`useClipAudio` + `useNoiseGraph`), all session details from `meta`, share/rename/delete and "Open session". Not opened during a live call.
 - **Live monitor audience:** `session.started` / `session.progress` go through `realtime.publishLive` to `getLiveWatcherIds` (owner; admins sharing a team with the rep, or every admin when the org has no teams), cached 20s and reset after any admin people/team change. `GET /sessions/live` applies the same rule.
 - **Deck switch dissolve:** picking a deck (switcher, Home "Play") calls `switchDeckWithDissolve` — a full-screen cover with the deck fades in, the deck swaps while it's opaque (200ms), and it fades out (640ms total); the chosen switcher row shows "✓ opening".
 - **Search (command palette):** ⌘K/Ctrl+K on desktop, the search pill on tablet, the search button in the phone top bar / landscape rail (phones: full-screen). Finds tabs, decks, cards (deck + objection-stack cards, title then script) and sessions (name, rep, deck, contact; admins search the org). `App.openFromSearch` routes: deck → `switchDeckWithDissolve`; card → `focusRequest` ({deckId, cardId, stackId, nonce}) opens it in Cards/Objections (each tab's `focus` / `onFocusDone`); session → `pendingReview` in Sessions (admins' scope widened to the org for another rep's session; decks you can't open → read-only overlay). Results in another deck get an "other deck" tag and the palette asks "Switch decks?" before opening; deck switches are refused during a live call.
@@ -385,6 +416,7 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `DECK_ICONS` | `src/lib/constants.js` | 30 emoji options for deck picker |
 | `OBJ_ICONS` | `src/lib/constants.js` | 30 emoji options for objection stack picker |
 | `INFLECTIONS` | `src/lib/constants.js` | 20 delivery cue definitions |
+| `LIMITS` | `src/lib/constants.js` (+ `server/validate.js`) | Text limits (see Key Patterns) |
 | `SL_CARD_W` | `src/components/Viewer.jsx` | Swimlane card width (210px) |
 | `SL_LANE_W` | `src/components/Viewer.jsx` | Swimlane lane width = SL_CARD_W + 28 (238px) |
 | `SL_COL_GAP` | `src/components/Viewer.jsx` | Gap between swimlane columns (48px) |
@@ -426,6 +458,8 @@ Deploy steps:
 3. Render detects `render.yaml`, creates both services, auto-wires `DATABASE_URL`
 4. Set `CORS_ORIGIN` manually in the Render dashboard to your Vercel frontend URL
 5. Set `MASTER_CODE` and create the first org from the sign-up screen
+
+**Clip cutting** needs the `ffmpeg-static` binary, which `npm install` downloads (no system ffmpeg needed on Render). Without it `POST /api/clips` answers 503.
 
 **Frontend** is deployed separately on Vercel. `buildCommand` in `render.yaml` is `npm install` only — Vite build runs on Vercel, not Render.
 

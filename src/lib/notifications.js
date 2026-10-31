@@ -32,6 +32,13 @@ export function markSessionNotificationsRead(sessionId) {
   return apiPost("/notifications/read", { sessionId: sessionId }).then(apply).catch(function() {});
 }
 
+// Marks the "shared a clip with you" notifications for one clip read (its card was opened)
+export function markNotificationsReadForClip(clipId) {
+  var ids = state.items.filter(function(n) { return n.clipId === clipId && !n.readAt; }).map(function(n) { return n.id; });
+  if (!ids.length) return Promise.resolve();
+  return apiPost("/notifications/read", { ids: ids }).then(apply).catch(function() {});
+}
+
 export function markAllNotificationsRead() {
   return apiPost("/notifications/read", {}).then(apply).catch(function() {});
 }

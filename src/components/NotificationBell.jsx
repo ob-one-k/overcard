@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNotifications, markAllNotificationsRead } from "../lib/notifications";
 import { themed } from "../lib/constants";
+import { openLibrary } from "../lib/library";
 
 // ─── NOTIFICATION BELL ────────────────────────────────────────────────────────
 // Header bell with an unread badge; the dropdown lists recent notifications
@@ -62,19 +63,27 @@ export function NotificationBell({ onOpenSession, size, side }) {
           <div style={{overflowY:"auto"}}>
             {n.items.length === 0 && (
               <div style={{padding:"28px 16px",textAlign:"center",fontSize:lg?14:12,color:"rgba(255,255,255,.4)",lineHeight:1.6}}>
-                No notifications yet.<br/>You'll be told here when someone leaves feedback on your sessions or shares one with you.
+                No notifications yet.<br/>You'll be told here when someone leaves feedback on your sessions or shares a session or clip with you.
               </div>
             )}
             {n.items.map(function(item) {
               var isNew = !item.readAt;
               return (
                 <button key={item.id}
-                  onClick={function(){ setOpen(false); if (item.sessionId && onOpenSession) onOpenSession(item.sessionId, item.deckId); }}
+                  onClick={function(){
+                    setOpen(false);
+                    if (item.type === "clip_share") { if (item.clipId) openLibrary({ tab: "clips", clipId: item.clipId }); return; }
+                    if (item.sessionId && onOpenSession) onOpenSession(item.sessionId, item.deckId);
+                  }}
                   style={{display:"flex",gap:10,width:"100%",textAlign:"left",padding:"11px 14px",background:isNew?"rgba(0,180,255,.06)":"transparent",border:"none",borderBottom:"1px solid rgba(255,255,255,.05)",cursor:"pointer",fontFamily:"inherit"}}>
                   <span style={{width:8,height:8,borderRadius:"50%",marginTop:6,flexShrink:0,background:isNew?"#00B4FF":"transparent"}}/>
                   <span style={{flex:1,minWidth:0}}>
                     <span style={{display:"block",fontSize:lg?14:12,color:"#fff",lineHeight:1.45}}>
-                      <strong>{item.actorName || "Someone"}</strong>{item.type === "share" ? " shared " : " left feedback on "}<strong>{item.sessionName || (item.type === "share" ? "a session" : "your session")}</strong>{item.type === "share" ? " with you" : ""}
+                      {item.type === "clip_share" ? (
+                        <><strong>{item.actorName || "Someone"}</strong> shared the clip <strong>{item.clipTitle || "a clip"}</strong> with you</>
+                      ) : (
+                        <><strong>{item.actorName || "Someone"}</strong>{item.type === "share" ? " shared " : " left feedback on "}<strong>{item.sessionName || (item.type === "share" ? "a session" : "your session")}</strong>{item.type === "share" ? " with you" : ""}</>
+                      )}
                     </span>
                     {item.text && <span style={{display:"block",fontSize:lg?13:11,color:"rgba(255,255,255,.55)",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>“{item.text}”</span>}
                     <span style={{display:"block",fontSize:lg?12:10,color:"rgba(255,255,255,.35)",marginTop:3}}>{timeAgo(item.createdAt)}</span>

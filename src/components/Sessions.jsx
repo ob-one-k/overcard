@@ -697,7 +697,8 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
         )}
         {/* PLAYBACK */}
         {tab==="playback" && (
-          <AudioPlayback ctl={audio} size={audioSize} canDownload={isOwner || isAdmin} sessionName={session.name}/>
+          <AudioPlayback ctl={audio} size={audioSize} canDownload={isOwner || isAdmin} sessionName={session.name}
+            session={session} canClip={audio.source === "server"}/>
         )}
         {/* NOTES */}
         {tab==="notes" && (function() {

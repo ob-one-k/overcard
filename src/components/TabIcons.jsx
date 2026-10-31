@@ -39,6 +39,14 @@ var PATHS = {
       <circle cx="17" cy="17" r="2"/>
     </>
   ),
+  // Library (saved clips + highlights): a stack with a heart
+  library: (
+    <>
+      <rect x="3" y="6" width="14" height="15" rx="2.5"/>
+      <path d="M7 3h11.5A2.5 2.5 0 0 1 21 5.5V17"/>
+      <path d="M10 16.2s-3-1.8-3.6-3.6c-.5-1.4.3-2.7 1.6-2.8.8 0 1.4.4 2 1.1.6-.7 1.2-1.1 2-1.1 1.3.1 2.1 1.4 1.6 2.8-.6 1.8-3.6 3.6-3.6 3.6z"/>
+    </>
+  ),
 };
 
 export function TabIcon({ id, size }) {

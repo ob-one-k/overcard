@@ -6,6 +6,7 @@ import { TabIcon, SearchIcon } from "./TabIcons";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 import { NotificationBell } from "./NotificationBell";
+import { LibraryButton } from "./ClipSave";
 import { OrgMark } from "./OrgMark";
 
 // ─── DESKTOP SHELL ────────────────────────────────────────────────────────────
@@ -270,6 +271,7 @@ export function DesktopShell({
             <span style={{fontSize:compact?12:13,color:"rgba(255,255,255,.55)"}}>{saveLabel}</span>
           </div>
 
+          <LibraryButton size={compact ? "lg" : undefined}/>
           <NotificationBell onOpenSession={onOpenSession} size={compact ? "lg" : undefined}/>
 
           {/* Profile avatar */}
