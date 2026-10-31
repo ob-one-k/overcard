@@ -15,12 +15,17 @@ function timeAgo(ts) {
   return new Date(ts).toLocaleDateString(undefined, { month:"short", day:"numeric" });
 }
 
-export function NotificationBell({ onOpenSession, size }) {
+// side="right": the panel opens to the right of the bell, anchored to its bottom
+// (the landscape-phone nav rail, where the bell sits bottom-left)
+export function NotificationBell({ onOpenSession, size, side }) {
   var n = useNotifications();
   var [open, setOpen] = useState(false);
   var wrapRef = useRef(null);
   var lg = size === "lg";
-  var btn = lg ? 40 : 34;
+  var btn = lg ? 40 : side === "right" ? 30 : 34;
+  var panelPos = side === "right"
+    ? { left:"calc(100% + 10px)", bottom:0, maxHeight:"calc(var(--vvh, 100vh) - 20px)" }
+    : { top:"calc(100% + 8px)", right:0, maxHeight:lg?480:420 };
 
   // Close on outside click / Esc
   useEffect(function() {
@@ -46,7 +51,7 @@ export function NotificationBell({ onOpenSession, size }) {
       </button>
       {open && (
         <div role="dialog" aria-label="Notifications"
-          style={{position:"absolute",top:"calc(100% + 8px)",right:0,width:lg?380:"min(340px, calc(100vw - 24px))",maxHeight:lg?480:420,display:"flex",flexDirection:"column",background:themed("#0a1830"),border:"1px solid rgba(255,255,255,.12)",borderRadius:14,boxShadow:"0 18px 50px rgba(0,0,0,.7)",zIndex:400,overflow:"hidden",animation:"fadeIn .15s ease both"}}>
+          style={{position:"absolute",top:panelPos.top,right:panelPos.right,left:panelPos.left,bottom:panelPos.bottom,width:lg?380:side === "right" ? "min(340px, calc(100vw - 96px))" : "min(340px, calc(100vw - 24px))",maxHeight:panelPos.maxHeight,display:"flex",flexDirection:"column",background:themed("#0a1830"),border:"1px solid rgba(255,255,255,.12)",borderRadius:14,boxShadow:"0 18px 50px rgba(0,0,0,.7)",zIndex:400,overflow:"hidden",animation:"fadeIn .15s ease both"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
             <span style={{fontSize:lg?15:13,fontWeight:700,color:"#fff"}}>Notifications</span>
             {unread > 0 && (

@@ -4,7 +4,7 @@ import DesktopCtx from "../../lib/DesktopCtx";
 import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR, themed } from "../../lib/constants";
 import { apiDel } from "../../lib/api";
 import { inputSt } from "../../lib/styles";
-import { DarkDatePicker } from "../ui";
+import { DarkDatePicker, IncrementalList } from "../ui";
 import { SessionReview, sessionVisits, sessionNotes, sessionDurSec, fmtSec, fmtDate, fmtTime } from "../Sessions";
 import { deleteAudioBlob } from "../../lib/audioStore";
 import { HighlightChip, HL_COLOR } from "../Highlights";
@@ -953,7 +953,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
               {filtersActive ? "No sessions match" : "No sessions yet"}
             </div>
           )}
-          {!(canGroup && groupRep) && filtered.map(renderRow)}
+          {!(canGroup && groupRep) && <IncrementalList items={filtered} render={renderRow} step={40}/>}
           {canGroup && groupRep && (function() {
             // Same rep grouping the mobile list has: collapsible header with each rep's totals
             var groups = {}, order = [];

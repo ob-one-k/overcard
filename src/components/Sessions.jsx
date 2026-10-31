@@ -4,8 +4,8 @@ import { onLive } from "../lib/live";
 import { OrgMark } from "./OrgMark";
 import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA, themed } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
-import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV } from "../lib/styles";
-import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker } from "./ui";
+import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV, SHEET_MAX_H } from "../lib/styles";
+import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker, IncrementalList } from "./ui";
 import { RichPromptDisplay } from "./Tooltip";
 import { markSessionNotificationsRead } from "../lib/notifications";
 import { useSessionAudio, AudioMiniBar, AudioPlayback, UploadNotice, CardClipPlayer, wallClockToAudioMs, segColor } from "./AudioPlayer";
@@ -221,7 +221,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,.55)"}}
       onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:themed("#13151c"),border:"1px solid rgba(255,255,255,.1)",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:430,maxHeight:"85vh",overflowY:"auto",padding:"18px 16px 32px",animation:"sheetUp .2s ease both"}}>
+      <div style={{background:themed("#13151c"),border:"1px solid rgba(255,255,255,.1)",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:430,maxHeight:SHEET_MAX_H,overflowY:"auto",padding:"18px 16px 32px",animation:"sheetUp .2s ease both"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>Share session</div>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.4)",fontSize:18,padding:"2px 6px",fontFamily:"inherit"}}>×</button>
@@ -413,7 +413,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
             {isAdmin && session.status !== "active" && canEditHighlight(authUser, orgTeams, session.highlight) && (
               <button onClick={function(){ setHlOpen(function(o){ return !o; }); }} aria-expanded={hlOpen}
                 title={session.highlight ? "Edit highlight" : "Highlight this session for your org or a team"}
-                style={ghostSm({fontSize:fz(10),padding:"5px 10px",minHeight:touchMin,color:session.highlight?HL_COLOR:undefined,borderColor:session.highlight?"rgba(255,201,64,.4)":undefined})}>
+                style={ghostSm(Object.assign({fontSize:fz(10),padding:"5px 10px",minHeight:touchMin}, session.highlight ? {color:HL_COLOR,borderColor:"rgba(255,201,64,.4)"} : {}))}>
                 {session.highlight ? "★ Highlighted" : "☆ Highlight"}
               </button>
             )}
@@ -881,6 +881,11 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
   var [collapsedUsers, setCollapsedUsers] = useState({});
   var [shareTarget, setShareTarget] = useState(null);
   var [hlOnly, setHlOnly] = useState(false);   // analytics over highlighted sessions only
+  // Landscape phones: list and review side by side. listView remembers which list
+  // (all / shared / highlights) stays on the left while a review is open on the right.
+  var phoneLand = !!(desktop && desktop.isMobile && desktop.landscape);
+  var [listView, setListView] = useState("list");
+  useEffect(function() { if (view === "list" || view === "shared" || view === "highlights") setListView(view); }, [view]);
   // Highlights this user may see for the current deck (any rep's sessions, read-only)
   var hlRes = useCachedGet("/sessions/highlights?deckId=" + encodeURIComponent(deckId));
   var highlights = Array.isArray(hlRes.data) ? hlRes.data : null;
@@ -911,17 +916,19 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     return url;
   }
   var sv = useCacheVersion("/sessions");
+  // listFresh: the list has been (re)loaded since this view opened. A review opened straight
+  // after a call can't be found in the cached list yet — wait for the refetch, don't bounce.
+  var [listFresh, setListFresh] = useState(false);
   useEffect(function() {
     // Ignore responses from a superseded request (deck/scope changed mid-flight)
     var cancelled = false;
-    if (view === "list" || view === "analytics" || view === "shared" || (view === "review" && sessions === null)) {
-      var url = buildSessionUrl();
-      var sorted = function(data) { return (Array.isArray(data) ? data : []).slice().sort(function(a,b){return b.startTs-a.startTs;}); };
-      if (peek(url) !== undefined) setSessions(sorted(peek(url)));
-      cachedGet(url)
-        .then(function(data) { if (!cancelled) setSessions(sorted(data)); })
-        .catch(function() { if (!cancelled) setSessions([]); });
-    }
+    var url = buildSessionUrl();
+    var sorted = function(data) { return (Array.isArray(data) ? data : []).slice().sort(function(a,b){return b.startTs-a.startTs;}); };
+    if (peek(url) !== undefined) setSessions(sorted(peek(url)));
+    setListFresh(false);
+    cachedGet(url)
+      .then(function(data) { if (!cancelled) { setSessions(sorted(data)); setListFresh(true); } })
+      .catch(function() { if (!cancelled) { setSessions(function(prev) { return prev || []; }); setListFresh(true); } });
     return function() { cancelled = true; };
   }, [deckId, view, viewScope, sv]);
 
@@ -965,6 +972,79 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     });
   }
 
+  // Scope (admins) + rep-name filter — shared by the list and the Analytics view so both
+  // filter the same way. Self-contained: it runs before the list's own derived values exist.
+  function renderScopeFilters() {
+    var userMap = {};
+    (orgUsers||[]).forEach(function(u){ userMap[u.id] = u; });
+    var presentUserIds = {};
+    getFiltered().forEach(function(s){ if (s.userId) presentUserIds[s.userId] = true; });
+    var searchTerm = userSearch.trim().toLowerCase();
+    var suggestions = (orgUsers||[]).filter(function(u) {
+      return presentUserIds[u.id] && searchTerm && u.displayName.toLowerCase().includes(searchTerm) && u.displayName.toLowerCase() !== searchTerm;
+    }).slice(0, 6);
+    return (
+      <>
+          {/* ── ADMIN SCOPE ── */}
+          {isAdmin && (
+            <div style={{marginBottom:8}}>
+              <select value={viewScope||"self"} onChange={function(e){ setViewScope(e.target.value); setSessions(null); }}
+                style={{width:"100%",background:themed("#081428"),border:("1px solid "+accentA(.2)),borderRadius:10,padding:"8px 12px",color:SESS_COLOR,fontSize:11,fontFamily:"inherit",cursor:"pointer",outline:"none",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='"+SESS_COLOR.replace("#","%23")+"'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}>
+                <option value="self">👤 My sessions</option>
+                <option value="org">🌐 Entire org</option>
+                {(orgTeams||[]).map(function(t){ return <option key={t.id} value={"team:"+t.id}>🏷️ {t.name}</option>; })}
+                {(orgUsers||[]).filter(function(u){ return u.id !== authUser.id; }).map(function(u){ return <option key={u.id} value={"user:"+u.id}>👤 {u.displayName}</option>; })}
+              </select>
+            </div>
+          )}
+
+          {/* ── USER SEARCH (admin multi-user scope) ── */}
+          {isAdminScope && (
+            <div style={{position:"relative",marginBottom:8}} onClick={function(e){e.stopPropagation();}}>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"rgba(255,255,255,.3)",fontSize:13,pointerEvents:"none"}}>🔎</span>
+                <input value={userSearch} onChange={function(e){ setUserSearch(e.target.value); setSuggestOpen(true); }}
+                  onFocus={function(){ setSuggestOpen(true); }}
+                  placeholder="Filter by rep name…"
+                  style={inputSt({paddingLeft:32,height:34,fontSize:11})}
+                />
+                {userSearch && (
+                  <button onClick={function(){ setUserSearch(""); setSuggestOpen(false); }}
+                    style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.35)",fontSize:14,padding:"2px 4px",fontFamily:"inherit"}}>×</button>
+                )}
+              </div>
+              {suggestOpen && suggestions.length > 0 && (
+                <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:200,background:themed("#1a1d24"),border:"1px solid rgba(255,255,255,.12)",borderRadius:10,marginTop:3,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+                  {suggestions.map(function(u) {
+                    return (
+                      <button key={u.id}
+                        onMouseDown={function(e){ e.preventDefault(); setUserSearch(u.displayName); setSuggestOpen(false); }}
+                        style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:accentA(.15),border:("1px solid "+accentA(.3)),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
+                          {(u.displayName || "?")[0].toUpperCase()}
+                        </div>
+                        <div>
+                          <div style={{fontSize:12,fontWeight:600,color:"#fff"}}>{u.displayName}</div>
+                          <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{u.email || u.role}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+      </>
+    );
+  }
+  // Rep-name filter as a predicate (admin multi-user scopes)
+  function repMatches(s) {
+    var q = userSearch.trim().toLowerCase();
+    if (!q || !isAdminScope) return true;
+    var name = s.userName || ((orgUsers||[]).find(function(u){ return u.id === s.userId; }) || {}).displayName || "";
+    return name.toLowerCase().includes(q);
+  }
+
   function getSharedWithMe() {
     if (!sessions) return [];
     return sessions.filter(function(s) {
@@ -974,20 +1054,46 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     });
   }
 
-  if (view === "review" && reviewId) {
-    var reviewSess = (sessions && sessions.find(function(s){return s.id===reviewId;})) ||
-      (highlights && highlights.find(function(s){return s.id===reviewId;})) || null;
-    if (!reviewSess && sessions === null) {
-      // Sessions are loaded by the effect below — never fetch during render
+  var reviewSess = reviewId ? ((sessions && sessions.find(function(s){return s.id===reviewId;})) ||
+    (highlights && highlights.find(function(s){return s.id===reviewId;})) || null) : null;
+  if (view === "review" && reviewId && !phoneLand) {
+    if (!reviewSess && (sessions === null || !listFresh)) {
+      // Sessions are loaded by the effect above — never fetch during render
       return <div style={{padding:40,textAlign:"center",color:"rgba(255,255,255,.3)",fontSize:13}}>Loading…</div>;
     }
     if (!reviewSess) { setView("list"); return null; }
     return <SessionReview session={reviewSess} onBack={function(){setView("list");}} authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams} onMarkFeedbackSeen={markFbSeen}/>;
   }
 
+  // The list on the left; on landscape phones the review (or a prompt) on the right
+  var paneView = view === "review" ? listView : view;
+  function wrapLand(listEl) {
+    if (!phoneLand) return listEl;
+    var showing = view === "review" && reviewSess;
+    return (
+      <div style={{flex:1,display:"flex",minHeight:0}}>
+        <div style={{width:"44%",minWidth:290,maxWidth:420,display:"flex",flexDirection:"column",borderRight:"1px solid rgba(255,255,255,.07)",overflow:"hidden"}}>{listEl}</div>
+        <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          {showing ? (
+            <SessionReview key={reviewSess.id} session={reviewSess} onBack={function(){ setView(listView); setReviewId(null); }}
+              authUser={authUser} orgUsers={orgUsers} orgTeams={orgTeams} onMarkFeedbackSeen={markFbSeen}/>
+          ) : (
+            <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:24,textAlign:"center",color:"rgba(255,255,255,.35)"}}>
+              <div style={{fontSize:28}}>📋</div>
+              <div style={{fontSize:13,fontWeight:700,color:"rgba(255,255,255,.55)"}}>{sessions === null || (view === "review" && !listFresh) ? "Loading…" : "Pick a session"}</div>
+              <div style={{fontSize:11,lineHeight:1.6,maxWidth:260}}>Its path, notes, recording and feedback open here, next to the list.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (view === "analytics") {
-    return <SessionAnalytics sessions={hlOnly ? getHighlighted() : getFiltered()} deckColor={deckColor} deckName={deckName} deckRootCard={deckRootCard}
-      hlOnly={hlOnly} setHlOnly={setHlOnly} highlightedCount={getFiltered().filter(function(s){ return !!s.highlight; }).length}
+    var anaBase = getFiltered().filter(repMatches);
+    return <SessionAnalytics sessions={hlOnly ? getHighlighted().filter(repMatches) : anaBase} deckColor={deckColor} deckName={deckName} deckRootCard={deckRootCard}
+      hlOnly={hlOnly} setHlOnly={setHlOnly} highlightedCount={anaBase.filter(function(s){ return !!s.highlight; }).length}
+      filtersSlot={<div onClick={function(){ if (suggestOpen) setSuggestOpen(false); }}>{renderScopeFilters()}</div>}
       fType={fType} setFType={setFType}
       fFrom={fFrom} setFFrom={setFFrom} fTo={fTo} setFTo={setFTo}
       filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen}
@@ -1038,13 +1144,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
   var userMap = {};
   (orgUsers||[]).forEach(function(u){ userMap[u.id] = u; });
 
-  // Autocomplete suggestions — users present in filtered sessions
-  var presentUserIds = {};
-  filtered.forEach(function(s){ if (s.userId) presentUserIds[s.userId] = true; });
   var searchTerm = userSearch.trim().toLowerCase();
-  var suggestions = (orgUsers||[]).filter(function(u) {
-    return presentUserIds[u.id] && searchTerm && u.displayName.toLowerCase().includes(searchTerm) && u.displayName.toLowerCase() !== searchTerm;
-  }).slice(0, 6);
 
   // For admin scope, build groups filtered by user search
   function buildGroups() {
@@ -1073,7 +1173,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     var hasFbNotif = isOwner && (s.feedbackCount||0) > 0 && (!fbSeenTs[s.id] || (s.latestFeedbackAt && s.latestFeedbackAt > fbSeenTs[s.id]));
     return (
       <div key={s.id} onClick={function(){setReviewId(s.id);setView("review");}}
-        style={{background:themed("#081428"),border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+st.color,borderRadius:"0 12px 12px 0",padding:"11px 12px",marginBottom:8,cursor:"pointer",transition:"background .12s",position:"relative"}}>
+        style={{background:phoneLand && view === "review" && s.id === reviewId ? accentA(.08) : themed("#081428"),border:"1px solid "+(phoneLand && view === "review" && s.id === reviewId ? accentA(.45) : "rgba(255,255,255,.08)"),borderLeft:"3px solid "+st.color,borderRadius:"0 12px 12px 0",padding:"11px 12px",marginBottom:8,cursor:"pointer",transition:"background .12s",position:"relative"}}>
         {hasFbNotif && <span style={{position:"absolute",top:10,right:10,width:8,height:8,borderRadius:"50%",background:"#EF5350",display:"block",boxShadow:"0 0 0 2px rgba(239,83,80,.3)"}} title="New feedback"/>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:5}}>
           <div style={{flex:1,minWidth:0}}>
@@ -1119,9 +1219,9 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     );
   }
 
-  if (view === "highlights") {
+  if (paneView === "highlights") {
     var hlList = getHighlighted();
-    return (
+    return wrapLand(
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         <div style={{padding:"10px 14px 10px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -1150,18 +1250,18 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
               <div style={{fontSize:12,color:"rgba(255,255,255,.25)"}}>When an admin highlights a session for your org or team, it appears here.</div>
             </div>
           )}
-          {hlList.map(renderSessionRow)}
+          <IncrementalList items={hlList} render={renderSessionRow}/>
           <div style={{height:16}}/>
         </div>
       </div>
     );
   }
 
-  if (view === "shared") {
+  if (paneView === "shared") {
     var sharedList = getSharedWithMe();
     var sharedLive = sharedList.filter(function(s){ return (s.mode||"live")==="live"; });
     var sharedPrac = sharedList.filter(function(s){ return s.mode==="practice"; });
-    return (
+    return wrapLand(
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         <div style={{padding:"10px 14px 10px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -1190,7 +1290,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
               <div style={{fontSize:12,color:"rgba(255,255,255,.25)"}}>When a teammate shares a session with you, it will appear here.</div>
             </div>
           )}
-          {sharedList.map(renderSessionRow)}
+          <IncrementalList items={sharedList} render={renderSessionRow}/>
           <div style={{height:16}}/>
         </div>
       </div>
@@ -1202,7 +1302,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     ? groups.reduce(function(a,g){return a+g.sessions.length;},0)
     : filtered.length;
 
-  return (
+  return wrapLand(
     <div style={{flex:1,overflowY:"auto"}} onClick={function(){ if(suggestOpen) setSuggestOpen(false); }}>
       {/* ── HEADER STRIP: count + analytics ── */}
       <div style={{padding:"10px 14px 0",flexShrink:0}}>
@@ -1245,55 +1345,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
           })}
         </div>
 
-        {/* ── ADMIN SCOPE ── */}
-        {isAdmin && (
-          <div style={{marginBottom:8}}>
-            <select value={viewScope||"self"} onChange={function(e){ setViewScope(e.target.value); setSessions(null); }}
-              style={{width:"100%",background:themed("#081428"),border:("1px solid "+accentA(.2)),borderRadius:10,padding:"8px 12px",color:SESS_COLOR,fontSize:11,fontFamily:"inherit",cursor:"pointer",outline:"none",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='"+SESS_COLOR.replace("#","%23")+"'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}>
-              <option value="self">👤 My sessions</option>
-              <option value="org">🌐 Entire org</option>
-              {(orgTeams||[]).map(function(t){ return <option key={t.id} value={"team:"+t.id}>🏷️ {t.name}</option>; })}
-              {(orgUsers||[]).filter(function(u){ return u.id !== authUser.id; }).map(function(u){ return <option key={u.id} value={"user:"+u.id}>👤 {u.displayName}</option>; })}
-            </select>
-          </div>
-        )}
-
-        {/* ── USER SEARCH (admin multi-user scope) ── */}
-        {isAdminScope && (
-          <div style={{position:"relative",marginBottom:8}} onClick={function(e){e.stopPropagation();}}>
-            <div style={{position:"relative"}}>
-              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"rgba(255,255,255,.3)",fontSize:13,pointerEvents:"none"}}>🔎</span>
-              <input value={userSearch} onChange={function(e){ setUserSearch(e.target.value); setSuggestOpen(true); }}
-                onFocus={function(){ setSuggestOpen(true); }}
-                placeholder="Filter by rep name…"
-                style={inputSt({paddingLeft:32,height:34,fontSize:11})}
-              />
-              {userSearch && (
-                <button onClick={function(){ setUserSearch(""); setSuggestOpen(false); }}
-                  style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.35)",fontSize:14,padding:"2px 4px",fontFamily:"inherit"}}>×</button>
-              )}
-            </div>
-            {suggestOpen && suggestions.length > 0 && (
-              <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:200,background:themed("#1a1d24"),border:"1px solid rgba(255,255,255,.12)",borderRadius:10,marginTop:3,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
-                {suggestions.map(function(u) {
-                  return (
-                    <button key={u.id}
-                      onMouseDown={function(e){ e.preventDefault(); setUserSearch(u.displayName); setSuggestOpen(false); }}
-                      style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"8px 12px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                      <div style={{width:22,height:22,borderRadius:"50%",background:accentA(.15),border:("1px solid "+accentA(.3)),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:SESS_COLOR,flexShrink:0}}>
-                        {(u.displayName || "?")[0].toUpperCase()}
-                      </div>
-                      <div>
-                        <div style={{fontSize:12,fontWeight:600,color:"#fff"}}>{u.displayName}</div>
-                        <div style={{fontSize:9,color:"rgba(255,255,255,.3)"}}>{u.email || u.role}</div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        {renderScopeFilters()}
 
         {/* ── DATE FILTER (collapsible) ── */}
         <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:10,marginBottom:10,overflow:"hidden"}}>
@@ -1322,7 +1374,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
 
       {/* ── SESSION LIST ── */}
       <div style={{padding:"0 14px"}}>
-        {!isAdminScope && filtered.map(renderSessionRow)}
+        {!isAdminScope && <IncrementalList items={filtered} render={renderSessionRow}/>}
         {isAdminScope && groups && groups.map(function(g) {
           var isCollapsed = collapsedUsers[g.user.id] !== false;
           var liveCt = g.sessions.filter(function(s){ return (s.mode||"live")==="live"; }).length;
@@ -1360,7 +1412,8 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
 // ─── SESSION ANALYTICS ────────────────────────────────────────────────────────
 // hlOnly / setHlOnly switch every metric to the highlighted sessions; highlightedCount is
 // how many of the current (non-highlight) list are highlighted
-export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, fType, setFType, fFrom, setFFrom, fTo, setFTo, filtersOpen, setFiltersOpen, onBack, hlOnly, setHlOnly, highlightedCount }) {
+// filtersSlot: the Sessions list's scope / rep filters, rendered above the date filter
+export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, fType, setFType, fFrom, setFFrom, fTo, setFTo, filtersOpen, setFiltersOpen, onBack, hlOnly, setHlOnly, highlightedCount, filtersSlot }) {
   var live = sessions.filter(function(s){return (s.sessionType||s.mode||"live")==="live";});
   var practice = sessions.filter(function(s){return (s.sessionType||s.mode||"live")==="practice";});
   var sold = live.filter(function(s){return s.sold;});
@@ -1463,6 +1516,7 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
         </div>
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"0 14px 0"}}>
+        {filtersSlot}
         {/* All sessions ↔ highlighted sessions only */}
         {setHlOnly && (
           <div role="radiogroup" aria-label="Sessions to analyse" style={{display:"flex",gap:6,marginBottom:10}}>

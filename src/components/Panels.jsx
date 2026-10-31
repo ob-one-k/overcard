@@ -8,9 +8,10 @@ import { DesktopModal } from "./DesktopModal";
 import { useDesktop } from "../lib/useDesktop";
 import { PRESS_CSS } from "../lib/pressFeedback";
 import { OrgMark } from "./OrgMark";
+import { ReorderList } from "./Reorder";
 
 // ─── DECK SWITCHER SHEET ──────────────────────────────────────────────────────
-export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, isOwner, onEditDeck, onDuplicateDeck, onArchiveDeck, onRestoreDeck, onDeleteDeck, orgUsers, orgTeams }) {
+export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onAddDeck, onClose, isAdmin, isOwner, onEditDeck, onDuplicateDeck, onArchiveDeck, onRestoreDeck, onDeleteDeck, onReorderDecks, orgUsers, orgTeams }) {
   var decks    = (allDecks || []).filter(function(d) { return !d.archivedAt; });
   var archived = isAdmin ? (allDecks || []).filter(function(d) { return !!d.archivedAt; }) : [];
   var [showArchived, setShowArchived] = useState(false);
@@ -115,13 +116,15 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
               </div>
             </div>
           )}
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {decks.map(function(d) {
+          {/* The owner drags decks (⠿) into the order every deck list uses */}
+          <ReorderList items={decks} getId={function(d){ return d.id; }} gap={8} label="Decks"
+            enabled={!!onReorderDecks && !editingDeck} onReorder={function(ids){ if (onReorderDecks) onReorderDecks(ids); }}
+            renderItem={function(d, handle) {
               var active = d.id===activeDeckId;
               var isEditing = editingDeck && editingDeck.id === d.id;
               if (isEditing) {
                 return (
-                  <div key={d.id} style={{background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.15)",borderRadius:16,padding:"14px 15px"}}>
+                  <div style={{background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.15)",borderRadius:16,padding:"14px 15px"}}>
                     <div style={{fontSize:12,fontWeight:700,color:"#fff",marginBottom:10}}>Edit Deck</div>
                     <label style={labelSt()}>Name</label>
                     <input value={ef.name} onChange={function(e){setEf(function(p){return Object.assign({},p,{name:e.target.value});});}} style={inputSt({marginBottom:10})}/>
@@ -191,7 +194,8 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                 );
               }
               return (
-                <div key={d.id} style={{display:"flex",alignItems:"stretch",gap:6}}>
+                <div style={{display:"flex",alignItems:"stretch",gap:6}}>
+                  {handle && <div style={{display:"flex",alignItems:"center"}}>{handle}</div>}
                   <button onClick={function(){onSelect(d.id);onClose();}}
                     style={{flex:1,background:active?d.color+"14":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?d.color:"rgba(255,255,255,.08)"),borderRadius:16,padding:"13px 15px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
                     <div style={{display:"flex",alignItems:"center",gap:11}}>
@@ -209,8 +213,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
                   {isAdmin && <button title="Edit, duplicate or archive" aria-label={"Manage " + d.name} onClick={function(e){ e.stopPropagation(); setEf({name:d.name,icon:d.icon||"💼",color:d.color||"#00B4FF",visibility:d.visibility||"public",accessList:d.accessList||[]}); setEditingDeck(d); }} style={{width:44,flexShrink:0,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,cursor:"pointer",fontSize:14,color:"rgba(255,255,255,.5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>✏</button>}
                 </div>
               );
-            })}
-          </div>
+            }}/>
           {archived.length > 0 && (
             <div style={{marginTop:16}}>
               <button onClick={function(){ setShowArchived(function(p){ return !p; }); }}
@@ -250,7 +253,7 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
   return (
     <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"80vh",display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
         <div style={{padding:"4px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
           <div style={{fontSize:18,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>Switch Deck</div>

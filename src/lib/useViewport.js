@@ -36,9 +36,11 @@ function measure() {
   st.setProperty("--kb", kb + "px");
   // A keyboard is never shorter than ~150px; smaller deltas are browser chrome
   var open = kb > 120;
+  // Space left above a bottom sheet: small with the keyboard up or on short (landscape
+  // phone) screens, where every pixel of height counts
+  st.setProperty("--sheet-gap", open ? "8px" : ih < 500 ? "10px" : "48px");
   if (open !== kbOpen) {
     kbOpen = open;
-    st.setProperty("--sheet-gap", open ? "8px" : "48px");
     if (!open) resetStrayScroll();
     subs.slice().forEach(function(fn) { fn(); });
   }

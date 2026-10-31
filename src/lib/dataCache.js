@@ -13,6 +13,14 @@ var subs = {};       // url → [fn]
 var DEFAULT_TTL = 30000;
 var gen = 0;         // bumped by clearCache so responses for a previous user are dropped
 
+// One cache entry per resource: "?b=1&a=2" and "?a=2&b=1" are the same request
+function norm(url) {
+  var q = url.indexOf("?");
+  if (q < 0) return url;
+  var parts = url.slice(q + 1).split("&").filter(Boolean).sort();
+  return url.slice(0, q) + (parts.length ? "?" + parts.join("&") : "");
+}
+
 function notify(url) { (subs[url] || []).slice().forEach(function(fn) { fn(); }); }
 
 // Any successful write to /sessions/…, /admin/…, /org… makes that area's cached reads stale
@@ -28,10 +36,11 @@ setWriteHook(function(path) {
 // Forget everything (sign-out / account switch — cached data belongs to one user)
 export function clearCache() { store = {}; inflight = {}; gen++; }
 
-export function peek(url) { return store[url] ? store[url].data : undefined; }
+export function peek(url) { url = norm(url); return store[url] ? store[url].data : undefined; }
 
 // Resolves with cached data when it is fresher than ttl, otherwise fetches (deduped)
 export function cachedGet(url, opts) {
+  url = norm(url);
   var ttl = opts && opts.ttl != null ? opts.ttl : DEFAULT_TTL;
   var hit = store[url];
   if (hit && Date.now() - hit.ts < ttl && !(opts && opts.force)) return Promise.resolve(hit.data);
@@ -101,6 +110,7 @@ export function useCacheVersion(prefix) {
 // away when one exists (loading=false), so revisiting a tab shows no spinner.
 // url=null skips fetching.
 export function useCachedGet(url, opts) {
+  if (url) url = norm(url);
   var ttl = opts && opts.ttl;
   var [, force] = useState(0);
   var errRef = useRef(null);

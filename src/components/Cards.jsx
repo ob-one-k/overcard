@@ -264,7 +264,7 @@ function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }
       {editing && readOnly && (
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}} onClick={function(e){if(e.target===e.currentTarget)setEditing(null);}}>
           <div onClick={function(){setEditing(null);}} style={{flex:1,background:"rgba(0,0,0,.5)",backdropFilter:"blur(8px)"}}/>
-          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"75vh",overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
             <Handle/>
             <div style={{padding:"4px 16px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -324,13 +324,24 @@ function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }
 }
 
 // ─── OBJECTIONS TAB ───────────────────────────────────────────────────────────
-export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, initialEditCard, deckCards, inline }) {
+// decks/deckId (optional) enable "Copy cards" — objection cards from any deck's stacks
+export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, initialEditCard, deckCards, inline, decks, deckId }) {
   var [form, setForm]         = useState(Object.assign({}, stack, { cards:Object.assign({}, stack.cards || {}) }));
   var [editCard, setEditCard] = useState(initialEditCard || null);
   var [editNavDir, setEditNavDir] = useState(null);
   var [editMeta, setEditMeta] = useState(false);
   var [viewMode, setViewMode] = useState("list");
   var [search, setSearch]     = useState("");
+  var [showCardImport, setShowCardImport] = useState(false);
+  var lay = useContext(DesktopCtx);
+  var land = !inline && !!(lay && lay.isMobile && lay.landscape);
+
+  // Copied cards join this stack (the first becomes the entry if there isn't one)
+  function importCards(res) {
+    setForm(function(p) {
+      return Object.assign({}, p, { cards:Object.assign({}, p.cards || {}, res.cards), rootCard:p.rootCard || res.firstId || null });
+    });
+  }
 
   function upsertCard(card) {
     setForm(function(p) {
@@ -375,33 +386,28 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
     : overlayFill(250);
   var sheetSt = inline
     ? {display:"flex",flexDirection:"column",flex:1,background:themed("#081428"),overflow:"hidden"}
-    : {background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
+    // Phones: a full-height sheet so the card list always has room between header and footer
+    : {background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",height:SHEET_MAX_H,maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
 
-  return (
-    <div style={outerSt}>
-      {!inline && <div onClick={function(){
-        // Keyboard up → just dismiss it; otherwise confirm before dropping an unsaved stack draft
-        if (keyboardIsOpen() && document.activeElement && document.activeElement.blur) { document.activeElement.blur(); return; }
-        if (JSON.stringify(form) !== JSON.stringify(Object.assign({}, stack, { cards:stack.cards || {} })) && !window.confirm("Discard unsaved changes to this stack?")) return;
-        onClose();
-      }} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>}
-      <div style={sheetSt}>
-        {!inline && <Handle/>}
-
+  var headerEl = (
+    <>
         {!editMeta ? (
-          <div style={{padding:"8px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+          <div style={{padding:"8px 20px 12px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+            {/* Title row: the stack gets the full width; actions sit underneath */}
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
               <div style={{width:42,height:42,borderRadius:13,background:"rgba(239,83,80,.15)",border:"1px solid rgba(239,83,80,.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{form.icon}</div>
-              <div style={{minWidth:0}}>
+              <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:17,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{form.label}</div>
                 <div style={{fontSize:11,color:"rgba(255,255,255,.3)"}}>{Object.keys(form.cards || {}).length} cards</div>
               </div>
+              <button onClick={onClose} aria-label="Close" style={Object.assign({}, iconBtn(), {minWidth:36,minHeight:36,flexShrink:0})}>✕</button>
             </div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={function(){setEditMeta(true);}} style={ghostSm()}>Edit</button>
-              {onArchive && <button onClick={function(){onArchive(form.id);}} title="Hide from Play — restorable" style={ghostSm({color:"#FFB74D",borderColor:"rgba(255,183,77,.3)"})}>Archive</button>}
-              {onDelete && <button onClick={function(){if(confirmStackDelete(form))onDelete(form.id);}} style={ghostSm({color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
-              <button onClick={onClose} style={iconBtn()}>✕</button>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+              <button onClick={function(){setEditMeta(true);}} style={ghostSm({minHeight:36,padding:"6px 14px"})}>✎ Edit</button>
+              {decks && <button onClick={function(){setShowCardImport(true);}} title="Copy objection cards from any stack into this one"
+                style={ghostSm({minHeight:36,padding:"6px 14px",display:"inline-flex",alignItems:"center",gap:6})}><CopyIcon size={13}/>Copy cards</button>}
+              {onArchive && <button onClick={function(){onArchive(form.id);}} title="Hide from Play — restorable" style={ghostSm({minHeight:36,padding:"6px 14px",color:"#FFB74D",borderColor:"rgba(255,183,77,.3)"})}>Archive</button>}
+              {onDelete && <button onClick={function(){if(confirmStackDelete(form))onDelete(form.id);}} style={ghostSm({minHeight:36,padding:"6px 14px",color:"#EF5350",borderColor:"rgba(239,83,80,.3)"})}>Delete</button>}
             </div>
           </div>
         ) : (
@@ -418,7 +424,10 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
             <button onClick={function(){setEditMeta(false);}} style={Object.assign({},solidBtn(OBJ_COLOR),{width:"100%"})}>Done</button>
           </div>
         )}
-
+    </>
+  );
+  var stageEl = (
+    <>
         {/* Desktop/tablet (inline): an open card is shown on the CardStage in place of the list */}
         {inline && editCard && (
           <CardStage
@@ -442,7 +451,10 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
             }}
           />
         )}
-
+    </>
+  );
+  var listEl = (
+    <>
         {!(inline && editCard) && <>
         <div style={{padding:"10px 14px 8px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
           <div style={{display:"flex",alignItems:"center",gap:7}}>
@@ -504,7 +516,10 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
           </div>
         )}
         </>}
-
+    </>
+  );
+  var footerEl = (
+    <>
         <div style={{borderTop:"1px solid rgba(255,255,255,.07)"}}>
           {/* After-resolution target */}
           <div style={{padding:"12px 20px 0"}}>
@@ -540,8 +555,42 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
             }} style={Object.assign({},solidBtn(OBJ_COLOR),{flex:2})}>Save Stack</button>
           </div>
         </div>
+    </>
+  );
+
+  return (
+    <div style={outerSt}>
+      {!inline && <div onClick={function(){
+        // Keyboard up → just dismiss it; otherwise confirm before dropping an unsaved stack draft
+        if (keyboardIsOpen() && document.activeElement && document.activeElement.blur) { document.activeElement.blur(); return; }
+        if (JSON.stringify(form) !== JSON.stringify(Object.assign({}, stack, { cards:stack.cards || {} })) && !window.confirm("Discard unsaved changes to this stack?")) return;
+        onClose();
+      }} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>}
+      <div style={sheetSt}>
+        {!inline && !land && <Handle/>}
+        {land ? (
+          // Landscape phone: stack details + save on the left, its cards on the right
+          <div style={{flex:1,display:"flex",minHeight:0}}>
+            <div style={{width:"40%",minWidth:260,maxWidth:360,display:"flex",flexDirection:"column",overflowY:"auto",borderRight:"1px solid rgba(255,255,255,.07)"}}>
+              {headerEl}
+              <div style={{flex:1}}/>
+              {footerEl}
+            </div>
+            <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {listEl}
+            </div>
+          </div>
+        ) : (
+          <>
+            {headerEl}
+            {stageEl}
+            {listEl}
+            {footerEl}
+          </>
+        )}
       </div>
 
+      {showCardImport && <ImportPicker mode="stackCards" decks={decks} currentDeckId={deckId} onImport={importCards} onClose={function(){setShowCardImport(false);}}/>}
       {editCard && !inline && <CardEditorSheet key={editCard.id} card={editCard} allCards={form.cards || {}} accentColor={OBJ_COLOR} lockedType="objection"
         navDir={editNavDir}
         onSave={upsertCard} onDelete={deleteCard} onClose={function(){setEditCard(null);setEditNavDir(null);}}
@@ -639,7 +688,7 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
             })}
           </div>
           {readOnly && <span style={{fontSize:9,color:"rgba(255,255,255,.3)",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:99,padding:"3px 9px",flexShrink:0}}>📖 View only</span>}
-          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy stacks from another deck" title="Copy from another deck" style={ghostSm({padding:"0 10px",display:"inline-flex",alignItems:"center"})}><CopyIcon size={15}/></button>}
+          {!readOnly && <button onClick={function(){setShowImport(true);}} aria-label="Copy or duplicate objection stacks" title="Copy or duplicate objection stacks" style={ghostSm({padding:"0 10px",display:"inline-flex",alignItems:"center"})}><CopyIcon size={15}/></button>}
           {!readOnly && <button onClick={function(){setShowNew(true);}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)"})}>+ New</button>}
         </div>
         {viewMode==="tree" && stacks.length > 0 && !readOnly && <div style={{marginTop:6,fontSize:10,color:"rgba(255,255,255,.25)",lineHeight:1.5}}>Tap card to edit · ⬆ = set entry · ↩ = cross-link · Pinch to zoom</div>}
@@ -815,13 +864,15 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
           onClose={function(){setEditing(null);setPendingCard(null);}}
           initialEditCard={pendingCard}
           deckCards={deck.cards}
+          decks={decks}
+          deckId={deck.id}
         />
       )}
       {viewCard && readOnly && (
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}
           onClick={function(e){if(e.target===e.currentTarget){setViewCard(null);setViewCardStack(null);}}}>
           <div onClick={function(){setViewCard(null);setViewCardStack(null);}} style={{flex:1,background:"rgba(0,0,0,.5)",backdropFilter:"blur(8px)"}}/>
-          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:"75vh",overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
             <Handle/>
             <div style={{padding:"4px 16px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>

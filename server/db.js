@@ -762,7 +762,8 @@ async function setDeckAccess(deckId, accessList) {
 }
 
 async function getOrgDecks(orgId, userId, userTeamIds) {
-  const { rows } = await pool.query('SELECT * FROM decks WHERE "orgId" = $1 ORDER BY name', [orgId]);
+  // The owner's order (Deck switcher / Home drag-to-reorder); name breaks ties
+  const { rows } = await pool.query('SELECT * FROM decks WHERE "orgId" = $1 ORDER BY "sortIndex" NULLS LAST, name, id', [orgId]);
   var access = await getDeckAccessMap(rows.map(function(r) { return r.id; }));
   var decks = rows.map(function(r) { var deck = parseDeck(r); deck.accessList = access[r.id]; return deck; });
   // Admins (no userId filter) see all decks, archived included
@@ -810,11 +811,29 @@ async function createDeck({ orgId, createdBy, name, color, icon, visibility, roo
   const id  = uid("d");
   const now = Date.now();
   await pool.query(
-    "INSERT INTO decks (id,\"orgId\",\"createdBy\",name,color,icon,\"rootCard\",cards,\"objStacks\",visibility,\"updatedAt\",\"createdAt\") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    // New decks go to the end of the org's order
+    "INSERT INTO decks (id,\"orgId\",\"createdBy\",name,color,icon,\"rootCard\",cards,\"objStacks\",visibility,\"updatedAt\",\"createdAt\",\"sortIndex\")" +
+    " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,(SELECT COALESCE(MAX(\"sortIndex\"), -1) + 1 FROM decks WHERE \"orgId\" = $2))",
     [id, orgId, createdBy, name, color || "#F5A623", icon || "💼", rootCard || null,
      JSON.stringify(cards || {}), JSON.stringify(objStacks || []), visibility || "public", now, now]
   );
   return getDeckById(id);
+}
+
+// Store the owner's deck order. ids lists decks in their new order; unknown ids are
+// ignored and any org deck not listed keeps its relative place after the listed ones.
+async function setDeckOrder(orgId, ids) {
+  await withTransaction(async function(client) {
+    const { rows } = await client.query('SELECT id FROM decks WHERE "orgId" = $1 ORDER BY "sortIndex" NULLS LAST, name, id FOR UPDATE', [orgId]);
+    var all = rows.map(function(r) { return r.id; });
+    var known = new Set(all), seen = new Set(), order = [];
+    ids.forEach(function(id) { if (known.has(id) && !seen.has(id)) { seen.add(id); order.push(id); } });
+    all.forEach(function(id) { if (!seen.has(id)) order.push(id); });
+    await client.query(
+      'UPDATE decks d SET "sortIndex" = o.pos - 1 FROM unnest($1::text[]) WITH ORDINALITY AS o(id, pos) WHERE d.id = o.id AND d."orgId" = $2',
+      [order, orgId]
+    );
+  });
 }
 
 async function setDeckArchived(id, orgId, ts) {
@@ -1412,7 +1431,7 @@ module.exports = {
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,
   // decks
   getTeamNames,
-  getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived,
+  getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
   getDeckAccess, setDeckAccess,
   // passwords
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,

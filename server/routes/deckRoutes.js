@@ -1,6 +1,6 @@
 const express = require("express");
 const router  = express.Router();
-const { getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived, uid, getDeckAccess, setDeckAccess, getUserTeams, idsInOrg } = require("../db");
+const { getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder, uid, getDeckAccess, setDeckAccess, getUserTeams, idsInOrg } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
 
 function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
@@ -84,6 +84,20 @@ router.post("/", async function(req, res, next) {
       deck.accessList = access;
     }
     res.status(201).json(deck);
+  } catch (err) { next(err); }
+});
+
+// PUT /api/decks/order  { ids: [deckId, …] } — owner only. The order every deck list
+// shows (switcher, Home, pickers). Registered before /:id so "order" isn't read as an id.
+router.put("/order", async function(req, res, next) {
+  try {
+    if (req.user.role !== "owner") return res.status(403).json({ error: "Only the organization owner can reorder decks" });
+    var ids = req.body && req.body.ids;
+    if (!Array.isArray(ids) || ids.length > 1000 || !ids.every(function(x) { return typeof x === "string" && x.length <= 100; })) {
+      return res.status(400).json({ error: "ids must be a list of deck ids" });
+    }
+    await setDeckOrder(req.user.orgId, ids);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

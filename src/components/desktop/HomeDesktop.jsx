@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../../lib/constants";
+import { SESS_COLOR, OBJ_COLOR, isAdminRole, accentA, themed } from "../../lib/constants";
+import { ReorderList } from "../Reorder";
 import { cachedGet, useCacheVersion } from "../../lib/dataCache";
 import { solidBtn } from "../../lib/styles";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "../Sessions";
@@ -187,7 +188,7 @@ function EmptyNote({ icon, title, body, action }) {
 //     Me tab:   Recent sessions | Decks (quick launch) | Insights (funnel, objections, ranking, top close)
 //     Team tab: Leaderboard     | Recent team sessions | Insights
 // Mirrors HomeTab data/state — no hooks extracted to avoid conditional-hooks issues
-export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession, onOpenHighlight }) {
+export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPlay, onOpenSession, onOpenHighlight, onReorderDecks }) {
   var [mySessions,   setMySessions]   = useState(null);
   var [teamSessions, setTeamSessions] = useState({});
   var [activeSubTab, setActiveSubTab] = useState("me");   // "me" | "all" | teamId
@@ -352,16 +353,8 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
   var personName = person ? (person.displayName || person.email) : "";
 
   // Recency-sorted decks for quick-launch section
-  var deckLastUsed = {};
-  (mySessions || []).forEach(function(s) {
-    if (!deckLastUsed[s.deckId] || s.startTs > deckLastUsed[s.deckId]) deckLastUsed[s.deckId] = s.startTs;
-  });
-  var sortedDecks = (decks || []).slice().sort(function(a, b) {
-    var aTs = deckLastUsed[a.id] || 0;
-    var bTs = deckLastUsed[b.id] || 0;
-    if (aTs !== bTs) return bTs - aTs;
-    return (a.name || "").localeCompare(b.name || "");
-  });
+  // The org's deck order (the owner sets it by dragging, here or in the deck switcher)
+  var sortedDecks = decks || [];
   // Deck stats always come from the user's own sessions so the quick-launch list is personal
   var myStats = (mySessions && mySessions.length > 0) ? (activeSubTab === "me" && viewingSelf && stats ? stats : computeStats(mySessions, decks)) : null;
   var myDeckStats = myStats ? myStats.deckStats : [];
@@ -432,14 +425,17 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
         <PanelHead compact={compact} title="Your decks" meta={sortedDecks.length + " deck" + (sortedDecks.length!==1?"s":"")}/>
         <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
           {sortedDecks.length === 0 && <EmptyNote icon="🗂️" title="No decks yet" body="Decks your admin shares with you will appear here."/>}
-          {sortedDecks.map(function(d) {
+          <ReorderList items={sortedDecks} getId={function(d){ return d.id; }} gap={10} label="Your decks"
+            enabled={!!onReorderDecks} onReorder={function(ids){ onReorderDecks(ids); }}
+            renderItem={function(d, handle) {
             var deckStat = myDeckStats.find(function(ds){ return ds.deckId === d.id; });
             var dColor   = d.color || "#F5A623";
             var wr       = deckStat && deckStat.live > 0 ? Math.round(deckStat.sold / deckStat.live * 100) : null;
             var nCards   = Object.keys(d.cards || {}).length;
             var nStacks  = (d.objStacks || []).filter(function(st){ return !st.archivedAt; }).length;
             return (
-              <div key={d.id} title={d.name} style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"4px solid "+dColor,borderRadius:"4px 14px 14px 4px",padding:"14px 14px",display:"flex",alignItems:"center",gap:12}}>
+              <div title={d.name} style={{background:themed("#0a1530"),border:"1px solid rgba(255,255,255,.08)",borderLeft:"4px solid "+dColor,borderRadius:"4px 14px 14px 4px",padding:"14px 14px",display:"flex",alignItems:"center",gap:12}}>
+                {handle}
                 <div style={{width:40,height:40,borderRadius:12,background:dColor+"22",border:"1.5px solid "+dColor+"55",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{d.icon||"💼"}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:16,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name}</div>
@@ -459,7 +455,7 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
                 )}
               </div>
             );
-          })}
+          }}/>
         </div>
       </section>
     );

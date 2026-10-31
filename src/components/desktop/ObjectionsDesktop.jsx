@@ -143,6 +143,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
   var [search,     setSearch]     = useState("");
   var [cardSearch, setCardSearch] = useState("");
   var [showImport, setShowImport] = useState(false);
+  var [showCardImport, setShowCardImport] = useState(false);   // copy cards into the open stack
   var [showMeta,   setShowMeta]   = useState(false);
   var [meta,       setMeta]       = useState({ label:"", icon:"😐" });
   var [showSwitch, setShowSwitch] = useState(false);
@@ -250,6 +251,12 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
     var full = Object.assign({ overview:[], intendedPath:false, prompt:"", answers:[] }, c, { type:"objection" });
     updateStack(selectedStack.id, function(st){ return upsertStackCard(st, full); });
   }
+  // Copied cards join the open stack (first one becomes the entry if it has none)
+  function importStackCards(res) {
+    updateStack(selectedStack.id, function(st) {
+      return Object.assign({}, st, { cards:Object.assign({}, st.cards || {}, res.cards), rootCard:st.rootCard || res.firstId || null });
+    });
+  }
   function removeCard(id) {
     updateStack(selectedStack.id, function(st){ return deleteStackCard(st, id); });
     closeCard();
@@ -337,7 +344,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
               <span style={{fontSize:13,color:TXT2,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,padding:"4px 12px"}}>View only</span>
             ) : (
               <>
-                <button onClick={function(){ setShowImport(true); }} title="Copy objection stacks from another deck"
+                <button onClick={function(){ setShowImport(true); }} title="Copy or duplicate objection stacks"
                   style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.14)",color:TXT2,borderRadius:10,fontSize:13,fontWeight:600,padding:"6px 10px",minHeight:isTablet?40:32,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",gap:6}}><CopyIcon size={14}/>Copy</button>
                 <button onClick={function(){ setShowNew(function(p){ return !p; }); if (showNew) setNf({label:"",icon:"😐"}); }}
                   style={{background:showNew?"transparent":"rgba(239,83,80,.14)",border:"1px solid rgba(239,83,80,.4)",color:OBJ_COLOR,borderRadius:10,fontSize:14,fontWeight:700,padding:"6px 14px",minHeight:isTablet?40:32,cursor:"pointer",fontFamily:"inherit"}}>
@@ -599,6 +606,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
               style={Object.assign({}, inputSt({height:36,fontSize:14,padding:"0 14px",borderRadius:10,marginBottom:0}), {flex:1,maxWidth:300,width:"auto"})}/>
           )}
           <div style={{flex:1}}/>
+          <SmallBtn tall={isTablet} onClick={function(){ setShowCardImport(true); }} title="Copy objection cards from any stack into this one"><CopyIcon size={14}/>{isTablet ? "" : " Copy cards"}</SmallBtn>
           <button onClick={newCard} style={Object.assign({},solidBtn(OBJ_COLOR),{height:tb,padding:"0 16px",fontSize:14,borderRadius:10,flexShrink:0})}>+ Card</button>
           <SmallBtn tall={isTablet} onClick={function(){ setMeta({ label:stack.label, icon:stack.icon }); setShowMeta(true); }} title="Rename or change icon">✎{isTablet ? "" : " Edit"}</SmallBtn>
           <SmallBtn tall={isTablet} warn onClick={function(){ archiveStack(stack.id); }} title="Hide from Play — restorable">🗄{isTablet ? "" : " Archive"}</SmallBtn>
@@ -718,6 +726,9 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
         </div>
       </>}
 
+      {showCardImport && selectedStack && (
+        <ImportPicker mode="stackCards" decks={decks} currentDeckId={deck.id} onImport={importStackCards} onClose={function(){ setShowCardImport(false); }}/>
+      )}
       {showImport && (
         <ImportPicker mode="stacks" decks={decks} currentDeckId={deck.id} onImport={importStacks} onClose={function(){ setShowImport(false); }}/>
       )}

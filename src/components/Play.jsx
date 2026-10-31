@@ -95,7 +95,9 @@ export function ObjPicker({ stacks, onSelect, onClose, deckCards }) {
 // Key points (card overview) collapse state — shared by both Play layouts, expanded by default
 var OV_KEY = "overcard_play_overviewCollapsed";
 
-export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getAudioOffset, flushRef }) {
+// split: landscape phones — the card (with breadcrumb) on the left, responses on the right,
+// each scrolling on its own, so the script and the answers are both always in view
+export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getAudioOffset, flushRef, split }) {
   var [ovCollapsed, setOvCollapsed] = useState(function(){ return lsGet(OV_KEY) === "1"; });
   var [pitchHist, setPitchHist] = useState(deck.rootCard ? [deck.rootCard] : []);
   var [objMode,   setObjMode]   = useState(null);
@@ -215,8 +217,8 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
   var isEnd = !inObj && card.answers.every(function(a) { return !a.next; });
   var animName = dir > 0 ? "cardIn" : "cardBack";
 
-  return (
-    <div style={{flex:1,display:"flex",flexDirection:"column",overflowY:"auto",position:"relative"}}>
+  var headEl = (
+    <>
       {/* Objection mode banner */}
       {inObj && (
         <div style={{margin:"12px 16px 0",padding:"10px 16px",background:"rgba(239,83,80,.1)",border:"1px solid rgba(239,83,80,.25)",borderRadius:14,display:"flex",justifyContent:"space-between",alignItems:"center",animation:"fadeIn .2s ease both"}}>
@@ -263,6 +265,10 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
           <button onClick={goBack} style={ghostSm({borderColor:"rgba(239,83,80,.3)",color:"rgba(239,83,80,.7)"})}>← Back</button>
         </div>
       )}
+    </>
+  );
+  var cardEl = (
+    <>
       {/* Card */}
       <div key={animKey} style={{margin:"12px 16px 0",animation:animName+" .3s cubic-bezier(.22,1,.36,1) both"}}>
         <div style={{background:"linear-gradient(145deg,rgba(255,255,255,.07),rgba(255,255,255,.03))",border:"1px solid rgba(255,255,255,"+(inObj?".15":".1")+")",borderRadius:22,overflow:"hidden",boxShadow:"0 0 40px "+meta.glow+",0 20px 50px rgba(0,0,0,.5)"}}>
@@ -290,6 +296,10 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
           </div>
         </div>
       </div>
+    </>
+  );
+  var noteEl = (
+    <>
       {/* Quick note input */}
       {showNote && sessionMode && (
         <div style={{margin:"10px 16px 0",background:accentA(.08),border:("1px solid "+accentA(.22)),borderRadius:14,padding:"12px 14px",animation:"fadeIn .15s ease both"}}>
@@ -304,6 +314,10 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
           </div>
         </div>
       )}
+    </>
+  );
+  var answersEl = (
+    <>
       {/* Answer buttons */}
       <div key={animKey+"a"} style={{padding:"13px 16px 0",animation:"answersIn .35s cubic-bezier(.22,1,.36,1) .1s both"}}>
         <div style={{fontSize:10,fontWeight:700,letterSpacing:2,color:"rgba(255,255,255,.2)",textTransform:"uppercase",marginBottom:8,paddingLeft:2}}>
@@ -317,8 +331,8 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
             var isIntended = !inObj && nextCard && !!nextCard.intendedPath;
             return (
               <button key={ans.id} onClick={function(){goAnswer(ans);}}
-                style={{background:isIntended?"rgba(102,187,106,.08)":"rgba(255,255,255,.05)",border:"1.5px solid "+(isIntended?"rgba(102,187,106,.35)":isTerminal?"rgba(255,255,255,.06)":"rgba(255,255,255,.11)"),borderRadius:14,padding:"14px 16px",cursor:isTerminal?"default":"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",fontFamily:"inherit",gap:10,animation:"answerItem .32s cubic-bezier(.22,1,.36,1) "+(.08+i*.05)+"s both",opacity:(isTerminal&&!inObj)?0.45:1}}>
-                <div style={{display:"flex",alignItems:"center",gap:11,flex:1,minWidth:0}}>
+                style={{background:isIntended?"rgba(102,187,106,.08)":"rgba(255,255,255,.05)",border:"1.5px solid "+(isIntended?"rgba(102,187,106,.35)":isTerminal?"rgba(255,255,255,.06)":"rgba(255,255,255,.11)"),borderRadius:14,padding:split?"11px 13px":"14px 16px",cursor:isTerminal?"default":"pointer",textAlign:"left",display:"flex",flexWrap:split?"wrap":"nowrap",justifyContent:"space-between",alignItems:"center",fontFamily:"inherit",gap:split?"6px 10px":10,animation:"answerItem .32s cubic-bezier(.22,1,.36,1) "+(.08+i*.05)+"s both",opacity:(isTerminal&&!inObj)?0.45:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:11,flex:split?"1 1 170px":1,minWidth:0}}>
                   <span style={{width:25,height:25,borderRadius:"50%",background:isIntended?"rgba(102,187,106,.2)":meta.color+"22",border:"1.5px solid "+(isIntended?"rgba(102,187,106,.5)":meta.color+"44"),color:isIntended?"#66BB6A":meta.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>{i+1}</span>
                   <span style={{color:isIntended?"rgba(255,255,255,.95)":"rgba(255,255,255,.85)",fontSize:14,lineHeight:1.4}}>{ans.label}</span>
                 </div>
@@ -331,6 +345,10 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
           })}
         </div>
       </div>
+    </>
+  );
+  var endEl = (
+    <>
       {/* End of path */}
       {isEnd && (
         <div style={{margin:"18px 16px 0",padding:"18px",background:"rgba(102,187,106,.07)",border:"1px solid rgba(102,187,106,.2)",borderRadius:16,textAlign:"center"}}>
@@ -339,8 +357,35 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
           <button onClick={restart} style={solidBtn("#66BB6A")}>↺ Restart</button>
         </div>
       )}
+    </>
+  );
+  var pickerEl = showPicker && <ObjPicker stacks={deck.objStacks} onSelect={openStack} onClose={function(){setShowPicker(false);}} deckCards={deck.cards}/>;
+
+  if (split) {
+    return (
+      <div style={{flex:1,display:"flex",minHeight:0,position:"relative"}}>
+        <div style={{flex:"1.15 1 0",minWidth:0,overflowY:"auto",paddingBottom:14}}>
+          {headEl}
+          {cardEl}
+          {noteEl}
+        </div>
+        <div style={{flex:"1 1 0",minWidth:0,overflowY:"auto",paddingBottom:14,borderLeft:"1px solid rgba(255,255,255,.06)"}}>
+          {answersEl}
+          {endEl}
+        </div>
+        {pickerEl}
+      </div>
+    );
+  }
+  return (
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflowY:"auto",position:"relative"}}>
+      {headEl}
+      {cardEl}
+      {noteEl}
+      {answersEl}
+      {endEl}
       <div style={{height:24}}/>
-      {showPicker && <ObjPicker stacks={deck.objStacks} onSelect={openStack} onClose={function(){setShowPicker(false);}} deckCards={deck.cards}/>}
+      {pickerEl}
     </div>
   );
 }
@@ -360,6 +405,8 @@ export function PlayTab(props) {
 function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
     playView, setPlayView, activeSession, setActiveSession, sessionEvents, setSessionEvents }) {
   var desktop = useContext(DesktopCtx);
+  // Landscape phone: the call becomes a two-pane cockpit, the start screen two columns
+  var phoneLand = !!(desktop && desktop.isMobile && desktop.landscape);
 
   var [pendingType, setPendingType]   = useState("practice");
   var [newName, setNewName]           = useState("");
@@ -493,16 +540,16 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
     var st = STYPE[activeSession.sessionType] || STYPE.live;
     return (
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <div style={{padding:"9px 16px",background:st.bg,borderBottom:"1px solid "+st.border,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-          <div>
+        <div style={{padding:phoneLand?"5px 12px":"9px 16px",background:st.bg,borderBottom:"1px solid "+st.border,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexShrink:0}}>
+          <div style={{minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:1}}>
               <span style={{fontSize:9,color:st.color,fontWeight:700,letterSpacing:.8,textTransform:"uppercase"}}>● {st.label}</span>
               <RecIndicator rec={rec}/>
             </div>
-            <div style={{fontSize:13,color:"#fff",fontWeight:700,lineHeight:1.2}}>{activeSession.name}</div>
-            {activeSession.description && <div style={{fontSize:10,color:"rgba(255,255,255,.4)",marginTop:1}}>{activeSession.description}</div>}
+            <div style={{fontSize:13,color:"#fff",fontWeight:700,lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{activeSession.name}</div>
+            {activeSession.description && !phoneLand && <div style={{fontSize:10,color:"rgba(255,255,255,.4)",marginTop:1}}>{activeSession.description}</div>}
           </div>
-          <div style={{display:"flex",gap:6}}>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
             {activeSession.mode === "live" && navDepth === 1 && !navInObj && (
               <button onClick={function(){finishSession(false, null, "not_contacted");}} disabled={saving}
                 style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.18)",borderRadius:9,color:"rgba(255,255,255,.55)",fontSize:11,fontWeight:700,padding:"7px 10px",cursor:"pointer",fontFamily:"inherit"}}>
@@ -524,7 +571,7 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
         )}
         <Navigator deck={deck} sessionMode={true} onEvent={handleEvent}
           onNavigationChange={function(info){ setNavDepth(info.depth); setNavInObj(info.inObj); setNavCardId(info.currentCard ? info.currentCard.id : null); setNavCard(info.currentCard ? Object.assign({}, info.currentCard, { _stackLabel: info.stackLabel || null }) : null); }}
-          getAudioOffset={rec.offsetMs} flushRef={flushVisitRef}/>
+          getAudioOffset={rec.offsetMs} flushRef={flushVisitRef} split={phoneLand}/>
       </div>
     );
   }
@@ -535,7 +582,10 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
 
   return (
     <div style={{flex:1,overflowY:"auto"}}>
-      <div style={{padding:"14px 16px 0"}}>
+      <div style={phoneLand
+        ? {padding:"12px 16px 0",display:"grid",gridTemplateColumns:"minmax(0,1.1fr) minmax(0,1fr)",gap:16,alignItems:"start"}
+        : {padding:"14px 16px 0"}}>
+        <div style={{minWidth:0}}>
         {/* Deck quick stats box */}
         <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+deck.color,borderRadius:"0 14px 14px 0",padding:"14px 16px",marginBottom:16}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -611,9 +661,11 @@ function PlayMobile({ deck, activeId, onPortalToReview, onSwitchDeck,
           </div>
         )}
 
-        {/* Study — browse the intended path and objection stacks as flash cards */}
+        </div>
+        {/* Study — browse the intended path and objection stacks as flash cards
+            (its own column on landscape phones) */}
         {(outline.length > 0 || deck.objStacks.length > 0) && (
-          <div style={{marginTop:6}}>
+          <div style={{marginTop:phoneLand?0:6,minWidth:0}}>
             <SectionHdr>Study</SectionHdr>
             {outline.length > 0 && (
               <div style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.07)",borderRadius:14,padding:"6px 6px",marginBottom:10}}>

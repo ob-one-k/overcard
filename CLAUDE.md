@@ -73,7 +73,7 @@ PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CR
 | `team_admins` | Team admin assignments | "teamId", "userId" |
 | `user_teams` | User-to-team membership (many-to-many) | "userId", "teamId" |
 | `users` | User accounts with auth | id, "orgId", "teamId", email, "passwordHash", "displayName", "firstName", "lastName", phone, role (owner/admin/user) |
-| `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility, "archivedAt" (null = active) |
+| `decks` | Sales pitch decks | id, "orgId", name, color, icon, "rootCard", cards (JSONB), "objStacks" (JSONB), visibility, "archivedAt" (null = active), "sortIndex" (owner's order; new decks append) |
 | `deck_access` | Deck visibility controls for private decks | "deckId", "entityType" (team/user), "entityId" |
 | `sessions` | Practice/live session runs | id, "orgId", "userId", "deckId", "deckColor", "deckIcon", mode, status, outcome, sold, "soldCardId", "soldCardTitle", events (JSONB), notes (JSONB), metrics (JSONB) |
 | `session_feedback` | Feedback comments on sessions | id, "sessionId", "authorId", text, "cardId" |
@@ -138,7 +138,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | `src/lib/api.js` | `apiGet`, `apiPut`, `apiPost`, `apiDel`, `setUnauthHandler`, `setSessionReplacedHandler`, `setStoredToken`, `getStoredToken`, `fetchWithTimeout` (75s default — covers free-tier cold start), `apiPostWithRetry` (retries network/5xx; used for finished-session saves), `lsGet`/`lsSet` (try/catch-safe localStorage) |
 | `src/lib/styles.js` | `solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV` |
 | `src/components/ErrorBoundary.jsx` | `ErrorBoundary` (wraps `<App/>` in `main.jsx`; shows reload screen on render crash) |
-| `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow`, `CopyIcon` (every copy/duplicate action) |
+| `src/components/ui.jsx` | `TypeBadge`, `Handle`, `IntendedBadge`, `SectionHdr`, `StatBox`, `BarRow`, `CopyIcon` (every copy/duplicate action), `IncrementalList` (renders long lists in steps as they scroll near) |
 | `src/components/Tooltip.jsx` | `TipCtx`, `GlobalInflTooltip`, `InflWord`, `RichPromptDisplay`, `OverviewDisplay`, `OverviewEditor` |
 | `src/components/Editor.jsx` | `RichPromptEditor`, `CardEditorSheet` |
 | `src/components/Home.jsx` | `HomeTab` |
@@ -161,7 +161,8 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | `src/lib/dataCache.js` | `cachedGet`, `useCachedGet`, `peek`, `invalidate`, `clearCache` — stale-while-revalidate GET cache |
 | `src/lib/useViewport.js` | `startViewportTracking`, `useKeyboardOpen`, `keyboardIsOpen`, `revealOnFocus`, `revealField`, `resetStrayScroll`, `isCoarsePointer` |
 | `src/lib/brand.js` | `getBrand`, `syncBrand`, `setBrand`, `cachedLogoVer` — org name/logo/accent store + device cache |
-| `src/components/ImportPicker.jsx` | `ImportPicker` (copy cards — optionally with their downstream branch — or objection stacks from another org deck) |
+| `src/components/ImportPicker.jsx` | `ImportPicker` — `mode="cards"` (cards, optionally with their downstream branch, from another deck), `"stacks"` (whole stacks from any deck; from this deck it duplicates, keeping the return target), `"stackCards"` (objection cards from any deck's stack into the stack being edited) |
+| `src/components/Reorder.jsx` | `ReorderList` — drag-handle (mouse/touch/pen) + ↑/↓ keyboard reordering; used for the owner's deck order (deck switcher, Home phone + desktop) |
 | `src/components/AdminPanel.jsx` | `AdminPanel` (Users / Teams / Share Codes / Organization; split from Panels.jsx, lazy-loaded), `ResetPasswordDialog`, `InviteCard` |
 | `src/lib/noiseReduction.js` | `createNoiseReduction(ctx)` (high-pass 85 Hz → low-pass 7.5 kHz → adaptive noise gate, bypassable), `playbackNoiseReduction`/`setPlaybackNoiseReduction` (per-device pref, default on) |
 | `public/noise-reduction-worklet.js` | `overcard-noise-gate` AudioWorklet: learns the background-noise floor and turns it down between words (max −18 dB) |
@@ -203,6 +204,7 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 |--------|------|------|-------|-------------|
 | GET | `/api/decks` | Yes | No | List decks (filtered by visibility for non-admins) |
 | POST | `/api/decks` | Yes | Yes | Create new deck — accepts starting `cards`, `rootCard`, `objStacks` (template / duplicate) |
+| PUT | `/api/decks/order` | Yes | Owner | `{ids}` — the deck order every list shows (unknown ids ignored; unlisted decks keep their order after) |
 | PUT | `/api/decks/:id` | Yes | Yes | Update deck fields + access list. Stacks a non-owner omits are kept (only the owner deletes stacks) |
 | POST | `/api/decks/:id/archive` | Yes | Yes | Archive (sets `archivedAt`) |
 | POST | `/api/decks/:id/restore` | Yes | Yes | Restore an archived deck |
@@ -320,6 +322,9 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 
 - **Button press feedback:** `startPressFeedback()` sets `data-pressed` (touch: after 70 ms, cancelled by movement/scroll) and `data-press` (animating); `PRESS_CSS` scales with the CSS `scale` property, which composes with a button's inline `transform`. Never reintroduce `:active{transform:…}` — it overrode centred/rotated buttons (the deck-switcher pen jumped). Name transition properties; never `transition:"all …"`.
 - **Tab navigation:** the phone tab bar (`MobileTabBar` in App.jsx) and the sidebar/rail/drawer (`SlideList` in DesktopSidebar.jsx) draw one org-accent (`SESS_COLOR`/`accentA`) indicator that slides between `[data-tab]` items; per-tab colours (`TAB_ACCENTS`) remain only outside the nav. Each tab renders inside `TabPane` (App.jsx), whose `tabIn` entrance uses the `translate` property with fill-mode `backwards` so no transform lingers (it would trap `position:fixed` sheets); phones slide in the direction of travel (`--tab-dx`), desktop/tablet rise (`--tab-dy`).
+- **Phone landscape** (`useDesktop().isMobile && .landscape`): App swaps the top bar + bottom tab bar for `LandscapeRail` (deck button, tabs with the sliding indicator, bell + profile; labels hide under 340px tall) and gives content the full width/height. Play's `Navigator` takes `split` (card left, responses right, each scrolling); the Play start screen, Home (`data-cols` CSS columns — keep sections as direct children) and the stack editor (details + save | cards) go two-column; SessionsMobile shows list + review side by side (`wrapLand`, `listView`). Sheets get a 10px top gap on short screens (`--sheet-gap`); size sheets with `SHEET_MAX_H`, never `vh`.
+- **Tab load speed:** `lazyNamed` (App.jsx) renders a chunk's components synchronously once loaded — React.lazy suspends on every first render and holds the reveal ~300ms. Chunks prefetch on idle; MainApp also warms the active deck's `/sessions` + highlights (+ admin `scope=org`) data. `dataCache` keys ignore query-param order. SessionsMobile always revalidates its list (a review opened right after a call waits for it: `listFresh`).
+- **Deck order:** the owner drags decks (`ReorderList`) in the deck switcher or Home's deck quick start; `App.reorderDecks` applies it locally and `PUT /decks/order`. Every deck list renders the `decks` array order — never re-sort decks client-side.
 - **Tree rows:** `TreeView` rows always use the card type's `TM` colour; intended path is shown by the green ★ only.
 - **Archive vs delete:** admins archive decks/stacks (restorable); only the owner permanently deletes. The server enforces both: `DELETE /decks` is owner-only, and `PUT /decks` from a non-owner keeps any stored stack the payload omits, so stale copies never delete stacks.
 - **Copying cards/stacks:** `ImportPicker` + `deckOps.cloneCards/cloneStack` give every copied card/answer/stack a fresh id and rewrite `next` links through an old→new map; links to cards that weren't copied become `null`, copied cards join off the intended path, and a copied stack's `targetCard` is cleared. `duplicateDeck` keeps intended flags and remaps stack targets.

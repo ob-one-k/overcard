@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useMemo, use, createElement, Suspense } from "react";
 import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor, themed } from "./lib/constants";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, apiDel, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt, overlayFill } from "./lib/styles";
@@ -10,7 +10,7 @@ import { DeckSwitcherSheet, LoginScreen, ProfileSheet } from "./components/Panel
 import { NotificationBell } from "./components/NotificationBell";
 import { OrgMark } from "./components/OrgMark";
 import { getBrand, syncBrand, setBrand, cachedLogoVer } from "./lib/brand";
-import { clearCache } from "./lib/dataCache";
+import { clearCache, cachedGet } from "./lib/dataCache";
 import { startLive, stopLive, onLive, signalSignedOut } from "./lib/live";
 import { setAudioOwner, resumePendingUploads } from "./lib/audioUpload";
 
@@ -28,8 +28,27 @@ var loaders = {
   reset:    function() { return import("./components/ResetPassword"); },
   palette:  function() { return import("./components/CommandPalette"); },
 };
+// Like React.lazy, but once a chunk has loaded (usually by the idle prefetch below) its
+// components render synchronously. React.lazy suspends on every component's first
+// render even when the chunk is already here, and React holds a revealed Suspense
+// boundary for ~300 ms — that was the delay on each tab's first visit.
+var chunkMods = {}, chunkLoads = {};
+function loadChunk(key) {
+  if (!chunkLoads[key]) {
+    chunkLoads[key] = loaders[key]().then(
+      function(m) { chunkMods[key] = m; return m; },
+      function(err) { delete chunkLoads[key]; throw err; }   // a failed download can be retried
+    );
+  }
+  return chunkLoads[key];
+}
 function lazyNamed(key, name) {
-  return lazy(function() { return loaders[key]().then(function(m) { return { default: m[name] }; }); });
+  function LazyChunk(props) {
+    var m = chunkMods[key] || use(loadChunk(key));
+    return createElement(m[name], props);
+  }
+  LazyChunk.displayName = name;
+  return LazyChunk;
 }
 var HomeTab        = lazyNamed("home", "HomeTab");
 var HomeDesktop    = lazyNamed("homeDesk", "HomeDesktop");
@@ -44,7 +63,7 @@ var SessionReview  = lazyNamed("sessions", "SessionReview");
 function prefetchChunks(isAdmin, isDesktop) {
   var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home"].concat(isAdmin ? ["admin"] : []).concat(isDesktop ? ["palette"] : []);
   var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 1200); };
-  keys.forEach(function(k, i) { idle(function() { loaders[k]().catch(function() {}); }, { timeout: 4000 + i * 500 }); });
+  keys.forEach(function(k, i) { idle(function() { loadChunk(k).catch(function() {}); }, { timeout: 1500 + i * 300 }); });
 }
 // One tab's container. Its entrance uses the `translate` property with fill-mode
 // "backwards" so nothing is left applied afterwards — a lingering transform would
@@ -315,6 +334,49 @@ function MobileTabBar({ tabs, tab, onTabClick }) {
   );
 }
 
+// ─── PHONE LANDSCAPE NAV RAIL ─────────────────────────────────────────────────
+// Landscape phones are short, so the top bar and bottom tab bar fold into one left
+// rail: the deck switcher on top, the tabs (same sliding org-accent indicator as the
+// tab bar) in the middle, notifications + profile at the bottom. Tab labels drop out
+// on very short screens.
+function LandscapeRail({ tabs, tab, onTabClick, deck, decksCount, authUser, onOpenDeck, onOpenProfile, onOpenSession }) {
+  var listRef = useRef(null);
+  var ind = useSlidingIndicator(listRef, tab, [tabs.length]);
+  var admin = isAdminRole(authUser.role);
+  return (
+    <nav aria-label="Main navigation" style={{width:72,flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"8px 0",
+      paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",background:themed("rgba(4,10,28,.98)"),borderRight:"1px solid rgba(255,255,255,.07)"}}>
+      <style>{"@media (max-height:340px){[data-rail-label]{display:none!important}}"}</style>
+      <button onClick={onOpenDeck} aria-label={"Active deck: " + deck.name + " (" + decksCount + " decks). Switch deck"} title={deck.name}
+        style={{width:48,height:44,borderRadius:13,background:deck.color+"22",border:"1.5px solid "+deck.color+"77",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",fontFamily:"inherit",flexShrink:0,gap:0,padding:0}}>
+        <span style={{fontSize:18,lineHeight:1}}>{deck.icon}</span>
+        <span aria-hidden="true" style={{fontSize:8,color:"rgba(255,255,255,.45)",lineHeight:1,marginTop:2}}>⇅</span>
+      </button>
+      <div ref={listRef} style={{position:"relative",flex:1,minHeight:0,width:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
+        {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:12,background:accentA(.13),border:"1.5px solid "+accentA(.6),boxSizing:"border-box"})}/>}
+        {tabs.map(function(t) {
+          var active = tab === t.id;
+          return (
+            <button key={t.id} data-tab={t.id} onClick={function(){ onTabClick(t.id); }} aria-current={active ? "page" : undefined} aria-label={t.label}
+              style={{position:"relative",zIndex:1,width:58,flex:"1 1 0",maxHeight:50,minHeight:30,background:"none",border:"none",borderRadius:12,cursor:"pointer",
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,fontFamily:"inherit",padding:0}}>
+              <span aria-hidden="true" style={{fontSize:17,lineHeight:1}}>{t.icon}</span>
+              <span data-rail-label aria-hidden="true" style={{fontSize:7.5,fontWeight:700,letterSpacing:.4,textTransform:"uppercase",color:active?SESS_COLOR:"rgba(255,255,255,.3)",transition:"color .25s"}}>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
+        <NotificationBell onOpenSession={onOpenSession} side="right"/>
+        <button onClick={onOpenProfile} aria-label="Profile"
+          style={{width:30,height:30,borderRadius:"50%",background:admin?accentA(.12):"rgba(255,255,255,.06)",border:"1px solid "+(admin?accentA(.3):"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,cursor:"pointer",color:admin?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700,padding:0}}>
+          {authUser.displayName ? authUser.displayName[0].toUpperCase() : "?"}
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var layout      = useDesktop();
   // Tablet = compact desktop: hand the context isDesktop:true so every
@@ -390,6 +452,20 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
       });
   }
   useEffect(function() { prefetchChunks(isAdminRole(authUser.role), layout.isDesktop || layout.layout === "tablet"); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Warm the data the deck's tabs open with (Sessions list + highlights; the admin Cards
+  // performance view), so a first visit renders from cache instead of waiting on the API
+  var decksLoaded = decks.length > 0;
+  useEffect(function() {
+    if (!decksLoaded || !activeId) return;
+    var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 600); };
+    var cancelId = idle(function() {
+      var d = encodeURIComponent(activeId);
+      var urls = ["/sessions?deckId=" + d, "/sessions/highlights?deckId=" + d];
+      if (isAdminRole(authUser.role)) urls.push("/sessions?deckId=" + d + "&scope=org");
+      urls.forEach(function(u) { cachedGet(u).catch(function() {}); });
+    }, { timeout: 2500 });
+    return function() { if (window.cancelIdleCallback) window.cancelIdleCallback(cancelId); else clearTimeout(cancelId); };
+  }, [activeId, decksLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(function() {
     loadDecks();
     refreshOrgUsers();
@@ -487,6 +563,21 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         return d;
       })
       .catch(function(err){ console.error("Failed to create deck:", err); window.alert("Couldn't create the deck: " + err.message); });
+  }
+  // Owner drag-to-reorder (deck switcher, Home): ids are the new order. Applied locally at
+  // once; decks not listed (archived ones) keep their order after the listed ones.
+  function reorderDecks(ids) {
+    var pos = {};
+    ids.forEach(function(id, i) { pos[id] = i; });
+    setDecks(function(ds) {
+      var listed = ds.filter(function(d) { return pos[d.id] !== undefined; }).sort(function(a, b) { return pos[a.id] - pos[b.id]; });
+      return listed.concat(ds.filter(function(d) { return pos[d.id] === undefined; }));
+    });
+    apiPut("/decks/order", { ids: ids }).catch(function(err) {
+      console.error("overcard:", err);
+      window.alert("Couldn't save the deck order: " + err.message);
+      loadDecks();
+    });
   }
   function duplicateDeck(deckId) {
     var src = decks.find(function(d) { return d.id === deckId; });
@@ -594,6 +685,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
       isOwner={authUser.role === "owner"}
       onEditDeck={editDeckMeta}
       onDuplicateDeck={duplicateDeck}
+      onReorderDecks={authUser.role === "owner" ? reorderDecks : null}
       onArchiveDeck={function(id){ return setDeckArchived(id, true); }}
       onRestoreDeck={function(id){ return setDeckArchived(id, false); }}
       onDeleteDeck={deleteDeck}
@@ -701,7 +793,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     var toIdx   = TABS.findIndex(function(t) { return t.id === tab; });
     tabDirRef.current = { tab: tab, dir: fromIdx > toIdx ? -1 : 1 };
   }
-  var tabMotion = desktop.isDesktop
+  var tabMotion = desktop.isDesktop || desktop.landscape   // vertical nav (sidebar / landscape rail) → rise
     ? { "--tab-dx": "0px", "--tab-dy": "8px" }
     : { "--tab-dx": (tabDirRef.current.dir * 18) + "px", "--tab-dy": "0px" };
 
@@ -713,8 +805,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         <TabPane>
         <Suspense fallback={<TabFallback/>}>
         {desktop.isDesktop
-          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification} onOpenHighlight={openHighlight}/>
-          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification} onOpenHighlight={openHighlight}/>}
+          ? <HomeDesktop authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification} onOpenHighlight={openHighlight} onReorderDecks={authUser.role === "owner" ? reorderDecks : null}/>
+          : <HomeTab     authUser={authUser} decks={liveDecks} orgTeams={orgTeams} orgUsers={orgUsers} onSwitchDeckAndPlay={handleSwitchDeckAndPlay} onOpenSession={openSessionFromNotification} onOpenHighlight={openHighlight} onReorderDecks={authUser.role === "owner" ? reorderDecks : null}/>}
         </Suspense>
         </TabPane>
       )}
@@ -822,6 +914,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           @keyframes modalIn   {from{opacity:0;transform:translate(-50%,-55%)}to{opacity:1;transform:translate(-50%,-50%)}}
           @keyframes pulse     {0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 5px transparent}100%{box-shadow:0 0 0 0 transparent}}
           ${PRESS_CSS}
+          /* Multi-column flows (landscape phones): a section never splits across columns */
+          [data-cols] > *{break-inside:avoid;}
           /* Scroll areas keep their scroll to themselves (no chaining into the page behind) */
           [style*="overflow-y: auto"],[style*="overflow: auto"]{overscroll-behavior:contain;}
           input,textarea,select{-webkit-appearance:none;}
@@ -868,8 +962,25 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           </DesktopShell>
         )}
 
-        {/* ── MOBILE LAYOUT (unchanged) ── */}
-        {!desktop.isDesktop && (
+        {/* ── PHONE, LANDSCAPE: left nav rail + full-height, full-width content ── */}
+        {!desktop.isDesktop && desktop.landscape && (
+        <div style={{width:"100%",height:"100dvh",display:"flex",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)")}}>
+          <LandscapeRail tabs={TABS} tab={tab} onTabClick={handleTabClick} deck={deck} decksCount={liveDecks.length}
+            authUser={authUser} onOpenDeck={function(){setShowDS(true);}} onOpenProfile={function(){ setShowProfile(true); }}
+            onOpenSession={openSessionFromNotification}/>
+          <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            {!serverOk && (
+              <div style={{background:"rgba(239,83,80,.14)",borderBottom:"1px solid rgba(239,83,80,.28)",padding:"4px 16px",fontSize:10,color:"#EF5350",textAlign:"center",flexShrink:0}}>
+                ⚠ API server unreachable — changes won't be saved to disk
+              </div>
+            )}
+            {tabContent}
+          </div>
+        </div>
+        )}
+
+        {/* ── PHONE, PORTRAIT ── */}
+        {!desktop.isDesktop && !desktop.landscape && (
         <div style={{width:"100%",maxWidth:430,margin:"0 auto",height:"100dvh",display:"flex",flexDirection:"column",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)"),boxShadow:"0 0 0 1px rgba(255,255,255,.04)"}}>
 
           {/* Server offline banner */}

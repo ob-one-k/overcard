@@ -11,6 +11,32 @@ export function TypeBadge({ type, small }) {
     </span>
   );
 }
+// Long lists: render the first `step` items now and more as the end scrolls near, so
+// opening a tab with hundreds of rows doesn't block the first paint
+export function IncrementalList({ items, render, step }) {
+  var n = step || 30;
+  var [count, setCount] = useState(n);
+  var sentinel = useRef(null);
+  var more = count < items.length;
+  useEffect(function() {
+    if (!more || !sentinel.current || typeof IntersectionObserver === "undefined") {
+      if (more && typeof IntersectionObserver === "undefined") setCount(items.length);
+      return;
+    }
+    var io = new IntersectionObserver(function(entries) {
+      if (entries[0].isIntersecting) setCount(function(c) { return c + n; });
+    }, { rootMargin: "600px 0px" });
+    io.observe(sentinel.current);
+    return function() { io.disconnect(); };
+  }, [more, count, items.length, n]);
+  return (
+    <>
+      {items.slice(0, count).map(render)}
+      {more && <div ref={sentinel} aria-hidden="true" style={{height:1}}/>}
+    </>
+  );
+}
+
 // Classic "copy" glyph (two overlapping pages) — every copy / duplicate action uses it
 export function CopyIcon({ size }) {
   var s = size || 14;

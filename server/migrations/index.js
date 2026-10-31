@@ -16,6 +16,7 @@ var MIGRATIONS = [
   require("./006_integrity"),
   require("./007_remove_demo"),
   require("./008_session_highlights"),
+  require("./009_deck_order"),
 ];
 
 var LOCK_KEY = 72017301; // arbitrary constant shared by every instance
