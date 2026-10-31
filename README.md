@@ -34,13 +34,9 @@ A sales pitch deck training platform. Build structured call flows with branching
 npm install
 ```
 
-### Seed Demo Data (optional)
+### First Organization
 
-```bash
-node server/seed.js
-```
-
-Creates 2 organizations with teams, users, decks, and 300+ realistic sessions. Default credentials are configured in `server/seed.js` (development only).
+There is no demo data. Start the server with a `MASTER_CODE`, open the app, choose **Sign up → Create organization**, and enter that code. You become the org's owner.
 
 ### Development
 
@@ -106,7 +102,6 @@ overcard/
 │   ├── db.js               # PostgreSQL schema init, pool, query functions
 │   ├── auth.js             # JWT, bcrypt, cookie, auth middleware
 │   ├── validate.js         # Input validation (names, email, phone, password, org fields)
-│   ├── seed.js             # Database seeder with demo data
 │   └── routes/
 │       ├── authRoutes.js   # Login, logout, refresh, me, signup, create-org
 │       ├── orgRoutes.js    # Organization profile (read: members, edit: owner)
@@ -168,7 +163,6 @@ See `CLAUDE.md` for the complete endpoint reference.
 - **Rich text:** Card prompts support `**bold**`, `*italic*`, and `*text*[Inflection]` markup
 - **Polling:** Feedback and share modals poll every 5 seconds with proper cleanup on unmount
 - **Single-session enforcement:** Each login records a session token (`activeToken`) in the database. A second login from a different device invalidates the first session, returning a `session_replaced` 401 that the frontend intercepts to show a kicked-out message.
-- **Smart seeding:** `server/seed.js` uses upsert logic so it can be run repeatedly without creating duplicate data.
 
 ## Production Deployment
 
@@ -182,10 +176,7 @@ OverCard ships a `render.yaml` Blueprint that provisions a Node.js web service a
    - `overcard-api` — Node.js web service
    - `overcard-db` — Free-tier PostgreSQL instance
 4. After the first deploy, set **`CORS_ORIGIN`** in the Render dashboard to your Vercel frontend URL (e.g. `https://your-app.vercel.app`)
-5. Seed demo data via **Render Shell** (dashboard → web service → Shell tab):
-   ```bash
-   node server/seed.js
-   ```
+5. Set **`MASTER_CODE`**, then create the first organization from the app's sign-up screen
 
 ### Environment Variables
 
@@ -203,7 +194,5 @@ OverCard ships a `render.yaml` Blueprint that provisions a Node.js web service a
 ```bash
 DATABASE_URL=postgres://localhost/overcard npm run build && NODE_ENV=production JWT_SECRET=your-secret-here node server/index.js
 ```
-
-**Note:** The server runs the seeder automatically on every boot (including production) to keep demo data in place. Seeded accounts share a known password — do not use this deployment for real customer data.
 
 > **Note:** Render's free PostgreSQL plan has a 90-day data retention limit. Upgrade to a paid plan for persistent production data.

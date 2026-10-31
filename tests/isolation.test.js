@@ -3,7 +3,10 @@
 // live event streams.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { login, tid, sleep, BASE } = require("./helpers");
+const { login, tid, sleep, BASE, fixtures } = require("./helpers");
+
+var F;   // fixture ids (tests/helpers.js)
+test.before(async function() { F = await fixtures(); });
 
 function denied(r, label) {
   assert.ok([400, 403, 404, 409, 410].indexOf(r.status) !== -1, label + " → " + r.status + " " + r.text.slice(0, 120));
@@ -19,7 +22,7 @@ test("cross-org access is refused everywhere", async function() {
   var oStream = await aOwner.stream();
 
   // ── Meridian data to aim at ──
-  var MER_DECK = "d_merd_out", MER_TEAM = "team_north", MER_USER = merUser.user.id;
+  var MER_DECK = F.merDeck, MER_TEAM = F.merNorth, MER_USER = merUser.user.id;
   var merSid = tid("ms");
   assert.equal((await merUser.post("/sessions", { id: merSid, deckId: MER_DECK, name: "Mer private", mode: "live", startTs: Date.now() - 2000, endTs: Date.now(), events: [] })).status, 200);
   var fb = (await merAdmin.post("/sessions/" + merSid + "/feedback", { text: "Meridian only" })).body;
@@ -75,10 +78,10 @@ test("cross-org access is refused everywhere", async function() {
 
     // Sharing an own session with someone in another org
     var own = tid("s");
-    await aUser.post("/sessions", { id: own, deckId: "d_apex_ent", name: "own", startTs: Date.now() - 1000, endTs: Date.now(), events: [] });
+    await aUser.post("/sessions", { id: own, deckId: F.apexDeck, name: "own", startTs: Date.now() - 1000, endTs: Date.now(), events: [] });
     denied(await aUser.post("/sessions/" + own + "/share", { toUserId: MER_USER }), "share to other org");
     // A reference to another org's session is dropped
-    var withRef = (await aUser.post("/sessions", { id: tid("s"), deckId: "d_apex_ent", name: "ref", startTs: Date.now(), endTs: Date.now(), events: [], referenceSessionId: merSid })).body.session;
+    var withRef = (await aUser.post("/sessions", { id: tid("s"), deckId: F.apexDeck, name: "ref", startTs: Date.now(), endTs: Date.now(), events: [], referenceSessionId: merSid })).body.session;
     assert.equal(withRef.referenceSessionId, null);
     await aUser.del("/sessions/" + withRef.id);
     await aUser.del("/sessions/" + own);
@@ -102,12 +105,12 @@ test("cross-org access is refused everywhere", async function() {
 
     // A deck's access list can't name another org's people or teams
     var r = await aAdmin.post("/decks", { name: "t_iso " + tid(), visibility: "private",
-      accessList: [{ entityType: "user", entityId: MER_USER }, { entityType: "team", entityId: MER_TEAM }, { entityType: "team", entityId: "team_alpha" }] });
+      accessList: [{ entityType: "user", entityId: MER_USER }, { entityType: "team", entityId: MER_TEAM }, { entityType: "team", entityId: F.apexTeam }] });
     assert.equal(r.status, 201);
     createdDeck = r.body.id;
-    assert.deepEqual(r.body.accessList, [{ entityType: "team", entityId: "team_alpha" }]);
+    assert.deepEqual(r.body.accessList, [{ entityType: "team", entityId: F.apexTeam }]);
     var acc = (await aAdmin.get("/decks/" + createdDeck + "/access")).body;
-    assert.deepEqual(acc.map(function(a) { return a.entityId; }), ["team_alpha"]);
+    assert.deepEqual(acc.map(function(a) { return a.entityId; }), [F.apexTeam]);
     assert.equal((await aAdmin.put("/decks/" + createdDeck + "/access", { accessList: "nope" })).status, 400);
 
     // Their notifications are untouched by our "mark read" attempts
@@ -125,7 +128,7 @@ test("cross-org access is refused everywhere", async function() {
     // Control: the Apex streams were alive and still receive their own org's events
     assert.ok(!aStream.isEnded() && !oStream.isEnded(), "Apex streams up");
     var ctl = tid("s"), m = aStream.mark();
-    await aUser.post("/sessions", { id: ctl, deckId: "d_apex_ent", name: "control", startTs: Date.now() - 1000, endTs: Date.now(), events: [] });
+    await aUser.post("/sessions", { id: ctl, deckId: F.apexDeck, name: "control", startTs: Date.now() - 1000, endTs: Date.now(), events: [] });
     assert.ok(await aStream.waitFor("session.finished", function(d) { return d.id === ctl; }, 5000, m), "control event arrived");
     await aUser.del("/sessions/" + ctl);
 
@@ -143,13 +146,13 @@ test("cross-org access is refused everywhere", async function() {
 });
 
 test("users only see decks and sessions they are allowed to", async function() {
-  var merUserSouth = await login("shaw@meridiangroup.com");   // Team South: not on the private Partner deck
+  var merUserSouth = await login("merUserSouth");   // Team South: not on the private Partner deck
   var decks = (await merUserSouth.get("/decks")).body;
-  assert.ok(!decks.some(function(d) { return d.id === "d_merd_partner"; }), "private deck hidden");
-  assert.equal((await merUserSouth.post("/sessions/" + tid("s") + "/start", { deckId: "d_merd_partner", name: "x" })).status, 400, "can't run a hidden deck");
+  assert.ok(!decks.some(function(d) { return d.id === F.merPartnerDeck; }), "private deck hidden");
+  assert.equal((await merUserSouth.post("/sessions/" + tid("s") + "/start", { deckId: F.merPartnerDeck, name: "x" })).status, 400, "can't run a hidden deck");
   // Users can't read other people's sessions or the org scope
   var orgList = (await merUserSouth.get("/sessions?scope=org")).body;
   assert.ok(orgList.every(function(s) { return s.userId === merUserSouth.user.id || s._shared; }), "org scope ignored for users");
-  var north = (await merUserSouth.get("/sessions?scope=team:team_north")).body;
+  var north = (await merUserSouth.get("/sessions?scope=team:" + F.merNorth)).body;
   assert.ok(north.every(function(s) { return s.userId === merUserSouth.user.id || s._shared; }), "other team's scope ignored");
 });

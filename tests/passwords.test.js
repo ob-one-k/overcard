@@ -28,7 +28,7 @@ test("admin reset link: one use, signs the user out, old password stops working"
     var preview = await admin.get("/auth/reset/" + token);
     assert.equal(preview.status, 200);
     assert.equal(preview.body.email, u.email);
-    assert.equal(preview.body.orgName, "Apex Sales");
+    assert.equal(preview.body.orgName, "Apex Test Co");
     assert.equal(preview.body.passwordHash, undefined);
 
     assert.equal((await admin.post("/auth/reset", { token: token, password: "weak" })).status, 400, "password policy applies");

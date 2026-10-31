@@ -9,7 +9,6 @@ npm install          # Install dependencies (Node 24.x LTS — see .nvmrc / engi
 npm run dev          # Dev mode: runs Express (port 3001) + Vite (port 5173) concurrently
 npm run build        # Build frontend into dist/
 npm start            # Build + serve production on port 3000
-node server/seed.js  # Seed database with demo orgs, users, decks, sessions
 ```
 
 Dev endpoints:
@@ -17,14 +16,15 @@ Dev endpoints:
 - API: `http://localhost:3001/api/health`
 
 ```bash
-npm test             # node:test suite in tests/ — needs a running, demo-seeded server:
-                     #   RATE_LIMITS=off npm run server   (then)   TEST_API=http://localhost:3001 npm test
+npm test             # node:test suite in tests/ — needs a running local server with a MASTER_CODE:
+                     #   RATE_LIMITS=off MASTER_CODE=local-test-code npm run server
+                     #   TEST_API=http://localhost:3001 MASTER_CODE=local-test-code npm test
 npm run loadtest     # 100-person mixed workload in a throwaway org (needs MASTER_CODE; never against production)
 npm run owner-reset -- owner@company.com   # one-time password link for a locked-out owner
-npm run db-reset -- --confirm=<db name>    # empty EVERY table (keeps schema); needs DEMO_MODE=off
+npm run db-reset -- --confirm=<db name>    # empty EVERY table (keeps schema)
 ```
 
-Tests only create their own records (ids prefixed `t_`) in the two demo orgs. `tests/isolation.test.js` probes every endpoint across orgs — extend it whenever an endpoint is added. Operations (deploy, backups, demo off, recovery): `docs/PRODUCTION.md`.
+There is no demo data or demo mode. On first run the tests build their own fixtures through the API (`fixtures()` in `tests/helpers.js`: orgs Apex Test Co / Meridian Test Group, fixed `*@apex-test.com` / `*@meridian-test.com` accounts, teams, decks — reused on later runs) and otherwise only create records with ids prefixed `t_`. Use `F.apexDeck`, `F.merNorth` etc. from `fixtures()`, never hard-coded ids. `tests/isolation.test.js` probes every endpoint across orgs — extend it whenever an endpoint is added. Operations (deploy, backups, clean database, recovery): `docs/PRODUCTION.md`.
 
 ## Architecture
 
@@ -38,12 +38,11 @@ Tests only create their own records (ids prefixed `t_`) in the two demo orgs. `t
 **Inline styling:** All styles are plain JS objects passed to `style={}`. There is no CSS file, no Tailwind, no CSS-in-JS library. Reusable style helpers are defined in `src/lib/styles.js` (`solidBtn`, `ghostBtn`, `ghostSm`, `iconBtn`, `labelSt`, `inputSt`, `cardBg`, `badgeSt`, `dividerV`).
 
 **Backend:** Express REST API with PostgreSQL database via async `pg` Pool (connection string from `DATABASE_URL`).
-- `server/index.js` — Express entry, middleware, route mounting, static file serving; calls `initSchema()` (retried with backoff) before `app.listen()`, then runs `runSeed()` in the background on every boot (including production — demo data). SPA catch-all uses Express 5 syntax `app.get("/{*splat}")`. `trust proxy` is set in production (Render).
+- `server/index.js` — Express entry, middleware, route mounting, static file serving; calls `initSchema()` (retried with backoff) before `app.listen()`. No seeding — every org is created by people through sign-up. SPA catch-all uses Express 5 syntax `app.get("/{*splat}")`. `trust proxy` is set in production (Render).
 - `server/db.js` — PostgreSQL schema init (`initSchema`), async pool (10s connection timeout, 30s query timeout, `pool.on("error")` handler), `withTransaction` helper, all database query functions (50+ exports). BIGINT timestamp columns use a type parser to return JS numbers. JSONB columns (cards, objStacks, events, notes, metrics) are auto-serialized/deserialized by pg. All camelCase column names are double-quoted in SQL strings.
 - `server/auth.js` — JWT signing/verification, bcrypt hashing, cookie management, async auth middleware (`requireAuth`, `requireAdmin`, `requireOwner`, `isAdminRole`)
 - `server/validate.js` — Shared validators for signup/admin/org input (names, email, phone, password policy, org fields)
 - `server/routes/` — Route handlers (authRoutes, deckRoutes, sessionRoutes, adminRoutes, orgRoutes)
-- `server/seed.js` — Database seeder (2 orgs, 6 teams, 20+ users, 3 decks, 300+ sessions)
 
 In dev mode, Vite proxies `/api/*` to `http://localhost:3001` (see `vite.config.mjs`). In production, Express serves the built `dist/` and handles all routes.
 
@@ -60,12 +59,11 @@ JWT-based authentication with HttpOnly cookies.
   - `user` — play sessions, view cards/objections read-only, share sessions
   - Nobody changes their own role. Demoting an admin removes them from `team_admins`.
 - **Signup:** `POST /api/auth/signup` (share code → joins that org as `user`) and `POST /api/auth/create-org` (requires `MASTER_CODE` env; creator becomes `owner`). Both create the account and log in. Share-code use is claimed in the same transaction as the user insert, so a failed signup never burns a use. Both share a 10/15min rate limiter. Invite links: `/?join=CODE` opens the signup screen pre-filled.
-- **Demo login:** while `DEMO_MODE` is on (default), `GET /api/config` returns `{demo:true}` and the LoginScreen shows the demo org picker (`DEV_ORGS` in `Panels.jsx`, names/emails only). Picking a person calls `POST /api/auth/demo-login {email}`, which only works for seeded accounts (`seed_manifest`). No password ships in the client.
 - **Passwords:** `POST /auth/change-password` (current password required; this device gets a fresh session, others are signed out). Admins issue one-time reset links (`POST /admin/users/:id/reset-link`, 1h, single use, SHA-256-hashed in `password_resets`) opened at `/?reset=TOKEN` (`ResetPasswordScreen`). The owner recovers with `npm run owner-reset`. No email yet — the table/endpoints are ready for an email step.
 
 ## Database Schema
 
-PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CREATE TABLE IF NOT EXISTS`) followed by numbered migrations. Main tables (also `seed_manifest`, `migrations`):
+PostgreSQL. Schema auto-initialized on startup via `initSchema()` (baseline, `CREATE TABLE IF NOT EXISTS`) followed by numbered migrations. Main tables (also `migrations`):
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -173,7 +171,6 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | `server/realtime.js` | `streamHandler`, `publish`, `closeUser`, `refreshUser`, `signOutDevices` — in-process SSE pub/sub |
 | `server/migrations/` | Numbered schema migrations + runner |
 | `server/limits.js` | `limiter` factory (`RATE_LIMITS=off` for tests, never in production), `apiLimiter` (600/min per account) |
-| `server/config.js` | `DEMO_MODE` |
 
 ## API Endpoints
 
@@ -186,7 +183,6 @@ Also: `sessions."lastBeatTs"`/`live` (in-progress runs, `status='active'`), `org
 | GET | `/api/auth/me` | Yes | Returns current user profile with team info, name parts, phone, orgName, `orgLogoVer`. `?logoVer=` matching the current logo omits `orgLogo` (`orgLogoCached:true`) |
 | GET | `/api/auth/invite/:code` | No | Preview the org a share code joins (rate limited) |
 | POST | `/api/auth/signup` | No | `{code, firstName, lastName, email, phone, password}` → new `user` in the code's org, logged in |
-| POST | `/api/auth/demo-login` | No | `{email}` → sign in to a seeded demo account. 404 unless `DEMO_MODE` is on |
 | POST | `/api/auth/change-password` | Yes | `{currentPassword, newPassword}` → new session token for this device; other sessions end |
 | GET | `/api/auth/reset/:token` | No | Preview a reset link (first name, email, org) |
 | POST | `/api/auth/reset` | No | `{token, password}` → one-time reset; signs the account out everywhere |
@@ -286,7 +282,6 @@ Created when someone else leaves feedback on your session (`type: "feedback"`) o
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/health` | No | `{ok, ts}` liveness (checks the DB) |
-| GET | `/api/config` | No | `{demo}` |
 
 ## Rich Text Format
 
@@ -310,7 +305,7 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 
 ## Key Patterns
 
-- **Archive vs delete:** admins archive decks/stacks (restorable); only the owner permanently deletes. The server enforces both: `DELETE /decks` is owner-only, and `PUT /decks` from a non-owner keeps any stored stack the payload omits, so stale copies never delete stacks. `server/seed.js` restores *deleted* demo decks on boot; archiving survives.
+- **Archive vs delete:** admins archive decks/stacks (restorable); only the owner permanently deletes. The server enforces both: `DELETE /decks` is owner-only, and `PUT /decks` from a non-owner keeps any stored stack the payload omits, so stale copies never delete stacks.
 - **Copying cards/stacks:** `ImportPicker` + `deckOps.cloneCards/cloneStack` give every copied card/answer/stack a fresh id and rewrite `next` links through an old→new map; links to cards that weren't copied become `null`, copied cards join off the intended path, and a copied stack's `targetCard` is cleared. `duplicateDeck` keeps intended flags and remaps stack targets.
 - **Objections desktop/tablet:** `ObjectionsDesktop` mirrors CardsDesktop — stack switcher, List (path-ordered card list + CardStage) / Tree (docked editor + TreeView), and an "After resolving" strip. Stack edits save immediately via `onUpdateDeck` (no Save Stack step); phones still use the buffered `ObjStackEditor`. `CardStage` takes `endLabel` to say where a stack returns.
 - **On-screen keyboard:** `startViewportTracking()` (main.jsx) publishes `--vvh/--vvt/--kb/--sheet-gap`. The desktop/tablet shell and every mobile sheet (`overlayFill()`, `SHEET_MAX_H`) size to the visible viewport. Containers with `overflow:hidden` that browsers might scroll to reveal a field carry `data-noscroll` and are snapped back on blur. Editor backdrops dismiss the keyboard first and confirm before discarding edits. Rich-text toolbar buttons use the `tap()` helper in Editor.jsx (no focus/selection loss on touch). Never use `100vh/dvh` for a sheet that contains inputs.
@@ -376,7 +371,6 @@ Tooltips are hoisted to the app root via `TipCtx` context to avoid CSS stacking 
 | `NODE_ENV` | Yes (production) | Set to `production`. Enables secure cookies, helmet CSP. |
 | `DATABASE_SSL` | No | `verify` / `require` (production default) / `off` |
 | `DATABASE_POOL_MAX` | No | Default 20 |
-| `DEMO_MODE` | No | `off` in `render.yaml` (production). `on` seeds demo orgs on boot and offers demo sign-in; `off` stops both and locks the demo accounts (random password), deleting nothing. Unset = off when `NODE_ENV=production`, on otherwise |
 | `APP_URL` | No | Public app URL for owner recovery links |
 | `UV_THREADPOOL_SIZE` | No | 8 on Render (fast sign-in bursts) |
 | `RATE_LIMITS` | No | `off` disables rate limits for tests/load test; ignored in production |
@@ -399,7 +393,7 @@ Deploy steps:
 2. Render dashboard → New → Blueprint → connect repo
 3. Render detects `render.yaml`, creates both services, auto-wires `DATABASE_URL`
 4. Set `CORS_ORIGIN` manually in the Render dashboard to your Vercel frontend URL
-5. Seed via Render Shell: `node server/seed.js`
+5. Set `MASTER_CODE` and create the first org from the sign-up screen
 
 **Frontend** is deployed separately on Vercel. `buildCommand` in `render.yaml` is `npm install` only — Vite build runs on Vercel, not Render.
 
@@ -422,6 +416,5 @@ Deploy steps:
 - **Password policy:** 8+ characters, at least one uppercase letter, at least one digit. Enforced on user creation and password reset.
 - **Org scoping:** All endpoints validate `orgId` to prevent cross-org data access (IDOR protection).
 - **XSS prevention:** `escH()` in `Editor.jsx` escapes all user content before innerHTML rendering in the contentEditable editor.
-- **Demo accounts:** seeded on boot only while `DEMO_MODE` is on; they share a known password (in `server/seed.js`), so turn demo mode off for a production launch (`docs/PRODUCTION.md`).
 - **Feedback limits:** Feedback text capped at 5000 characters.
 - **Signup:** Share codes are 8 chars from an unambiguous 31-char alphabet (~40 bits), expirable, use-limited and revocable. `/auth/invite`, `/auth/signup` and `/auth/create-org` share a 10-per-15-min rate limiter.

@@ -6,10 +6,7 @@ const compression  = require("compression");
 const path         = require("path");
 const fs           = require("fs");
 
-const { pool, initSchema, closeActiveSessions, lockDemoAccounts } = require("./db");
-const { hashPassword } = require("./auth");
-const crypto = require("crypto");
-const { runSeed }          = require("./seed");
+const { pool, initSchema, closeActiveSessions } = require("./db");
 const authRoutes    = require("./routes/authRoutes");
 const deckRoutes    = require("./routes/deckRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
@@ -18,7 +15,6 @@ const orgRoutes     = require("./routes/orgRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const { requireAuth } = require("./auth");
 const realtime      = require("./realtime");
-const { DEMO_MODE } = require("./config");
 const { apiLimiter, streamLimiter } = require("./limits");
 
 const app      = express();
@@ -63,11 +59,6 @@ app.use("/api/sessions", sessionRoutes);
 app.use("/api/admin",    adminRoutes);
 app.use("/api/org",      orgRoutes);
 app.use("/api/notifications", notificationRoutes);
-
-// Public client settings
-app.get("/api/config", function(req, res) {
-  res.json({ demo: DEMO_MODE });
-});
 
 // Liveness only — no counts or other data (it is public)
 app.get("/api/health", async function(req, res) {
@@ -152,21 +143,6 @@ async function start() {
     // never sends a request down a socket Node just closed (sporadic 502s under load)
     server.keepAliveTimeout = 65 * 1000;
     server.headersTimeout   = 66 * 1000;
-
-    // Demo data is (re)seeded after the server is up — background, won't block requests.
-    // DEMO_MODE=off skips it and leaves existing demo records untouched.
-    if (DEMO_MODE) {
-      runSeed().catch(function(err) {
-        console.error("Seed error:", err.message);
-      });
-    } else {
-      console.log("Demo mode off — skipping demo seed");
-      // Demo accounts share a published password: lock them (their data stays)
-      hashPassword(crypto.randomBytes(32).toString("base64url"))
-        .then(lockDemoAccounts)
-        .then(function(n) { if (n) console.log("Demo mode off — locked " + n + " demo account(s)"); })
-        .catch(function(err) { console.error("Locking demo accounts failed:", err.message); });
-    }
   });
 }
 

@@ -1,7 +1,10 @@
 // Share codes: labels, team assignment, who joined, editing/reactivating, specific errors.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { login, client, tid, BASE } = require("./helpers");
+const { login, client, tid, BASE, fixtures } = require("./helpers");
+
+var F;   // fixture ids (tests/helpers.js)
+test.before(async function() { F = await fixtures(); });
 
 async function signup(code, extra) {
   var email = tid("join") + "@example.com";
@@ -17,23 +20,23 @@ test("a labelled team code adds people to the team and records who joined", asyn
   var admin = await login("apexAdmin");
   var stream = await admin.stream();
   var created = [];
-  var r = await admin.post("/admin/invites", { label: "Spring hires", teamId: "team_alpha", maxUses: 2, expiresInDays: 7 });
+  var r = await admin.post("/admin/invites", { label: "Spring hires", teamId: F.apexTeam, maxUses: 2, expiresInDays: 7 });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   var inv = r.body;
   try {
     assert.equal(inv.label, "Spring hires");
-    assert.equal(inv.teamName, "Team Alpha");
+    assert.equal(inv.teamName, "Alpha");
 
     var preview = await admin.get("/auth/invite/" + inv.code.toLowerCase());
     assert.equal(preview.status, 200);
-    assert.equal(preview.body.orgName, "Apex Sales");
-    assert.equal(preview.body.teamName, "Team Alpha");
+    assert.equal(preview.body.orgName, "Apex Test Co");
+    assert.equal(preview.body.teamName, "Alpha");
 
     var s1 = await signup(inv.code.slice(0, 4) + "-" + inv.code.slice(4));
     assert.equal(s1.status, 201, JSON.stringify(s1.body));
     created.push(s1.body.id);
-    assert.equal(s1.body.teamId, "team_alpha");
-    assert.ok(s1.body.teams.some(function(t) { return t.id === "team_alpha"; }), "member of the code's team");
+    assert.equal(s1.body.teamId, F.apexTeam);
+    assert.ok(s1.body.teams.some(function(t) { return t.id === F.apexTeam; }), "member of the code's team");
     assert.ok(await stream.waitFor("users.changed", function(d) { return d.joined === s1.body.id; }), "admins told live");
 
     var list = (await admin.get("/admin/invites")).body;
@@ -85,8 +88,8 @@ test("share codes stay inside their org", async function() {
     assert.equal((await merAdmin.get("/admin/invites/" + inv.id + "/members")).status, 404);
     assert.equal((await merAdmin.del("/admin/invites/" + inv.id)).status, 404);
     assert.ok(!(await merAdmin.get("/admin/invites")).body.some(function(x) { return x.id === inv.id; }));
-    assert.equal((await admin.post("/admin/invites", { teamId: "team_north" })).status, 400, "another org's team");
-    assert.equal((await admin.put("/admin/invites/" + inv.id, { teamId: "team_north" })).status, 400);
+    assert.equal((await admin.post("/admin/invites", { teamId: F.merNorth })).status, 400, "another org's team");
+    assert.equal((await admin.put("/admin/invites/" + inv.id, { teamId: F.merNorth })).status, 400);
     var user = await login("apexUser");
     assert.equal((await user.post("/admin/invites", {})).status, 403);
     assert.equal((await admin.post("/admin/invites", { label: "x".repeat(61) })).status, 400);

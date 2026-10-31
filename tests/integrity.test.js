@@ -1,19 +1,22 @@
 // Production data rules: deleting people/teams with history works and keeps that history,
-// emails are unique regardless of case, demo sign-in is limited to demo accounts.
+// emails are unique regardless of case, and there is no passwordless demo sign-in.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { login, tid, BASE } = require("./helpers");
+const { login, tid, BASE, fixtures } = require("./helpers");
+
+var F;   // fixture ids (tests/helpers.js)
+test.before(async function() { F = await fixtures(); });
 
 test("deleting a user with sessions, feedback and shares keeps the history", async function() {
   var admin = await login("apexAdmin");
   var mate = await login("apexUser2");
   var email = tid("del") + "@example.com";
-  var u = (await admin.post("/admin/users", { firstName: "Leaving", lastName: "Rep", email: email, phone: "555 010 0177", password: "Leaving1A", role: "user", teamIds: ["team_alpha"] })).body;
+  var u = (await admin.post("/admin/users", { firstName: "Leaving", lastName: "Rep", email: email, phone: "555 010 0177", password: "Leaving1A", role: "user", teamIds: [F.apexTeam] })).body;
   var rep = await login(email, { password: "Leaving1A" });
   var sid = tid("s");
   var deckId = null;
   try {
-    assert.equal((await rep.post("/sessions", { id: sid, deckId: "d_apex_ent", name: "Last call", startTs: Date.now() - 1000, endTs: Date.now(), events: [] })).status, 200);
+    assert.equal((await rep.post("/sessions", { id: sid, deckId: F.apexDeck, name: "Last call", startTs: Date.now() - 1000, endTs: Date.now(), events: [] })).status, 200);
     assert.equal((await rep.post("/sessions/" + sid + "/share", { toUserId: mate.user.id })).status, 200);
     assert.equal((await admin.post("/sessions/" + sid + "/feedback", { text: "Good" })).status, 200);
     // A private deck shared with them
@@ -58,28 +61,13 @@ test("deleting a team that is someone's primary team works", async function() {
 
 test("emails are unique regardless of case", async function() {
   var admin = await login("apexAdmin");
-  var r = await admin.post("/admin/users", { firstName: "Dup", lastName: "Case", email: "MARCUS@ApexSales.com", phone: "555 010 0199", password: "Dupcase1A", role: "user" });
+  var r = await admin.post("/admin/users", { firstName: "Dup", lastName: "Case", email: "USER@Apex-Test.com", phone: "555 010 0199", password: "Dupcase1A", role: "user" });
   assert.equal(r.status, 409);
-  var ok = await login("Marcus@ApexSales.COM");
-  assert.equal(ok.user.email, "marcus@apexsales.com");
+  var ok = await login("User@APEX-test.COM");
+  assert.equal(ok.user.email, "user@apex-test.com");
 });
 
-test("demo sign-in only works for demo accounts", async function() {
-  var cfg = await (await fetch(BASE + "/config")).json();
-  assert.equal(typeof cfg.demo, "boolean");
-  async function demo(email) {
-    var r = await fetch(BASE + "/auth/demo-login?force=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: email }) });
-    return r.status;
-  }
-  if (!cfg.demo) { assert.equal(await demo("alex@apexsales.com"), 404); return; }
-  assert.equal(await demo("alex@apexsales.com"), 200);
-  var admin = await login("apexAdmin");
-  var email = tid("nd") + "@example.com";
-  var u = (await admin.post("/admin/users", { firstName: "Real", lastName: "Person", email: email, phone: "555 010 0111", password: "Realpers1A", role: "user" })).body;
-  try {
-    assert.equal(await demo(email), 404, "real accounts never sign in without a password");
-    assert.equal(await demo("nobody@example.com"), 404);
-  } finally {
-    await admin.del("/admin/users/" + u.id);
-  }
+test("there is no demo sign-in", async function() {
+  var r = await fetch(BASE + "/auth/demo-login?force=1", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "owner@apex-test.com" }) });
+  assert.equal(r.status, 404);
 });

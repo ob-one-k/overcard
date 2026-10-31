@@ -2,10 +2,10 @@
 // and one-device-at-a-time sign-in.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { login, tid, sleep } = require("./helpers");
+const { login, tid, sleep, fixtures } = require("./helpers");
 
-var APEX_DECK = "d_apex_ent";
-var MER_DECK  = "d_merd_out";
+var F, APEX_DECK, MER_DECK;   // fixture ids (tests/helpers.js)
+test.before(async function() { F = await fixtures(); APEX_DECK = F.apexDeck; MER_DECK = F.merDeck; });
 
 function visit(cardId, ts) {
   return { type: "visit", cardId: cardId, cardTitle: "Card " + cardId, cardType: "pitch", isObjCard: false, intendedPath: true, ts: ts, durationMs: 1000 };
@@ -171,11 +171,11 @@ test("live run guards: hijack, validation, after finishing", async function() {
   var merUser = await login("merUser");
   var id = tid("s");
   try {
-    assert.equal((await user.post("/sessions/" + id + "/start", { deckId: "d_apex_ent", name: "Guarded" })).status, 200);
+    assert.equal((await user.post("/sessions/" + id + "/start", { deckId: F.apexDeck, name: "Guarded" })).status, 200);
     // Someone else can't take over the id — same org or not
-    assert.equal((await other.post("/sessions/" + id + "/start", { deckId: "d_apex_ent", name: "Mine now" })).status, 409);
-    assert.equal((await merUser.post("/sessions/" + id + "/start", { deckId: "d_merd_out", name: "x" })).status, 409);
-    assert.equal((await other.post("/sessions", { id: id, deckId: "d_apex_ent", name: "x", startTs: 1, events: [] })).status, 403);
+    assert.equal((await other.post("/sessions/" + id + "/start", { deckId: F.apexDeck, name: "Mine now" })).status, 409);
+    assert.equal((await merUser.post("/sessions/" + id + "/start", { deckId: F.merDeck, name: "x" })).status, 409);
+    assert.equal((await other.post("/sessions", { id: id, deckId: F.apexDeck, name: "x", startTs: 1, events: [] })).status, 403);
     // Bad heartbeats
     assert.equal((await user.post("/sessions/" + id + "/beat", { events: "nope" })).status, 400);
     assert.equal((await user.post("/sessions/" + id + "/beat", { events: [1, 2] })).status, 400);
@@ -191,9 +191,9 @@ test("live run guards: hijack, validation, after finishing", async function() {
     assert.equal(live.events.length, 1);
     assert.equal(live.live.cardId, "c3");
     // Finished → no more beats, no reopening, and the client can't mark it "active"
-    assert.equal((await user.post("/sessions", { id: id, deckId: "d_apex_ent", name: "Guarded", status: "active", startTs: Date.now() - 1000, endTs: Date.now(), events: [] })).status, 200);
+    assert.equal((await user.post("/sessions", { id: id, deckId: F.apexDeck, name: "Guarded", status: "active", startTs: Date.now() - 1000, endTs: Date.now(), events: [] })).status, 200);
     assert.equal((await user.post("/sessions/" + id + "/beat", { events: [] })).status, 409);
-    assert.equal((await user.post("/sessions/" + id + "/start", { deckId: "d_apex_ent", name: "again" })).status, 409);
+    assert.equal((await user.post("/sessions/" + id + "/start", { deckId: F.apexDeck, name: "again" })).status, 409);
     var saved = (await user.get("/sessions")).body.find(function(s) { return s.id === id; });
     assert.equal(saved.status, "completed");
   } finally {
@@ -205,11 +205,11 @@ test("a rep can have at most 3 runs in progress", async function() {
   var user = await login("apexUser3");
   var ids = [tid("s"), tid("s"), tid("s"), tid("s")];
   try {
-    for (var i = 0; i < 3; i++) assert.equal((await user.post("/sessions/" + ids[i] + "/start", { deckId: "d_apex_ent", name: "r" + i })).status, 200);
-    assert.equal((await user.post("/sessions/" + ids[3] + "/start", { deckId: "d_apex_ent", name: "r3" })).status, 429);
+    for (var i = 0; i < 3; i++) assert.equal((await user.post("/sessions/" + ids[i] + "/start", { deckId: F.apexDeck, name: "r" + i })).status, 200);
+    assert.equal((await user.post("/sessions/" + ids[3] + "/start", { deckId: F.apexDeck, name: "r3" })).status, 429);
   } finally {
     for (var j = 0; j < ids.length; j++) {
-      await user.post("/sessions", { id: ids[j], deckId: "d_apex_ent", name: "r", startTs: Date.now(), endTs: Date.now(), events: [] });
+      await user.post("/sessions", { id: ids[j], deckId: F.apexDeck, name: "r", startTs: Date.now(), endTs: Date.now(), events: [] });
       await user.del("/sessions/" + ids[j]);
     }
   }

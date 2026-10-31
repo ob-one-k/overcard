@@ -5,9 +5,8 @@ const {
   findUserByEmail, updateLastLogin, findUserById, getTeamNames, getUserTeams, getAdminTeamIds,
   setActiveToken, clearActiveTokenIfMatches, findOrgById,
   checkInvite, signupWithInvite, createOrgWithOwner,
-  findPasswordReset, usePasswordReset, setPasswordHash, isSeedUser,
+  findPasswordReset, usePasswordReset, setPasswordHash,
 } = require("../db");
-const { DEMO_MODE } = require("../config");
 const realtime = require("../realtime");
 const { jwtSign, checkPassword, hashPassword, setCookie, clearCookie, requireAuth, isAdminRole } = require("../auth");
 const { limiter } = require("../limits");
@@ -115,19 +114,6 @@ router.post("/login", loginLimiter, async function(req, res, next) {
     }
 
     // A new session token invalidates any existing session on other devices
-    res.json(await startSession(res, user));
-  } catch (err) { next(err); }
-});
-
-// POST /api/auth/demo-login { email } — one-click sign-in to a seeded demo account.
-// Only while DEMO_MODE is on, and only for accounts the demo seed created.
-router.post("/demo-login", loginLimiter, async function(req, res, next) {
-  try {
-    if (!DEMO_MODE) return res.status(404).json({ error: "Not found" });
-    const email = String((req.body || {}).email || "").toLowerCase().trim();
-    const user = email ? await findUserByEmail(email) : null;
-    if (!user || !(await isSeedUser(user.id))) return res.status(404).json({ error: "Not a demo account" });
-    if (user.activeToken && !req.query.force) return res.status(409).json({ error: "already_logged_in" });
     res.json(await startSession(res, user));
   } catch (err) { next(err); }
 });

@@ -12,12 +12,11 @@ How to run OverCard in production: starting from a clean database, moving data, 
 | `CORS_ORIGIN` | Render → Environment | The frontend URL, for example `https://overcard.vercel.app`. |
 | `APP_URL` | Render → Environment | The public app URL, used in owner recovery links. |
 | `MASTER_CODE` | Render → Environment | A long random secret. Only people who have it can create organizations. |
-| `DEMO_MODE` | `render.yaml` | `off` in production — see section 5. |
 | `UV_THREADPOOL_SIZE=8` | `render.yaml` | Keeps a burst of sign-ins fast. |
 
 Syncing the blueprint changes billing. Upgrade the existing free database in place from the Render dashboard (Database → Settings → Instance type). That keeps the data and the connection string.
 
-## 2. Moving the demo data to a new database
+## 2. Moving the data to a new database
 
 Use this only if the free database can't be upgraded in place, for example after it expired, or if you are moving providers.
 
@@ -48,19 +47,18 @@ done
 - **Manual snapshot:** take one before risky changes with `pg_dump -Fc "$DATABASE_URL" -f overcard-$(date +%F).dump`. Store it somewhere other than the Render account.
 - **Restore drills:** test a restore into a scratch database every quarter, using `pg_restore` as in section 2.
 
-## 5. Clean production database (no demo or test data)
+## 5. Clean production database
 
-`render.yaml` sets `DEMO_MODE=off`, so a production boot never seeds demo orgs and demo sign-in is disabled. To empty a database that already holds demo or test data:
+OverCard has no demo data or demo sign-in. To empty a database that holds old demo or test data:
 
 1. Take a backup (section 4).
-2. Make sure the deployed service has `DEMO_MODE=off`; the script refuses to run while it is on, because the next boot would re-seed the demo orgs.
-3. Render → overcard-api → Shell: `npm run db-reset`. It prints the database name and the org/user/session counts, and deletes nothing.
-4. Run `npm run db-reset -- --confirm=<database name>`. This empties every table (orgs, users, decks, sessions, recordings, share codes, notifications, demo manifest). The schema and the applied-migrations record are kept.
-5. Restart the web service, then create the first real organization: sign-up screen → "Create organization" with `MASTER_CODE`.
+2. Render → overcard-api → Shell: `npm run db-reset`. It prints the database name and the org/user/session counts, and deletes nothing.
+3. Run `npm run db-reset -- --confirm=<database name>`. This empties every table (orgs, users, decks, sessions, recordings, share codes, notifications). The schema and the applied-migrations record are kept.
+4. Restart the web service, then create the first real organization: sign-up screen → "Create organization" with `MASTER_CODE`.
 
 Typical launch: reset → test over the weekend with throwaway orgs → reset again → create the real orgs.
 
-`DEMO_MODE=off` on a database that still has demo data only locks the demo accounts (their published password is replaced by a random one) and deletes nothing. When `DEMO_MODE` is unset, it defaults to **off** if `NODE_ENV=production` and **on** otherwise.
+Migration `007_remove_demo` locks any account the old demo seed created (their shared password is in the repository history) and drops the seed's bookkeeping table. It deletes no data; the reset does that.
 
 ## 6. Account recovery
 

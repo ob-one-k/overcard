@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT, themed } from "../lib/constants";
-import { apiGet, apiPost, apiPut, apiDel, setStoredToken, getStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
+import { apiPost, apiPut, apiDel, setStoredToken, getStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
 import DesktopCtx from "../lib/DesktopCtx";
@@ -267,57 +267,6 @@ export function DeckSwitcherSheet({ decks: allDecks, activeDeckId, onSelect, onA
 }
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
-// Demo accounts (seeded by server/seed.js). The picker only appears when the server runs
-// with DEMO_MODE on (GET /api/config), and signs in through /auth/demo-login — no
-// password ships in the app.
-var DEV_ORGS = [
-  {
-    id: "apex", name: "Apex Sales", domain: "apexsales.com",
-    admins: [
-      { label:"Alex Mercer",    email:"alex@apexsales.com",     role:"owner" },
-      { label:"Jordan Rivera",  email:"jordan@apexsales.com"  },
-      { label:"Sam Patel",      email:"sam@apexsales.com"     },
-    ],
-    teams: [
-      { name:"Team Alpha", users:[
-        { label:"Marcus Chen",    email:"marcus@apexsales.com"  },
-        { label:"Priya Nair",     email:"priya@apexsales.com"   },
-        { label:"Tyler Brooks",   email:"tyler@apexsales.com"   },
-        { label:"Sofia Martinez", email:"sofia@apexsales.com"   },
-      ]},
-      { name:"Team Beta", users:[
-        { label:"Dani Walsh",     email:"dani@apexsales.com"    },
-        { label:"Kenji Tanaka",   email:"kenji@apexsales.com"   },
-        { label:"Amara Osei",     email:"amara@apexsales.com"   },
-        { label:"Ryan Costello",  email:"ryan@apexsales.com"    },
-      ]},
-      { name:"Team Gamma", users:[
-        { label:"Leila Hassan",   email:"leila@apexsales.com"   },
-        { label:"Colt Barnard",   email:"colt@apexsales.com"    },
-        { label:"Zara Kim",       email:"zara@apexsales.com"    },
-        { label:"Derek Pham",     email:"derek@apexsales.com"   },
-      ]},
-    ],
-  },
-  {
-    id: "meridian", name: "Meridian Group", domain: "meridiangroup.com",
-    admins: [
-      { label:"Casey Wright", email:"casey@meridiangroup.com", role:"owner" },
-      { label:"Riley Stone",  email:"riley@meridiangroup.com" },
-    ],
-    teams: [
-      { name:"Team North", users:[
-        { label:"Jordan Fox",   email:"fox@meridiangroup.com"   },
-        { label:"Avery Blake",  email:"blake@meridiangroup.com" },
-      ]},
-      { name:"Team South", users:[
-        { label:"Morgan Shaw",  email:"shaw@meridiangroup.com"  },
-        { label:"Taylor Reed",  email:"reed@meridiangroup.com"  },
-      ]},
-    ],
-  },
-];
-
 export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   // Rendered before MainApp provides DesktopCtx, so read the layout directly
   var lay = useDesktop();
@@ -325,29 +274,8 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   var [pass,    setPass]    = useState("");
   var [err,     setErr]     = useState("");
   var [busy,    setBusy]    = useState(false);
-  var [selOrg,  setSelOrg]  = useState(null);   // null | DEV_ORGS entry
-  var [showPicker, setShowPicker] = useState(false);
   var [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false);
   var [forgotOpen, setForgotOpen] = useState(false);
-  var [demo, setDemo] = useState(false);          // server has demo accounts enabled
-  var [demoEmail, setDemoEmail] = useState(null); // demo account being signed in (for "Log in anyway")
-  useEffect(function() {
-    apiGet("/config").then(function(c) { setDemo(!!(c && c.demo)); }).catch(function() {});
-  }, []);
-
-  function pickOrg(org) {
-    setSelOrg(org);
-    setEmail(""); setPass(""); setErr(""); setAlreadyLoggedIn(false);
-  }
-
-  function pickUser(u) {
-    setEmail(u.email);
-    setPass("");
-    setShowPicker(false);
-    setErr("");
-    setDemoEmail(u.email);
-    doLogin("/auth/demo-login", { email: u.email });
-  }
 
   function doLogin(url, creds) {
     setBusy(true); setErr(""); setAlreadyLoggedIn(false);
@@ -369,25 +297,21 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
 
   function submit(e) {
     e.preventDefault();
-    setDemoEmail(null);
     if (!email.trim() || !pass) { setErr("Email and password are required."); return; }
     doLogin("/auth/login", { email: email.trim(), password: pass });
   }
 
   function handleForceLogin() {
-    if (demoEmail) { doLogin("/auth/demo-login?force=true", { email: demoEmail }); return; }
     if (!email.trim() || !pass) return;
     doLogin("/auth/login?force=true", { email: email.trim(), password: pass });
   }
-
-  var accentColor = "#00B4FF"; // always on-theme; org colors only identify org tiles
 
   // Desktop / tablet get a larger sign-in; wide screens split into brand panel + form
   var big   = lay.isDesktop || lay.isTablet;
   var split = lay.isDesktop || (lay.isTablet && window.innerWidth >= 960);
   var F = big
-    ? { label:12, input:16, inPad:"14px 16px", title:26, small:14, tileName:15, tileIcon:44, btnPad:"15px 20px", btn:16, pick:14, pickName:14, pickMail:12 }
-    : { label:9,  input:14, inPad:"11px 14px", title:14, small:13, tileName:11, tileIcon:34, btnPad:"12px 20px", btn:14, pick:12, pickName:12, pickMail:10 };
+    ? { label:12, input:16, inPad:"14px 16px", title:26, small:14, btnPad:"15px 20px", btn:16 }
+    : { label:9,  input:14, inPad:"11px 14px", title:14, small:13, btnPad:"12px 20px", btn:14 };
   var lbl = big ? Object.assign({}, labelSt(), { fontSize:12, marginBottom:8 }) : labelSt();
   var inp = inputSt({ marginBottom:0, fontSize:F.input, padding:F.inPad, borderRadius:big ? 14 : 12 });
 
@@ -417,76 +341,6 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
                   <div style={{fontSize:17,fontWeight:700,color:"#fff"}}>{f[1]}</div>
                   <div style={{fontSize:15,color:"rgba(255,255,255,.55)",marginTop:3,lineHeight:1.5,maxWidth:420}}>{f[2]}</div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-
-  var orgPicker = (
-    <div style={{marginBottom:big ? 18 : 14}}>
-      <div style={{fontSize:F.label,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1.4,textTransform:"uppercase",marginBottom:big ? 10 : 8}}>Demo organizations</div>
-      <div style={{display:"flex",gap:big ? 12 : 8}}>
-        {DEV_ORGS.map(function(org) {
-          var active = selOrg && selOrg.id === org.id;
-          return (
-            <button key={org.id} onClick={function(){ pickOrg(org); }}
-              style={{flex:1,display:"flex",flexDirection:big ? "row" : "column",alignItems:"center",justifyContent:big ? "flex-start" : "center",gap:big ? 12 : 5,padding:big ? "14px 16px" : "12px 10px",background:active?"rgba(0,180,255,.08)":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?"rgba(0,180,255,.4)":"rgba(255,255,255,.09)"),borderRadius:big ? 16 : 14,cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}}>
-              <div style={{width:F.tileIcon,height:F.tileIcon,borderRadius:big ? 12 : 10,background:active?"rgba(0,180,255,.15)":"rgba(255,255,255,.07)",border:"1.5px solid "+(active?"rgba(0,180,255,.35)":"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:big ? 20 : 16,fontWeight:700,color:active?"#00B4FF":"rgba(255,255,255,.5)",flexShrink:0}}>
-                {org.name[0]}
-              </div>
-              <div style={{fontSize:F.tileName,fontWeight:700,color:active?"#fff":"rgba(255,255,255,.6)",textAlign:big ? "left" : "center",lineHeight:1.3}}>{org.name}</div>
-              {active && <div style={{width:6,height:6,borderRadius:"50%",background:"#00B4FF",marginLeft:big ? "auto" : 0}}/>}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  var userPicker = selOrg && (
-    <div style={{marginBottom:big ? 18 : 14,position:"relative"}}>
-      <button onClick={function(){ setShowPicker(function(p){ return !p; }); }}
-        style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:accentColor+"0f",border:"1px solid "+accentColor+"33",borderRadius:12,padding:big ? "13px 16px" : "10px 14px",cursor:"pointer",fontFamily:"inherit",color:"rgba(255,255,255,.75)",fontSize:F.pick,transition:"all .15s"}}>
-        <span style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:F.pick + 1}}>⚡</span>
-          <span>{email ? email : "Quick select a user"}</span>
-        </span>
-        <span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{showPicker ? "▲" : "▼"}</span>
-      </button>
-      {showPicker && (
-        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"#081428",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden",zIndex:20,animation:"dropIn .15s ease both",maxHeight:big ? 380 : 300,overflowY:"auto",boxShadow:"0 16px 48px rgba(0,0,0,.8)"}}>
-          <div style={{padding:"8px 14px 5px",fontSize:F.label,fontWeight:700,color:SESS_COLOR+"99",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid rgba(255,255,255,.05)"}}>Admins</div>
-          {selOrg.admins.map(function(u) {
-            return (
-              <button key={u.email} onClick={function(){ pickUser(u); }}
-                style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",padding:big ? "12px 16px" : "10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                <div>
-                  <div style={{fontSize:F.pickName,fontWeight:700,color:"#fff"}}>{u.label}</div>
-                  <div style={{fontSize:F.pickMail,color:"rgba(255,255,255,.35)",marginTop:1}}>{u.email}</div>
-                </div>
-                <span style={{fontSize:big ? 11 : 9,fontWeight:700,padding:"2px 8px",borderRadius:99,background:roleMeta(u.role||"admin").bg,color:roleMeta(u.role||"admin").color,border:"1px solid "+roleMeta(u.role||"admin").border,flexShrink:0}}>{u.role||"admin"}</span>
-              </button>
-            );
-          })}
-          {selOrg.teams.map(function(team) {
-            return (
-              <div key={team.name}>
-                <div style={{padding:"8px 14px 5px",fontSize:F.label,fontWeight:700,color:"rgba(0,180,255,.55)",letterSpacing:1.2,textTransform:"uppercase",borderBottom:"1px solid rgba(255,255,255,.04)",borderTop:"1px solid rgba(255,255,255,.05)"}}>{team.name}</div>
-                {team.users.map(function(u) {
-                  return (
-                    <button key={u.email} onClick={function(){ pickUser(u); }}
-                      style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",padding:big ? "12px 16px" : "10px 14px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                      <div>
-                        <div style={{fontSize:F.pickName,fontWeight:700,color:"#fff"}}>{u.label}</div>
-                        <div style={{fontSize:F.pickMail,color:"rgba(255,255,255,.35)",marginTop:1}}>{u.email}</div>
-                      </div>
-                      <span style={{fontSize:big ? 11 : 9,fontWeight:700,padding:"2px 8px",borderRadius:99,background:"rgba(0,180,255,.1)",color:"#00B4FF",border:"1px solid rgba(0,180,255,.2)",flexShrink:0}}>user</span>
-                    </button>
-                  );
-                })}
               </div>
             );
           })}
@@ -563,7 +417,7 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
   );
 
   var footer = (
-    <div style={{textAlign:"center",marginTop:16,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>{demo ? "OverCard · demo accounts enabled" : "OverCard"}</div>
+    <div style={{textAlign:"center",marginTop:16,fontSize:big ? 12 : 10,color:"rgba(255,255,255,.2)"}}>OverCard</div>
   );
 
   return (
@@ -574,7 +428,6 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
         input::placeholder{color:rgba(255,255,255,.22);}
         input:focus{border-color:rgba(255,255,255,.3)!important;outline:none;}
         @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        @keyframes dropIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
         button{transition:transform 0.11s cubic-bezier(.22,1,.36,1),filter 0.11s ease,opacity 0.11s ease;}
         button:not(:disabled):active{transform:scale(0.95)!important;filter:brightness(0.85);}
         @media (hover:hover){button:not(:disabled):hover{filter:brightness(1.12);}}
@@ -589,8 +442,6 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
           {/* Sign-in column */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 40px",overflowY:"auto"}}>
             <div style={{width:"100%",maxWidth:480,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) .05s both"}}>
-              {demo && orgPicker}
-              {userPicker}
               {form}
               {footer}
             </div>
@@ -599,8 +450,6 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
       ) : (
         <div style={{width:"100%",maxWidth:big ? 520 : 380,animation:"fadeIn .4s cubic-bezier(.22,1,.36,1) both",paddingBottom:24}}>
           {brand}
-          {demo && orgPicker}
-          {userPicker}
           {form}
           {footer}
         </div>

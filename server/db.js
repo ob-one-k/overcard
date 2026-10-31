@@ -261,16 +261,6 @@ async function initSchema() {
     )`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications("userId", "createdAt" DESC)`);
 
-    // Seed manifest — tracks which records were seeded and their last-seeded content hash
-    // Enables smart re-seeding: refresh unmodified seed records, preserve user edits
-    await client.query(`CREATE TABLE IF NOT EXISTS seed_manifest (
-      table_name   TEXT   NOT NULL,
-      record_id    TEXT   NOT NULL,
-      content_hash TEXT   NOT NULL,
-      seeded_at    BIGINT NOT NULL,
-      PRIMARY KEY (table_name, record_id)
-    )`);
-
     // Migrations table — tracks named one-time migrations so they run exactly once
     await client.query(`CREATE TABLE IF NOT EXISTS migrations (
       name       TEXT PRIMARY KEY,
@@ -906,22 +896,6 @@ async function expirePasswordResets(userId) {
   await pool.query('UPDATE password_resets SET "usedAt"=$1 WHERE "userId"=$2 AND "usedAt" IS NULL', [Date.now(), userId]);
 }
 
-// DEMO_MODE off: the seeded demo accounts can no longer sign in — their shared password is
-// replaced by an unguessable one and any open session ends. Their data stays.
-async function lockDemoAccounts(randomHash) {
-  const r = await pool.query(
-    'UPDATE users SET "passwordHash"=$1, "activeToken"=NULL WHERE id IN (SELECT record_id FROM seed_manifest WHERE table_name = \'users\') AND "passwordHash" <> $1',
-    [randomHash]
-  );
-  return r.rowCount;
-}
-
-// Is this user one of the seeded demo accounts?
-async function isSeedUser(userId) {
-  const { rows } = await pool.query("SELECT 1 FROM seed_manifest WHERE table_name = 'users' AND record_id = $1", [userId]);
-  return rows.length > 0;
-}
-
 async function setPasswordHash(userId, passwordHash) {
   await pool.query('UPDATE users SET "passwordHash"=$1 WHERE id=$2', [passwordHash, userId]);
 }
@@ -1252,33 +1226,6 @@ async function deleteSession(id, orgId) {
   await pool.query('DELETE FROM sessions WHERE id = $1 AND "orgId" = $2', [id, orgId]);
 }
 
-// Direct insert for seed script (no userId guard)
-async function insertSession(session) {
-  await pool.query(`
-    INSERT INTO sessions (id,"orgId","userId","deckId","deckName","deckColor","deckIcon",
-      name,account,contact,mode,status,outcome,"startTs","endTs",sold,"soldCardId","soldCardTitle",
-      events,notes,metrics,"audioSegments")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-    ON CONFLICT (id) DO UPDATE SET
-      "deckId"=EXCLUDED."deckId","deckName"=EXCLUDED."deckName","deckColor"=EXCLUDED."deckColor",
-      "deckIcon"=EXCLUDED."deckIcon",name=EXCLUDED.name,account=EXCLUDED.account,contact=EXCLUDED.contact,
-      mode=EXCLUDED.mode,status=EXCLUDED.status,outcome=EXCLUDED.outcome,
-      "startTs"=EXCLUDED."startTs","endTs"=EXCLUDED."endTs",sold=EXCLUDED.sold,
-      "soldCardId"=EXCLUDED."soldCardId","soldCardTitle"=EXCLUDED."soldCardTitle",
-      events=EXCLUDED.events,notes=EXCLUDED.notes,metrics=EXCLUDED.metrics,
-      "audioSegments"=EXCLUDED."audioSegments"
-  `, [
-    session.id, session.orgId, session.userId,
-    session.deckId, session.deckName, session.deckColor || "#F5A623", session.deckIcon || "💼",
-    session.name, session.account || null, session.contact || null,
-    session.mode || "live", session.status || "completed", session.outcome || "completed",
-    session.startTs, session.endTs || null, session.sold ? true : false,
-    session.soldCardId || null, session.soldCardTitle || null,
-    JSON.stringify(session.events || []), JSON.stringify(session.notes || []), JSON.stringify(session.metrics || null),
-    null, // seed sessions never have audio recordings
-  ]);
-}
-
 // ─── SESSION FEEDBACK ─────────────────────────────────────────────────────────
 async function getFeedback(sessionId, orgId) {
   const { rows } = await pool.query(
@@ -1373,10 +1320,10 @@ module.exports = {
   getOrgDecks, getDeckById, deckUsableBy, createDeck, updateDeck, deleteDeck, setDeckArchived,
   getDeckAccess, setDeckAccess,
   // passwords
-  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, isSeedUser, expirePasswordResets, lockDemoAccounts,
+  createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,
   // sessions
   getSessions, getSessionById, upsertSession,
-  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, countActiveRuns, deleteSession, insertSession,
+  startLiveSession, beatLiveSession, getLiveSession, getLiveSessions, closeActiveSessions, countActiveRuns, deleteSession,
   saveSessionAudio, getSessionAudioMeta, getSessionAudioRange, getReferenceOptions,
   // notifications
   createNotification, getNotifications, markNotificationsRead,
