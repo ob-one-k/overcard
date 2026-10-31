@@ -49,7 +49,68 @@ export function normalizeAccent(hex) {
   for (var i = 0; i < 10 && luminance(rgb) < 0.18; i++) rgb = rgb.map(function(v) { return Math.round(v + (255 - v) * 0.15); });
   return "#" + rgb.map(function(v) { return ("0" + v.toString(16)).slice(-2); }).join("").toUpperCase();
 }
-export function setAccentColor(hex) { SESS_COLOR = hex ? normalizeAccent(hex) : DEFAULT_ACCENT; }
+export function setAccentColor(hex) {
+  var next = hex ? normalizeAccent(hex) : DEFAULT_ACCENT;
+  // Surfaces take the chosen colour's own hue/saturation (not the lifted one, which greys dark accents)
+  var hue = hex ? rgbToHsl(hexToRgb(hex) || hexToRgb(next)) : null;
+  SESS_COLOR = next;
+  if (String(hue) === String(SURFACE_HUE)) return;   // called on every render — only act on a change
+  SURFACE_HUE = hue;
+  themedCache = {};
+  // The page behind the app (overscroll, browser chrome) follows the surface too
+  if (typeof document !== "undefined") {
+    document.body.style.background = themed("#060d1a");
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", themed("#090c18"));
+  }
+}
+
+// ─── SURFACES (backgrounds, panels, sheets) ───────────────────────────────────
+// The dark navy surfaces take the org accent's hue once an org has chosen one, so the app reads
+// as a dark version of the accent. No accent chosen = the original navy, untouched.
+// themed() rewrites every navy colour (#rrggbb or rgb/rgba) inside a style string, e.g.
+//   background: themed("linear-gradient(180deg, #060d1a 0%, #071025 100%)")
+// Lightness and alpha are kept; only hue (and saturation, capped by the accent's) change.
+var SURFACE_HUE = null;   // [hue, saturation] of the org accent, or null for default navy
+var themedCache = {};
+
+function rgbToHsl(rgb) {
+  var r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
+  var max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l];
+  var s = d / (1 - Math.abs(2 * l - 1));
+  var h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s, l];
+}
+function hslToRgb(h, s, l) {
+  var c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  var p = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return p.map(function(v) { return Math.round((v + m) * 255); });
+}
+// Dark and blue-leaning = one of the app's navy surfaces (bright blues like #00B4FF are accents, not surfaces)
+function isNavy(rgb) { return Math.max(rgb[0], rgb[1], rgb[2]) <= 72 && rgb[2] > rgb[0] + 6 && rgb[2] >= rgb[1]; }
+function tintRgb(rgb) {
+  var hsl = rgbToHsl(rgb);
+  return hslToRgb(SURFACE_HUE[0], Math.min(hsl[1], SURFACE_HUE[1]), hsl[2]);
+}
+export function themed(str) {
+  if (!SURFACE_HUE) return str;
+  if (themedCache[str]) return themedCache[str];
+  var out = String(str)
+    .replace(/#([0-9a-f]{6})\b/gi, function(all) {
+      var rgb = hexToRgb(all);
+      if (!isNavy(rgb)) return all;
+      return "#" + tintRgb(rgb).map(function(v) { return ("0" + v.toString(16)).slice(-2); }).join("");
+    })
+    .replace(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(,[^)]*)?\)/gi, function(all, r, g, b, a) {
+      var rgb = [+r, +g, +b];
+      if (!isNavy(rgb)) return all;
+      var t = tintRgb(rgb);
+      return a ? "rgba(" + t.join(",") + a + ")" : "rgb(" + t.join(",") + ")";
+    });
+  themedCache[str] = out;
+  return out;
+}
 // rgba() of the current accent — replaces the old hard-coded rgba(168,255,62,a)
 export function accentA(alpha) {
   var rgb = hexToRgb(SESS_COLOR) || [168, 255, 62];

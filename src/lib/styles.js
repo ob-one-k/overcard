@@ -1,5 +1,5 @@
 // ─── STYLE HELPERS ────────────────────────────────────────────────────────────
-import { inkOn } from "./constants";
+import { inkOn, themed } from "./constants";
 
 export function solidBtn(color) {
   // Text colour from the background's luminance, so any org accent stays readable
@@ -20,7 +20,7 @@ export function labelSt() {
   return { display:"block", fontSize:10, fontWeight:700, letterSpacing:1.5, color:"rgba(255,255,255,.35)", textTransform:"uppercase", marginBottom:7 };
 }
 export function inputSt(extra) {
-  var b = { display:"block", width:"100%", background:"rgba(8,25,60,.5)", border:"1.5px solid rgba(255,255,255,.1)", borderRadius:12, color:"#fff", fontSize:14, padding:"11px 14px", fontFamily:"inherit", outline:"none", boxSizing:"border-box" };
+  var b = { display:"block", width:"100%", background:themed("rgba(8,25,60,.5)"), border:"1.5px solid rgba(255,255,255,.1)", borderRadius:12, color:"#fff", fontSize:14, padding:"11px 14px", fontFamily:"inherit", outline:"none", boxSizing:"border-box" };
   return extra ? Object.assign({}, b, extra) : b;
 }
 export function cardBg(extra) {
@@ -37,7 +37,7 @@ export function modalOverlay() {
   return { position:"fixed", inset:0, zIndex:500, background:"rgba(0,0,0,.72)", backdropFilter:"blur(12px)", display:"flex", alignItems:"center", justifyContent:"center" };
 }
 export function modalDialog(w) {
-  return { background:"#081428", borderRadius:20, border:"1px solid rgba(255,255,255,.1)", width:w||480, maxWidth:"calc(100vw - 32px)", maxHeight:"85vh", overflowY:"auto", position:"relative", boxShadow:"0 24px 80px rgba(0,0,0,.8)" };
+  return { background:themed("#081428"), borderRadius:20, border:"1px solid rgba(255,255,255,.1)", width:w||480, maxWidth:"calc(100vw - 32px)", maxHeight:"85vh", overflowY:"auto", position:"relative", boxShadow:"0 24px 80px rgba(0,0,0,.8)" };
 }
 export function resizeHandle() {
   return { width:6, cursor:"col-resize", flexShrink:0, background:"transparent",

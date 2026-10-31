@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, OBJ_COLOR } from "../lib/constants";
+import { TM, OBJ_COLOR, themed } from "../lib/constants";
 import { apiGet } from "../lib/api";
 import { inputSt } from "../lib/styles";
 
@@ -113,7 +113,7 @@ export function ReferencePicker({ deckId, value, onChange, size }) {
       )}
 
       {open && (
-        <div style={{background:"rgba(4,12,30,.6)",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden"}}>
+        <div style={{background:themed("rgba(4,12,30,.6)"),border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden"}}>
           <div style={{display:"flex",gap:8,padding:8,borderBottom:"1px solid rgba(255,255,255,.07)"}}>
             <input ref={inputRef} value={q} onChange={function(e){ setQ(e.target.value); }}
               onKeyDown={function(e){ if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } if (e.key === "Enter") e.preventDefault(); }}

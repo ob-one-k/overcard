@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useContext } from "react";
-import { TM } from "../lib/constants";
+import { TM, themed } from "../lib/constants";
 import { stripMarkup } from "../lib/richtext";
 import { getParents, orderParents, getChildren } from "../lib/cardGraph";
 import DesktopCtx from "../lib/DesktopCtx";
@@ -59,7 +59,7 @@ var STAGE_CSS =
 export function PaneRail({ label, onExpand, color }) {
   return (
     <button onClick={onExpand} aria-label={"Show " + label.toLowerCase() + " list"} title={"Show " + label.toLowerCase() + " list"}
-      style={{width:48,minWidth:48,flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:"16px 0",background:"rgba(4,12,32,.45)",border:"none",borderRight:"1px solid rgba(255,255,255,.07)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
+      style={{width:48,minWidth:48,flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:"16px 0",background:themed("rgba(4,12,32,.45)"),border:"none",borderRight:"1px solid rgba(255,255,255,.07)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
       <span style={{width:32,height:32,borderRadius:9,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,color:color||TXT}}>›</span>
       <span style={{writingMode:"vertical-rl",fontSize:13,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",color:TXT3}}>{label}</span>
     </button>
@@ -266,7 +266,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
           return (
             <div key={p.card.id} aria-hidden="true" className="oc-stage-anim"
               style={{position:"absolute",left:tabLeft - i * 13,top:tabTop - i * 10,width:tabW,height:tabH,borderRadius:18,
-                background:"linear-gradient(160deg, " + pm.color + "30, #0a1838 70%)",border:"1px solid " + pm.color + "50",
+                background:themed("linear-gradient(160deg, " + pm.color + "30, #0a1838 70%)"),border:"1px solid " + pm.color + "50",
                 boxShadow:"0 10px 30px rgba(0,0,0,.45)",transform:"rotate(" + (-2.5 - i * 1.8) + "deg)",transformOrigin:"right center",
                 opacity:1 - i * 0.2,pointerEvents:"auto",animation:"ocTabIn .4s " + (0.08 + i * 0.05) + "s cubic-bezier(.22,1,.36,1) backwards"}}/>
           );
@@ -279,7 +279,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
           aria-expanded={fanOpen}
           title={touch ? undefined : "← " + (front.card.title || "Untitled")}
           style={{position:"absolute",left:tabLeft,top:tabTop,width:tabW,height:tabH,borderRadius:18,padding:0,
-            background:"linear-gradient(160deg, " + frontMeta.color + "3a, #0b1a3c 62%)",border:"1px solid " + frontMeta.color + "70",
+            background:themed("linear-gradient(160deg, " + frontMeta.color + "3a, #0b1a3c 62%)"),border:"1px solid " + frontMeta.color + "70",
             boxShadow:"0 14px 40px rgba(0,0,0,.5)",transform:"rotate(-2.5deg)",transformOrigin:"right center",
             cursor:"pointer",fontFamily:"inherit",textAlign:"left",pointerEvents:"auto",zIndex:2,
             animation:"ocTabIn .38s .04s cubic-bezier(.22,1,.36,1) backwards"}}>
@@ -320,7 +320,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
     return (
       <div role="menu" aria-label="Cards that link here" onPointerEnter={fanEnter} onPointerLeave={fanLeave}
             style={{position:"absolute",left:Math.max(8, tabLeft - (shownN - 1) * 13 - 6),top:tabTop + 6,width:Math.min(320, centreLeft + centreW * 0.6 - 8),maxHeight:tabH - 12,overflowY:"auto",
-              background:"rgba(8,18,44,.97)",border:"1px solid rgba(255,255,255,.14)",borderRadius:16,boxShadow:"0 24px 60px rgba(0,0,0,.6)",padding:"10px 8px",pointerEvents:"auto",zIndex:30,
+              background:themed("rgba(8,18,44,.97)"),border:"1px solid rgba(255,255,255,.14)",borderRadius:16,boxShadow:"0 24px 60px rgba(0,0,0,.6)",padding:"10px 8px",pointerEvents:"auto",zIndex:30,
               animation:"ocRowIn .18s cubic-bezier(.22,1,.36,1) backwards"}}>
             <div style={{fontSize:12,fontWeight:800,color:TXT3,letterSpacing:1.2,textTransform:"uppercase",padding:"2px 10px 8px"}}>
               Linked from · {parents.length}
@@ -382,7 +382,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
             onClick={function(e){ childClick(e, entry); }}
             aria-label={"Response " + (i + 1) + ": “" + caption + "” leads to " + (entry.card.title || "Untitled")}
             style={{"--oc-c":cm.color + "aa",display:"block",width:"100%",textAlign:"left",fontFamily:"inherit",cursor:"pointer",
-              background:"linear-gradient(155deg, " + cm.color + (active ? "30" : "1f") + ", rgba(10,22,52,.94) 70%)",
+              background:themed("linear-gradient(155deg, " + cm.color + (active ? "30" : "1f") + ", rgba(10,22,52,.94) 70%)"),
               borderTop:"1px solid " + cm.color + (active ? "aa" : "55"),borderRight:"1px solid " + cm.color + (active ? "aa" : "55"),borderBottom:"1px solid " + cm.color + (active ? "aa" : "55"),borderLeft:"3px solid " + cm.color,borderRadius:compact?11:14,
               padding:compact?"8px 10px":"11px 13px 12px",boxShadow:"0 10px 26px rgba(0,0,0,.4)",
               animation:"ocSideIn .34s " + (0.06 + i * 0.045) + "s cubic-bezier(.22,1,.36,1) backwards, ocFloat 6.5s " + (0.6 + i * 0.7) + "s ease-in-out infinite"}}>
@@ -450,7 +450,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
     var isTouchPrev = (lastPtr.current ? lastPtr.current === "touch" : touch);
     return (
       <div role="tooltip" style={{position:"absolute",left:centreRight - pw + 10,top:top,width:pw,zIndex:40,pointerEvents:isTouchPrev?"auto":"none",
-        background:"rgba(8,18,44,.98)",border:"1px solid " + pm.color + "66",borderTop:"3px solid " + pm.color,borderRadius:14,
+        background:themed("rgba(8,18,44,.98)"),border:"1px solid " + pm.color + "66",borderTop:"3px solid " + pm.color,borderRadius:14,
         boxShadow:"0 24px 60px rgba(0,0,0,.65)",padding:"12px 14px 13px",animation:"ocRowIn .16s cubic-bezier(.22,1,.36,1) backwards"}}>
         <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
           <span style={{fontSize:11,fontWeight:800,color:pm.color,letterSpacing:.8,textTransform:"uppercase"}}>{pm.icon} {pm.label}</span>
@@ -494,12 +494,12 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
         if (e.target === e.currentTarget) { setPreview(null); setFanOpen(false); }
       }}
       style={{position:"relative",flex:1,minHeight:0,minWidth:0,overflow:"hidden",
-        background:"radial-gradient(ellipse 60% 70% at 50% 45%, " + m.glow + ", transparent 70%), radial-gradient(rgba(255,255,255,.055) 1px, transparent 1px) 0 0/22px 22px, #06102a"}}>
+        background:themed("radial-gradient(ellipse 60% 70% at 50% 45%, " + m.glow + ", transparent 70%), radial-gradient(rgba(255,255,255,.055) 1px, transparent 1px) 0 0/22px 22px, #06102a")}}>
       <style>{STAGE_CSS}</style>
 
       {onBack && !kbOpen && (
         <button onClick={onBack}
-          style={{position:"absolute",left:padX,top:compact?12:14,zIndex:45,display:"flex",alignItems:"center",gap:8,minHeight:compact?40:36,background:"rgba(8,18,44,.85)",border:"1px solid rgba(255,255,255,.16)",borderRadius:99,color:TXT,fontSize:14,fontWeight:600,padding:"0 16px 0 12px",cursor:"pointer",fontFamily:"inherit"}}>
+          style={{position:"absolute",left:padX,top:compact?12:14,zIndex:45,display:"flex",alignItems:"center",gap:8,minHeight:compact?40:36,background:themed("rgba(8,18,44,.85)"),border:"1px solid rgba(255,255,255,.16)",borderRadius:99,color:TXT,fontSize:14,fontWeight:600,padding:"0 16px 0 12px",cursor:"pointer",fontFamily:"inherit"}}>
           <span style={{fontSize:17,lineHeight:1}}>‹</span>{backLabel || "Back"}
         </button>
       )}
@@ -509,7 +509,7 @@ export function CardStage({ card, cards, rootCard, navDir, onNavigate, renderCen
       {/* Centre card */}
       <div key={"centre-" + card.id} data-noscroll="1" className="oc-stage-anim"
         style={{position:"absolute",left:centreLeft,top:centreTop,width:centreW,height:centreH,zIndex:10,display:"flex",flexDirection:"column",overflow:"hidden",
-          borderRadius:20,background:"#081428",border:"1px solid " + color + "55",
+          borderRadius:20,background:themed("#081428"),border:"1px solid " + color + "55",
           boxShadow:"0 34px 90px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.04), 0 0 70px " + m.glow,
           animation:centreAnim}}>
         <div aria-hidden="true" style={{height:3,flexShrink:0,background:"linear-gradient(90deg, transparent, " + color + ", transparent)"}}/>

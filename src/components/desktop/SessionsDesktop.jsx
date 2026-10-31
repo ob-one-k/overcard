@@ -1,7 +1,7 @@
 import { useState, useEffect, useContext } from "react";
 import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR } from "../../lib/constants";
+import { STYPE, OBJ_COLOR, isAdminRole, roleMeta, SESS_COLOR, themed } from "../../lib/constants";
 import { apiDel } from "../../lib/api";
 import { inputSt } from "../../lib/styles";
 import { DarkDatePicker } from "../ui";
@@ -638,7 +638,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
                   style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:6,minWidth:0}}>
                   {hov && (
                     <div role="tooltip" style={{position:"absolute",bottom:"calc(100% + 6px)",left:"50%",transform:"translateX(" + (i < 2 ? "-20%" : i > 9 ? "-80%" : "-50%") + ")",zIndex:20,
-                      minWidth:190,background:"#0b1a34",border:"1px solid rgba(255,255,255,.16)",borderRadius:10,padding:"10px 12px",boxShadow:"0 12px 32px rgba(0,0,0,.6)",pointerEvents:"none",textAlign:"left"}}>
+                      minWidth:190,background:themed("#0b1a34"),border:"1px solid rgba(255,255,255,.16)",borderRadius:10,padding:"10px 12px",boxShadow:"0 12px 32px rgba(0,0,0,.6)",pointerEvents:"none",textAlign:"left"}}>
                       <div style={{fontSize:12,color:TXT3,marginBottom:6,whiteSpace:"nowrap"}}>
                         {new Date(w.start).toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(wEnd).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
                       </div>
@@ -768,7 +768,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
 
       {/* ── Left pane: filters + session list ── */}
       {showList && (
-      <div style={{width:listW,flexShrink:0,display:"flex",flexDirection:"column",borderRight:stacked?"none":"1px solid "+LINE,overflow:"hidden",background:"rgba(4,12,32,.35)"}}>
+      <div style={{width:listW,flexShrink:0,display:"flex",flexDirection:"column",borderRight:stacked?"none":"1px solid "+LINE,overflow:"hidden",background:themed("rgba(4,12,32,.35)")}}>
 
         {/* Filter bar */}
         <div style={{padding:"14px 16px 12px",borderBottom:"1px solid "+LINE,flexShrink:0,display:"flex",flexDirection:"column",gap:10}}>
@@ -863,7 +863,7 @@ export function SessionsDesktop({ deckId, deckName, deckColor, deckRootCard, onI
               Sort
               <select value={sortBy} onChange={function(e){ setSortBy(e.target.value); }}
                 aria-label="Sort sessions"
-                style={{background:"rgba(8,25,60,.5)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT,fontSize:13,padding:"5px 8px",minHeight:compact?40:undefined,fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
+                style={{background:themed("rgba(8,25,60,.5)"),border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT,fontSize:13,padding:"5px 8px",minHeight:compact?40:undefined,fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
                 <option value="date">Newest</option>
                 <option value="duration">Longest</option>
                 <option value="outcome">Outcome</option>

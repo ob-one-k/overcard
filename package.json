@@ -10,7 +10,8 @@
     "start": "npm run build && node server/index.js",
     "test": "node --test --test-concurrency=1 tests/",
     "loadtest": "node scripts/loadtest.mjs",
-    "owner-reset": "node server/scripts/ownerReset.js"
+    "owner-reset": "node server/scripts/ownerReset.js",
+    "db-reset": "node server/scripts/resetDatabase.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

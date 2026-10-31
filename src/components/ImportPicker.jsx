@@ -1,5 +1,5 @@
 import { useState, useContext, useMemo } from "react";
-import { TM, OBJ_COLOR } from "../lib/constants";
+import { TM, OBJ_COLOR, themed } from "../lib/constants";
 import { solidBtn, ghostBtn, iconBtn, inputSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { stripMarkup } from "../lib/richtext";
 import { collectBranch, cloneCards, cloneStack, liveStacks } from "../lib/deckOps";
@@ -163,7 +163,7 @@ export function ImportPicker({ mode, decks, currentDeckId, onImport, onClose }) 
   return (
     <div style={overlayFill(320)}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,height:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,height:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
         <div style={{padding:"0 20px 10px",display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1,fontSize:16,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif"}}>{title}</div>

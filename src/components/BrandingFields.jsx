@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { labelSt, inputSt, ghostSm, solidBtn } from "../lib/styles";
-import { DEFAULT_ACCENT, normalizeAccent } from "../lib/constants";
+import { DEFAULT_ACCENT, normalizeAccent, themed } from "../lib/constants";
 
 // ─── ORG BRANDING FIELDS ──────────────────────────────────────────────────────
 // Logo upload + accent colour, used by org creation (Signup) and org settings (Admin → Organization).
@@ -89,7 +89,7 @@ export function BrandingFields({ logo, accent, onChange, disabled, size, orgName
             return (
               <button key={c} type="button" disabled={disabled} onClick={function(){ onChange({ accentColor: c }); }} aria-label={"Accent " + c} aria-pressed={on}
                 style={{width:lg?32:28,height:lg?32:28,borderRadius:"50%",background:c,border:"none",cursor:disabled?"default":"pointer",
-                  boxShadow:on ? "0 0 0 2px #060d1a, 0 0 0 4px " + c : "none",opacity:disabled && !on ? .45 : 1}}/>
+                  boxShadow:on ? themed("0 0 0 2px #060d1a, 0 0 0 4px ") + c : "none",opacity:disabled && !on ? .45 : 1}}/>
             );
           })}
         </div>

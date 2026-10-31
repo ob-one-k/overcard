@@ -1,7 +1,7 @@
 import { useState, useEffect, useContext } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
 import DesktopCtx from "../lib/DesktopCtx";
-import { isAdminRole, roleMeta, SESS_COLOR, accentA } from "../lib/constants";
+import { isAdminRole, roleMeta, SESS_COLOR, accentA, themed } from "../lib/constants";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 import { NotificationBell } from "./NotificationBell";
@@ -152,7 +152,7 @@ export function DesktopShell({
       // Tracks the visible viewport so a tablet keyboard never covers the editor
       position:"fixed", left:0, right:0, top:"var(--vvt, 0px)", height:"var(--vvh, 100%)",
       display:"flex", flexDirection:"row",
-      background:"linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)"
+      background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)")
     }}>
       {/* ── Sidebar ── */}
       <DesktopSidebar
@@ -181,7 +181,7 @@ export function DesktopShell({
         <div style={{
           height:compact?56:60, flexShrink:0,
           borderBottom:"1px solid rgba(255,255,255,.07)",
-          background:"rgba(8,25,55,.35)",
+          background:themed("rgba(8,25,55,.35)"),
           backdropFilter:"blur(16px)",
           display:"flex", alignItems:"center",
           padding:compact?"0 12px 0 14px":"0 20px 0 22px",

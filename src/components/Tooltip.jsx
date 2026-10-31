@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, createContext, useContext } from "react";
-import { TM, INFLECTIONS, INFL_MAP, INFL_CATS } from "../lib/constants";
+import { TM, INFLECTIONS, INFL_MAP, INFL_CATS, themed } from "../lib/constants";
 import { parseRichText } from "../lib/richtext";
 import { inputSt } from "../lib/styles";
 
@@ -17,13 +17,13 @@ export function GlobalInflTooltip() {
   var safeL = Math.max(10, Math.min(cx - W/2, vw - W - 10));
   var caretOff = Math.max(10, Math.min(cx - safeL, W - 16));
   return (
-    <span style={{ position:"fixed", bottom:btm, left:safeL, width:W, background:"#1b1c2a", border:"1px solid "+accent+"66", borderRadius:14, padding:"12px 14px", zIndex:99999, boxShadow:"0 16px 48px rgba(0,0,0,.95)", pointerEvents:"none", display:"block" }}>
+    <span style={{ position:"fixed", bottom:btm, left:safeL, width:W, background:themed("#1b1c2a"), border:"1px solid "+accent+"66", borderRadius:14, padding:"12px 14px", zIndex:99999, boxShadow:"0 16px 48px rgba(0,0,0,.95)", pointerEvents:"none", display:"block" }}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
         <span style={{fontSize:17}}>{inf.icon}</span>
         <span style={{fontSize:12,fontWeight:700,color:accent,fontFamily:"inherit"}}>{inf.label}</span>
       </div>
       <div style={{fontSize:11,color:"rgba(255,255,255,.6)",lineHeight:1.6,fontFamily:"inherit"}}>{inf.cue}</div>
-      <span style={{position:"absolute",bottom:-5,left:caretOff,width:8,height:8,background:"#1b1c2a",border:"1px solid "+accent+"66",borderTop:"none",borderLeft:"none",display:"block",transform:"rotate(45deg)"}}/>
+      <span style={{position:"absolute",bottom:-5,left:caretOff,width:8,height:8,background:themed("#1b1c2a"),border:"1px solid "+accent+"66",borderTop:"none",borderLeft:"none",display:"block",transform:"rotate(45deg)"}}/>
     </span>
   );
 }

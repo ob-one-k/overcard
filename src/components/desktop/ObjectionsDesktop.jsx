@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useContext } from "react";
-import { TM, OBJ_COLOR, OBJ_ICONS, osid, uid, aid } from "../../lib/constants";
+import { TM, OBJ_COLOR, OBJ_ICONS, osid, uid, aid, themed } from "../../lib/constants";
 import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, inputSt, labelSt, resizeHandle } from "../../lib/styles";
 import { CardEditorSheet } from "../Editor";
@@ -326,7 +326,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
   // ── Stack list pane (nothing selected) ───────────────────────────────────────
   function renderStackList() {
     return (
-      <div style={{width:isTablet?Math.min(leftW,340):leftW,minWidth:isTablet?Math.min(leftW,340):leftW,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:"rgba(4,12,32,.35)"}}>
+      <div style={{width:isTablet?Math.min(leftW,340):leftW,minWidth:isTablet?Math.min(leftW,340):leftW,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:themed("rgba(4,12,32,.35)")}}>
         <div style={{padding:"14px 16px 12px",borderBottom:"1px solid "+LINE,flexShrink:0,display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:16,fontWeight:700,color:TXT}}>Stacks</span>
@@ -422,7 +422,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
     var shown = list.filter(function(c){ return !cq || (c.title||"").toLowerCase().includes(cq) || stripMarkup(c.prompt||"").toLowerCase().includes(cq); });
     var w = full ? "100%" : (isTablet ? Math.min(leftW,340) : leftW);
     return (
-      <div style={{width:w,minWidth:full?0:w,flex:full?1:"none",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:"rgba(4,12,32,.35)"}}>
+      <div style={{width:w,minWidth:full?0:w,flex:full?1:"none",display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:themed("rgba(4,12,32,.35)")}}>
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:"1px solid "+LINE,flexShrink:0}}>
           <span style={{fontSize:13,fontWeight:700,color:TXT3,letterSpacing:1,textTransform:"uppercase",flex:1}}>Path · {list.length} card{list.length!==1?"s":""}</span>
           {editing && !isTablet && (
@@ -554,7 +554,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
     var tb = isTablet ? 40 : 36;
     return (
       <>
-        <div style={{height:54,flexShrink:0,display:"flex",alignItems:"center",borderBottom:"1px solid "+LINE,background:"rgba(6,16,42,.6)",padding:"0 14px 0 10px",gap:10,position:"relative"}}>
+        <div style={{height:54,flexShrink:0,display:"flex",alignItems:"center",borderBottom:"1px solid "+LINE,background:themed("rgba(6,16,42,.6)"),padding:"0 14px 0 10px",gap:10,position:"relative"}}>
           <button onClick={function(){ selectStack(null); }} title="All stacks"
             style={{display:"flex",alignItems:"center",gap:6,minHeight:tb,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,color:TXT,fontSize:14,fontWeight:600,padding:"0 14px 0 10px",cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
             <span style={{fontSize:17,lineHeight:1}}>‹</span>{isTablet ? "Stacks" : "All stacks"}
@@ -567,7 +567,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
             <span style={{fontSize:11,color:TXT3}}>▾</span>
           </button>
           {showSwitch && (
-            <div style={{position:"absolute",top:50,left:isTablet?110:140,zIndex:40,minWidth:260,maxHeight:360,overflowY:"auto",background:"#0b1a36",border:"1px solid rgba(255,255,255,.14)",borderRadius:12,boxShadow:"0 16px 40px rgba(0,0,0,.6)",padding:6}}>
+            <div style={{position:"absolute",top:50,left:isTablet?110:140,zIndex:40,minWidth:260,maxHeight:360,overflowY:"auto",background:themed("#0b1a36"),border:"1px solid rgba(255,255,255,.14)",borderRadius:12,boxShadow:"0 16px 40px rgba(0,0,0,.6)",padding:6}}>
               {stacks.map(function(st) {
                 var on = st.id === stack.id;
                 return (
@@ -646,7 +646,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
                 <div onMouseDown={startDrag} title="Drag to resize"
                   style={Object.assign({},resizeHandle(),{background:isDragging?"rgba(255,255,255,.1)":"transparent"})}/>
               </>}
-              <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:"rgba(8,20,50,.2)"}}>
+              <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
                 {editing ? renderEditor(stack, true) : renderStackSummary(stack)}
               </div>
             </>
@@ -655,7 +655,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
             <>
               {editing && (
                 <div style={{width:treeEdCollapsed ? 44 : (isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)"),flexShrink:0,display:"flex",overflow:"hidden",
-                  borderRight:"1px solid rgba(255,255,255,.1)",background:"rgba(8,20,50,.85)",transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
+                  borderRight:"1px solid rgba(255,255,255,.1)",background:themed("rgba(8,20,50,.85)"),transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
                   <div style={{flex:1,minWidth:0,display:treeEdCollapsed ? "none" : "flex",flexDirection:"column",overflow:"hidden"}}>
                     {renderEditor(stack, false)}
                   </div>
@@ -698,7 +698,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
 
       {selectedStack && readOnly && (
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
-          <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:"1px solid "+LINE,background:"rgba(4,12,32,.45)"}}>
+          <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:"1px solid "+LINE,background:themed("rgba(4,12,32,.45)")}}>
             <button onClick={function(){ selectStack(null); }}
               style={{display:"flex",alignItems:"center",gap:6,minHeight:40,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,color:TXT,fontSize:14,fontWeight:600,padding:"0 16px 0 12px",cursor:"pointer",fontFamily:"inherit"}}>
               <span style={{fontSize:17,lineHeight:1}}>‹</span>All stacks
@@ -712,7 +712,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
         {renderStackList()}
         <div onMouseDown={startDrag} title="Drag to resize"
           style={Object.assign({},resizeHandle(),{background:isDragging?"rgba(255,255,255,.1)":"transparent"})}/>
-        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:"rgba(8,20,50,.2)"}}>
+        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
           {renderOverview()}
         </div>
       </>}

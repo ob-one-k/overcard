@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { cachedGet, peek, useCacheVersion } from "../lib/dataCache";
 import { LiveNow } from "./LiveMonitor";
-import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT } from "../lib/constants";
+import { TM, DECK_COLORS, DECK_ICONS, SESS_COLOR, isAdminRole, roleMeta, accentA, normalizeAccent, DEFAULT_ACCENT, themed } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel, setStoredToken, lsGet, fetchWithTimeout, API_BASE } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr } from "./ui";
@@ -531,7 +531,7 @@ function OrgPanel({ authUser, orgUsers, orgTeams, isDesktop, onOrgUpdated, compa
       {/* Live preview of the sidebar header + accent */}
       <div style={{marginTop:16}}>
         <label style={labelSt()}>Preview</label>
-        <div style={{background:"#060d1a",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"14px",display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{background:themed("#060d1a"),border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"14px",display:"flex",flexDirection:"column",gap:12}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <OrgMark authUser={{ orgName: form.name, orgLogo: form.logo }} size={34}/>
             <span style={{fontSize:16,fontWeight:800,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{form.name || "Your company"}</span>
@@ -878,7 +878,7 @@ function ResetPasswordDialog({ user, onClose, onDone }) {
   return (
     <div style={overlayFill(320)}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,overflowY:"auto",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,overflowY:"auto",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
         <div style={{padding:"0 20px",display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1,fontSize:16,fontWeight:700,color:"#fff"}}>{title}</div>
@@ -1328,7 +1328,7 @@ export function AdminPanel({ authUser, orgUsers, orgTeams, onRefreshUsers, onRef
               </div>
             )}
             {showDetailA && (
-              <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:"rgba(8,20,50,.2)"}}>
+              <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:themed("rgba(8,20,50,.2)")}}>
                 {stackedA && (
                   <div style={{flexShrink:0,display:"flex",alignItems:"center",padding:"6px 12px",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
                     <button onClick={backToList} aria-label={"Back to " + (sub === "users" ? "users" : "teams")}

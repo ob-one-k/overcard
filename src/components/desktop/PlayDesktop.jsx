@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
 import { OrgMark } from "../OrgMark";
 import DesktopCtx from "../../lib/DesktopCtx";
-import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA } from "../../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, STYPE, sid, accentA, themed } from "../../lib/constants";
 import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../../lib/api";
 import { solidBtn, ghostSm, inputSt } from "../../lib/styles";
 import { RichPromptDisplay } from "../Tooltip";
@@ -395,7 +395,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
       <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
 
         {/* ── ACTION BAR ───────────────────────────────────────────────────────── */}
-        <div style={{display:"flex",alignItems:"center",gap:compact?10:16,height:64,flexShrink:0,background:"rgba(4,12,30,.85)",borderBottom:"1px solid rgba(255,255,255,.08)",padding:compact?"0 12px":"0 20px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:compact?10:16,height:64,flexShrink:0,background:themed("rgba(4,12,30,.85)"),borderBottom:"1px solid rgba(255,255,255,.08)",padding:compact?"0 12px":"0 20px"}}>
           {compact && (
             <button onClick={function(){ setDrawer(drawer === "path" ? null : "path"); }} aria-label="Call path and objections" aria-expanded={drawer === "path"}
               style={{width:44,height:44,borderRadius:10,border:"1px solid rgba(255,255,255,.15)",background:drawer==="path"?"rgba(255,255,255,.14)":"rgba(255,255,255,.06)",color:"#fff",fontSize:17,cursor:"pointer",flexShrink:0}}>☰</button>
@@ -445,8 +445,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           )}
 
           {/* LEFT RAIL — call path + objections (drawer on tablet) */}
-          <aside aria-label="Call path and objections" style={Object.assign({width:railL,minWidth:railL,display:"flex",flexDirection:"column",borderRight:"1px solid rgba(255,255,255,.07)",background:"rgba(4,12,30,.45)",overflow:"hidden"},
-            compact ? {position:"absolute",left:0,top:0,bottom:0,zIndex:20,width:Math.min(railL + 20, 320),minWidth:0,background:"#081428",boxShadow:"8px 0 32px rgba(0,0,0,.6)",display:drawer==="path"?"flex":"none"} : {})}>
+          <aside aria-label="Call path and objections" style={Object.assign({width:railL,minWidth:railL,display:"flex",flexDirection:"column",borderRight:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,12,30,.45)"),overflow:"hidden"},
+            compact ? {position:"absolute",left:0,top:0,bottom:0,zIndex:20,width:Math.min(railL + 20, 320),minWidth:0,background:themed("#081428"),boxShadow:"8px 0 32px rgba(0,0,0,.6)",display:drawer==="path"?"flex":"none"} : {})}>
             <div style={{flex:1,overflowY:"auto",padding:"18px 16px 12px"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
                 <span style={panelHdr()}>Call path</span>
@@ -639,8 +639,8 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           </main>
 
           {/* RIGHT RAIL — notes + stats */}
-          <aside aria-label="Session notes and stats" style={Object.assign({width:railR,minWidth:railR,display:"flex",flexDirection:"column",borderLeft:"1px solid rgba(255,255,255,.07)",background:"rgba(4,12,30,.45)",overflow:"hidden"},
-            compact ? {position:"absolute",right:0,top:0,bottom:0,zIndex:20,width:Math.min(railR + 20, 340),minWidth:0,background:"#081428",boxShadow:"-8px 0 32px rgba(0,0,0,.6)",display:drawer==="notes"?"flex":"none"} : {})}>
+          <aside aria-label="Session notes and stats" style={Object.assign({width:railR,minWidth:railR,display:"flex",flexDirection:"column",borderLeft:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,12,30,.45)"),overflow:"hidden"},
+            compact ? {position:"absolute",right:0,top:0,bottom:0,zIndex:20,width:Math.min(railR + 20, 340),minWidth:0,background:themed("#081428"),boxShadow:"-8px 0 32px rgba(0,0,0,.6)",display:drawer==="notes"?"flex":"none"} : {})}>
             {/* Live stats */}
             <div style={{flexShrink:0,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:"18px 16px 14px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
               {[

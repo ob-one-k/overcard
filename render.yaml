@@ -22,10 +22,10 @@ services:
       # Public URL of the app — used in owner recovery links (npm run owner-reset)
       - key: APP_URL
         sync: false
-      # Demo orgs + one-click demo sign-in. Set to "off" for the production launch
-      # (keeps the demo data, stops re-seeding and hides the picker).
+      # Production: no demo orgs, no one-click demo sign-in. "on" re-seeds the demo
+      # orgs on every boot — only for a demo deployment.
       - key: DEMO_MODE
-        value: "on"
+        value: "off"
       # bcrypt runs on libuv's pool — more threads keep a burst of sign-ins fast
       - key: UV_THREADPOOL_SIZE
         value: "8"

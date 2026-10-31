@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useContext } from "react";
 import { cachedGet, peek, useCacheVersion } from "../lib/dataCache";
 import { onLive } from "../lib/live";
 import { OrgMark } from "./OrgMark";
-import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA } from "../lib/constants";
+import { TM, SESS_COLOR, STYPE, OBJ_COLOR, isAdminRole, roleMeta, accentA, themed } from "../lib/constants";
 import { apiGet, apiPost, apiPut, apiDel } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, dividerV } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, StatBox, BarRow, DarkDatePicker } from "./ui";
@@ -220,7 +220,7 @@ export function ShareModal({ session, orgUsers, orgTeams, authUser, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,.55)"}}
       onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#13151c",border:"1px solid rgba(255,255,255,.1)",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:430,maxHeight:"85vh",overflowY:"auto",padding:"18px 16px 32px",animation:"sheetUp .2s ease both"}}>
+      <div style={{background:themed("#13151c"),border:"1px solid rgba(255,255,255,.1)",borderRadius:"18px 18px 0 0",width:"100%",maxWidth:430,maxHeight:"85vh",overflowY:"auto",padding:"18px 16px 32px",animation:"sheetUp .2s ease both"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>Share session</div>
           <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,.4)",fontSize:18,padding:"2px 6px",fontFamily:"inherit"}}>×</button>
@@ -818,7 +818,7 @@ export function SessionReview({ session, onBack, authUser, orgUsers, orgTeams, o
                   <div style={{marginBottom:8}}>
                     <div style={{fontSize:fz(9),color:"rgba(255,255,255,.3)",marginBottom:3,textTransform:"uppercase",letterSpacing:.6}}>Link to card (optional)</div>
                     <select value={fbCardId} onChange={function(e){setFbCardId(e.target.value);}}
-                      style={{width:"100%",background:"#081428",border:("1px solid "+accentA(.25)),borderRadius:8,padding:"7px 10px",color:"rgba(255,255,255,.7)",fontSize:fz(11),fontFamily:"inherit",outline:"none",appearance:"none"}}>
+                      style={{width:"100%",background:themed("#081428"),border:("1px solid "+accentA(.25)),borderRadius:8,padding:"7px 10px",color:"rgba(255,255,255,.7)",fontSize:fz(11),fontFamily:"inherit",outline:"none",appearance:"none"}}>
                       <option value="">General feedback</option>
                       {visitedCards.map(function(c){
                         return <option key={c.id} value={c.id}>{c.title}</option>;
@@ -1046,7 +1046,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
     var hasFbNotif = isOwner && (s.feedbackCount||0) > 0 && (!fbSeenTs[s.id] || (s.latestFeedbackAt && s.latestFeedbackAt > fbSeenTs[s.id]));
     return (
       <div key={s.id} onClick={function(){setReviewId(s.id);setView("review");}}
-        style={{background:"#081428",border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+st.color,borderRadius:"0 12px 12px 0",padding:"11px 12px",marginBottom:8,cursor:"pointer",transition:"background .12s",position:"relative"}}>
+        style={{background:themed("#081428"),border:"1px solid rgba(255,255,255,.08)",borderLeft:"3px solid "+st.color,borderRadius:"0 12px 12px 0",padding:"11px 12px",marginBottom:8,cursor:"pointer",transition:"background .12s",position:"relative"}}>
         {hasFbNotif && <span style={{position:"absolute",top:10,right:10,width:8,height:8,borderRadius:"50%",background:"#EF5350",display:"block",boxShadow:"0 0 0 2px rgba(239,83,80,.3)"}} title="New feedback"/>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:5}}>
           <div style={{flex:1,minWidth:0}}>
@@ -1179,7 +1179,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
         {isAdmin && (
           <div style={{marginBottom:8}}>
             <select value={viewScope||"self"} onChange={function(e){ setViewScope(e.target.value); setSessions(null); }}
-              style={{width:"100%",background:"#081428",border:("1px solid "+accentA(.2)),borderRadius:10,padding:"8px 12px",color:SESS_COLOR,fontSize:11,fontFamily:"inherit",cursor:"pointer",outline:"none",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='"+SESS_COLOR.replace("#","%23")+"'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}>
+              style={{width:"100%",background:themed("#081428"),border:("1px solid "+accentA(.2)),borderRadius:10,padding:"8px 12px",color:SESS_COLOR,fontSize:11,fontFamily:"inherit",cursor:"pointer",outline:"none",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='"+SESS_COLOR.replace("#","%23")+"'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}>
               <option value="self">👤 My sessions</option>
               <option value="org">🌐 Entire org</option>
               {(orgTeams||[]).map(function(t){ return <option key={t.id} value={"team:"+t.id}>🏷️ {t.name}</option>; })}
@@ -1204,7 +1204,7 @@ function SessionsMobile({ deckId, deckName, deckColor, deckRootCard, onInitialRe
               )}
             </div>
             {suggestOpen && suggestions.length > 0 && (
-              <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:200,background:"#1a1d24",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,marginTop:3,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
+              <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:200,background:themed("#1a1d24"),border:"1px solid rgba(255,255,255,.12)",borderRadius:10,marginTop:3,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.5)"}}>
                 {suggestions.map(function(u) {
                   return (
                     <button key={u.id}
@@ -1392,7 +1392,7 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
       </div>
       <div style={{flex:1,overflowY:"auto",padding:"0 14px 0"}}>
         {/* Date filter (collapsible) */}
-        <div style={{background:"#081428",border:"1px solid rgba(255,255,255,.08)",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
+        <div style={{background:themed("#081428"),border:"1px solid rgba(255,255,255,.08)",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
           <button onClick={function(){setFiltersOpen(function(p){return !p;});}}
             style={{display:"flex",justifyContent:"space-between",alignItems:"center",width:"100%",background:"none",border:"none",padding:"10px 12px",cursor:"pointer",fontFamily:"inherit"}}>
             <div style={{display:"flex",alignItems:"center",gap:7}}>

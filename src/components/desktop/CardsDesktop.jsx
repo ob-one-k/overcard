@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useContext, useMemo } from "react";
 import { cachedGet, peek, useCacheVersion } from "../../lib/dataCache";
-import { TM, uid, aid } from "../../lib/constants";
+import { TM, uid, aid, themed } from "../../lib/constants";
 import { lsGet, lsSet } from "../../lib/api";
 import { solidBtn, inputSt, resizeHandle } from "../../lib/styles";
 import { CardEditorSheet } from "../Editor";
@@ -609,7 +609,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
                 Sort by
                 <select value={perfSort.key} onChange={function(e){ var k = e.target.value; setPerfSort({ key:k, dir:k === "title" || k === "type" ? "asc" : "desc" }); }}
                   aria-label="Sort cards by"
-                  style={{background:"rgba(8,25,60,.5)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT,fontSize:13,padding:"6px 10px",minHeight:compact ? 40 : undefined,fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
+                  style={{background:themed("rgba(8,25,60,.5)"),border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT,fontSize:13,padding:"6px 10px",minHeight:compact ? 40 : undefined,fontFamily:"inherit",cursor:"pointer",outline:"none"}}>
                   <option value="visits">Most visited</option>
                   <option value="reach">Reach</option>
                   <option value="avg">Avg time on card</option>
@@ -685,7 +685,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
     <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden",userSelect:isDragging?"none":"auto"}}>
 
       {/* ── Top action bar ── */}
-      <div style={{height:54,flexShrink:0,display:"flex",alignItems:"center",borderBottom:"1px solid "+LINE,background:"rgba(6,16,42,.6)",padding:"0 16px 0 8px",gap:12}}>
+      <div style={{height:54,flexShrink:0,display:"flex",alignItems:"center",borderBottom:"1px solid "+LINE,background:themed("rgba(6,16,42,.6)"),padding:"0 16px 0 8px",gap:12}}>
         {/* View mode tabs */}
         <div role="tablist" style={{display:"flex",alignSelf:"stretch"}}>
           {[["list","≡  List"],["tree","◈  Tree"]].map(function(pair) {
@@ -748,7 +748,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
 
             {/* Left pane: grouped card list */}
             {(!editing || (!isTablet && !listRail)) && <>
-            <div style={{width:isTablet?Math.min(leftW,340):leftW,minWidth:isTablet?Math.min(leftW,340):leftW,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:"rgba(4,12,32,.35)"}}>
+            <div style={{width:isTablet?Math.min(leftW,340):leftW,minWidth:isTablet?Math.min(leftW,340):leftW,display:"flex",flexDirection:"column",overflow:"hidden",flexShrink:0,background:themed("rgba(4,12,32,.35)")}}>
               {editing && (
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:"1px solid "+LINE,flexShrink:0}}>
                   <span style={{fontSize:13,fontWeight:700,color:TXT3,letterSpacing:1,textTransform:"uppercase",flex:1}}>Cards</span>
@@ -837,7 +837,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
             </>}
 
             {/* Right pane: card stage (editor / read view) or overview */}
-            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:"rgba(8,20,50,.2)"}}>
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
               {editing ? renderDetail(true) : renderOverview()}
             </div>
           </>
@@ -847,7 +847,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
         {viewMode === "tree" && (
           <>
             {/* Left: summary rail (hidden while the side panel is open so the tree keeps its width) */}
-            {!editing && <div style={{width:260,minWidth:260,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid "+LINE,background:"rgba(4,12,32,.4)",overflowY:"auto"}}>
+            {!editing && <div style={{width:260,minWidth:260,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid "+LINE,background:themed("rgba(4,12,32,.4)"),overflowY:"auto"}}>
               <div style={{padding:"16px 18px 12px",borderBottom:"1px solid "+LINE}}>
                 <div style={{fontSize:13,fontWeight:700,color:TXT3,letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>Card types</div>
                 {typeStats.map(function(ts) {
@@ -886,7 +886,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
                 right edge toggles it, so the control never sits on top of editor content. */}
             {editing && (
               <div style={{width:treeEdCollapsed ? 44 : (isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)"),flexShrink:0,display:"flex",overflow:"hidden",
-                borderRight:"1px solid rgba(255,255,255,.1)",background:"rgba(8,20,50,.85)",transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
+                borderRight:"1px solid rgba(255,255,255,.1)",background:themed("rgba(8,20,50,.85)"),transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
                 <div style={{flex:1,minWidth:0,display:treeEdCollapsed ? "none" : "flex",flexDirection:"column",overflow:"hidden"}}>
                   {renderDetail(false)}
                 </div>

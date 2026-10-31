@@ -3,6 +3,7 @@ import { cachedGet, useCacheVersion } from "../lib/dataCache";
 import { OrgMark } from "./OrgMark";
 import DesktopCtx from "../lib/DesktopCtx";
 import { inputSt } from "../lib/styles";
+import { themed } from "../lib/constants";
 
 // ─── COMMAND PALETTE ──────────────────────────────────────────────────────────
 // Global ⌘K search palette for desktop.
@@ -112,7 +113,7 @@ export function CommandPalette({ tabs, decks, onNavigateTab, onSwitchDeck, onClo
       }}>
       <div style={{
         width:680, maxWidth:"90vw",
-        background:"#0a1830",
+        background:themed("#0a1830"),
         border:"1px solid rgba(255,255,255,.12)",
         borderRadius:16,
         boxShadow:"0 32px 96px rgba(0,0,0,.9)",

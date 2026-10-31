@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { OrgMark } from "./OrgMark";
-import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA } from "../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, STYPE, OBJ_ICONS, uid, sid, accentA, themed } from "../lib/constants";
 import { apiPost, apiPostWithRetry, lsGet, lsSet } from "../lib/api";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, dividerV, labelSt } from "../lib/styles";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge as IntendedBadgeComp } from "./ui";
@@ -54,7 +54,7 @@ export function ObjPicker({ stacks, onSelect, onClose, deckCards }) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.25)",borderBottom:"none",padding:"0 20px 0",animation:"sheetUp .28s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.25)",borderBottom:"none",padding:"0 20px 0",animation:"sheetUp .28s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,paddingTop:4}}>
           <div>

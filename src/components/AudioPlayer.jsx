@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, OBJ_COLOR, SESS_COLOR, accentA } from "../lib/constants";
+import { TM, OBJ_COLOR, SESS_COLOR, accentA, themed } from "../lib/constants";
 import { solidBtn, ghostSm } from "../lib/styles";
 import { apiGetBlob } from "../lib/api";
 import { getAudioBlob } from "../lib/audioStore";
@@ -334,7 +334,7 @@ function SegmentTrack({ ctl, height, onHoverSeg }) {
             onMouseLeave={onHoverSeg ? function(){ onHoverSeg(null); } : undefined}
             title={sg.cardTitle + " · " + msToMmss(sg.startMs) + "–" + msToMmss(sg.endMs)}
             style={{position:"absolute",top:0,bottom:0,left:(sg.startMs / total * 100) + "%",width:Math.max(0.3, (sg.endMs - sg.startMs) / total * 100) + "%",
-              background:segColor(sg),opacity:on?.75:.32,borderRight:"1px solid rgba(6,13,26,.9)",transition:"opacity .15s"}}/>
+              background:segColor(sg),opacity:on?.75:.32,borderRight:themed("1px solid rgba(6,13,26,.9)"),transition:"opacity .15s"}}/>
         );
       })}
       {ctl.clip && (
@@ -440,7 +440,7 @@ export function AudioMiniBar({ ctl, size }) {
   var seg = ctl.clip || ctl.activeSeg;
   var c = seg ? segColor(seg) : SESS_COLOR;
   return (
-    <div style={{display:"flex",alignItems:"center",gap:lg?12:8,padding:lg?"10px 16px":"7px 12px",background:"rgba(8,20,48,.92)",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+    <div style={{display:"flex",alignItems:"center",gap:lg?12:8,padding:lg?"10px 16px":"7px 12px",background:themed("rgba(8,20,48,.92)"),borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
       <button onClick={ctl.toggle} aria-label={ctl.playing ? "Pause" : "Play"}
         style={{width:lg?38:30,height:lg?38:30,borderRadius:"50%",border:"none",background:SESS_COLOR,color:"#000",fontSize:lg?15:12,fontWeight:800,cursor:"pointer",flexShrink:0}}>
         {ctl.playing ? "❚❚" : "▶"}

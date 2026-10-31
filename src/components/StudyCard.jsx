@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useContext } from "react";
 import { createPortal } from "react-dom";
-import { TM, OBJ_COLOR } from "../lib/constants";
+import { TM, OBJ_COLOR, themed } from "../lib/constants";
 import { SHEET_MAX_H } from "../lib/styles";
 import DesktopCtx from "../lib/DesktopCtx";
 import { RichPromptDisplay } from "./Tooltip";
@@ -292,7 +292,7 @@ export function StudyPopout({ deck, start, onClose }) {
   var shell = {
     position:"relative",
     display:"flex", flexDirection:"column",
-    background:"radial-gradient(120% 80% at 0% 0%," + meta.color + "1c 0%,transparent 55%),linear-gradient(160deg,#0d1b36 0%,#081329 60%,#060f22 100%)",
+    background:themed("radial-gradient(120% 80% at 0% 0%," + meta.color + "1c 0%,transparent 55%),linear-gradient(160deg,#0d1b36 0%,#081329 60%,#060f22 100%)"),
     borderRadius:horizontal?28:24,
     boxShadow:"0 0 0 1px rgba(255,255,255,.035),0 0 90px " + glow + ",0 40px 100px rgba(0,0,0,.65)",
     transition:"box-shadow .35s ease,background .35s ease",
@@ -328,7 +328,7 @@ export function StudyPopout({ deck, start, onClose }) {
   return createPortal(
     <div onClick={function(e) { if (e.target === e.currentTarget) onClose(); }}
       style={{position:"fixed",inset:0,zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:horizontal?32:12,boxSizing:"border-box",
-        background:"rgba(2,8,20,.62)",backdropFilter:"blur(14px) saturate(120%)",WebkitBackdropFilter:"blur(14px) saturate(120%)",animation:"ocStudyBg .22s ease both"}}>
+        background:themed("rgba(2,8,20,.62)"),backdropFilter:"blur(14px) saturate(120%)",WebkitBackdropFilter:"blur(14px) saturate(120%)",animation:"ocStudyBg .22s ease both"}}>
       <style>{POP_CSS}</style>
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="oc-study-title" tabIndex={-1}
         className="oc-study-anim" style={shell} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>

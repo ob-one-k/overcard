@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNotifications, markAllNotificationsRead } from "../lib/notifications";
+import { themed } from "../lib/constants";
 
 // ─── NOTIFICATION BELL ────────────────────────────────────────────────────────
 // Header bell with an unread badge; the dropdown lists recent notifications
@@ -38,14 +39,14 @@ export function NotificationBell({ onOpenSession, size }) {
         style={{position:"relative",width:btn,height:btn,borderRadius:"50%",background:open?"rgba(255,255,255,.12)":"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.85)",fontSize:lg?16:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>
         🔔
         {unread > 0 && (
-          <span style={{position:"absolute",top:-3,right:-3,minWidth:17,height:17,padding:"0 4px",borderRadius:99,background:"#EF5350",color:"#fff",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 0 2px #060d1a"}}>
+          <span style={{position:"absolute",top:-3,right:-3,minWidth:17,height:17,padding:"0 4px",borderRadius:99,background:"#EF5350",color:"#fff",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:themed("0 0 0 2px #060d1a")}}>
             {unread > 9 ? "9+" : unread}
           </span>
         )}
       </button>
       {open && (
         <div role="dialog" aria-label="Notifications"
-          style={{position:"absolute",top:"calc(100% + 8px)",right:0,width:lg?380:"min(340px, calc(100vw - 24px))",maxHeight:lg?480:420,display:"flex",flexDirection:"column",background:"#0a1830",border:"1px solid rgba(255,255,255,.12)",borderRadius:14,boxShadow:"0 18px 50px rgba(0,0,0,.7)",zIndex:400,overflow:"hidden",animation:"fadeIn .15s ease both"}}>
+          style={{position:"absolute",top:"calc(100% + 8px)",right:0,width:lg?380:"min(340px, calc(100vw - 24px))",maxHeight:lg?480:420,display:"flex",flexDirection:"column",background:themed("#0a1830"),border:"1px solid rgba(255,255,255,.12)",borderRadius:14,boxShadow:"0 18px 50px rgba(0,0,0,.7)",zIndex:400,overflow:"hidden",animation:"fadeIn .15s ease both"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)"}}>
             <span style={{fontSize:lg?15:13,fontWeight:700,color:"#fff"}}>Notifications</span>
             {unread > 0 && (

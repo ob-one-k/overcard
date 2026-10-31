@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole, accentA } from "../lib/constants";
+import { TM, SESS_COLOR, OBJ_COLOR, isAdminRole, accentA, themed } from "../lib/constants";
 import { cachedGet, useCacheVersion } from "../lib/dataCache";
 import { SectionHdr, StatBox, BarRow } from "./ui";
 import { sessionVisits, sessionDurSec, fmtSec, fmtDate } from "./Sessions";
@@ -281,7 +281,7 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
 
       {/* ── Sub-tabs (only if user has teams) ── */}
       {myTeams.length > 0 && (
-        <div style={{flexShrink:0,background:"rgba(4,12,32,.6)",borderBottom:"1px solid rgba(255,255,255,.06)",display:"flex",overflowX:"auto",paddingLeft:4}}>
+        <div style={{flexShrink:0,background:themed("rgba(4,12,32,.6)"),borderBottom:"1px solid rgba(255,255,255,.06)",display:"flex",overflowX:"auto",paddingLeft:4}}>
           {[{ id:"me", label:"Me" }].concat(myTeams).map(function(tab){
             var on = activeSubTab === tab.id;
             var sessCount = tab.id === "me" ? null

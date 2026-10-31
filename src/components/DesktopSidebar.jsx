@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { isAdminRole, roleMeta, SESS_COLOR } from "../lib/constants";
+import { isAdminRole, roleMeta, SESS_COLOR, themed } from "../lib/constants";
 import { OrgMark } from "./OrgMark";
 
 // ─── DESKTOP SIDEBAR ──────────────────────────────────────────────────────────
@@ -265,7 +265,7 @@ export function DesktopSidebar({
     height: "100%",
     display: "flex",
     flexDirection: "column",
-    background: "rgba(4,10,28,.98)",
+    background: themed("rgba(4,10,28,.98)"),
     borderRight: "1px solid rgba(255,255,255,.07)",
     overflow: "hidden",
     flexShrink: 0

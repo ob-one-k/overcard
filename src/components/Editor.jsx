@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, INFLECTIONS, INFL_CATS, aid } from "../lib/constants";
+import { TM, INFLECTIONS, INFL_CATS, aid, themed } from "../lib/constants";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, labelSt, inputSt, cardBg, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { useKeyboardOpen, keyboardIsOpen, revealOnFocus, isCoarsePointer } from "../lib/useViewport";
 import { TypeBadge, SectionHdr, IntendedBadge, Handle } from "./ui";
@@ -358,7 +358,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
 
       {/* ── Formatting toolbar ── */}
       <div style={{position:"sticky",bottom:0,zIndex:10,marginTop:8}}>
-        <div style={{background:"rgba(5,14,38,.97)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"8px 12px",backdropFilter:"blur(12px)"}}>
+        <div style={{background:themed("rgba(5,14,38,.97)"),border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"8px 12px",backdropFilter:"blur(12px)"}}>
 
           {/* Context mode: cursor is inside a formatted span */}
           {curFmt && !hasSel ? (
@@ -445,7 +445,7 @@ export function RichPromptEditor({ value, onChange, accentColor }) {
       {showPicker && (
         <div style={overlayFill(600)}>
           <div onClick={closePicker} style={{flex:1,background:"rgba(0,0,0,.7)",backdropFilter:"blur(6px)"}}/>
-          <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"calc(var(--vvh, 100vh) * .82)",display:"flex",flexDirection:"column"}}>
+          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"calc(var(--vvh, 100vh) * .82)",display:"flex",flexDirection:"column"}}>
             <Handle/>
             <div style={{padding:"0 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
               <div>
@@ -615,8 +615,8 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
     : navDir === "back"    ? "cardBack .2s cubic-bezier(.22,1,.36,1) both"
     : undefined;
   var sheetStyle = inline
-    ? {display:"flex",flexDirection:"column",flex:1,minHeight:0,background:"#081428",animation:desktopAnim}
-    : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:mobileAnim};
+    ? {display:"flex",flexDirection:"column",flex:1,minHeight:0,background:themed("#081428"),animation:desktopAnim}
+    : {background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:mobileAnim};
   var headerPad = inline ? "8px 18px 12px" : "8px 20px 14px";
   var contentPad = inline ? "16px 18px" : "18px 20px";
   var buttonPad  = inline ? "12px 18px" : "14px 20px";
@@ -770,7 +770,7 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
                     )}
                   </div>
                   {linkIdx === i && (
-                    <div style={{marginTop:8,background:"#0c0d13",border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden"}}>
+                    <div style={{marginTop:8,background:themed("#0c0d13"),border:"1px solid rgba(255,255,255,.12)",borderRadius:12,overflow:"hidden"}}>
                       {/* Scrollable list — preview panel below has pre-allocated height to prevent reflow on mobile */}
                       <div style={{maxHeight:240,overflowY:"auto"}}>
                         {/* + New Card option */}

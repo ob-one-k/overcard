@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
-import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor } from "./lib/constants";
+import { TM, SESS_COLOR, OBJ_COLOR, uid, isAdminRole, accentA, setAccentColor, themed } from "./lib/constants";
 import { setUnauthHandler, setSessionReplacedHandler, setStoredToken, getStoredToken, fetchWithTimeout, lsGet, lsSet, apiGet, apiPut, apiPost, apiDel, SAVE_DELAY, API_BASE } from "./lib/api";
 import { solidBtn, ghostBtn, iconBtn, inputSt } from "./lib/styles";
 import { TypeBadge, Handle } from "./components/ui";
@@ -191,14 +191,14 @@ export default function App() {
   }, []);
 
   if (!authChecked) return (
-    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
+    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit"}}>
       <BootMark/>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {(getBrand() && getBrand().orgName) || "OverCard"}…</div>
       {slowServer && <div style={{color:"rgba(255,255,255,.35)",fontSize:12,maxWidth:280,textAlign:"center",lineHeight:1.5}}>Waking up the server — this can take up to a minute.</div>}
     </div>
   );
   if (serverDown) return (
-    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit",padding:16,boxSizing:"border-box"}}>
       <BootMark/>
       <div style={{color:"#fff",fontSize:15,fontWeight:700}}>Can't reach the OverCard server</div>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13,maxWidth:300,textAlign:"center",lineHeight:1.5}}>The server didn't respond. Check your connection and try again.</div>
@@ -209,7 +209,7 @@ export default function App() {
   setAccentColor(authUser ? authUser.orgAccent : null);
 
   if (resetToken) return (
-    <Suspense fallback={<div style={{minHeight:"100vh",background:"#060d1a"}}/>}>
+    <Suspense fallback={<div style={{minHeight:"100vh",background:themed("#060d1a")}}/>}>
     <ResetPasswordScreen token={resetToken} onDone={function() {
       try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
       setResetToken("");
@@ -219,7 +219,7 @@ export default function App() {
   );
   // Signed in already, but opened someone's invite link: say so instead of silently ignoring it
   if (authUser && joinCode && !joinDismissed) return (
-    <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",padding:16,boxSizing:"border-box"}}>
+    <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),padding:16,boxSizing:"border-box"}}>
       <div style={{maxWidth:420,width:"100%",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:20,padding:"28px 24px",display:"flex",flexDirection:"column",gap:14}}>
         <OrgMark authUser={authUser} size={44}/>
         <div style={{fontSize:20,fontWeight:700,color:"#fff"}}>You're already signed in</div>
@@ -238,7 +238,7 @@ export default function App() {
     </div>
   );
   if (!authUser && showSignup) return (
-    <Suspense fallback={<div style={{minHeight:"100vh",background:"#060d1a"}}/>}>
+    <Suspense fallback={<div style={{minHeight:"100vh",background:themed("#060d1a")}}/>}>
     <SignupScreen
       initialCode={joinCode}
       onLogin={handleLogin}
@@ -559,7 +559,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
 
   if (saveStatus === "idle") {
     return (
-      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit"}}>
+      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit"}}>
         <OrgMark authUser={authUser} size={screenMark}/>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,letterSpacing:1}}>Loading {authUser.orgName || ""}…</div>
       </div>
@@ -567,7 +567,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   }
   if (!deck && decksError) {
     return (
-      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
+      <div style={{width:"100%",height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"inherit",padding:32}}>
         <OrgMark authUser={authUser} size={screenMark}/>
         <div style={{color:"rgba(255,255,255,.5)",fontSize:13,textAlign:"center",lineHeight:1.7}}>
           Couldn't load your decks.<br/>The server may be unavailable.
@@ -579,7 +579,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   if (!deck) {
     var canCreate = isAdminRole(authUser.role);
     return (
-      <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060d1a",flexDirection:"column",gap:16,fontFamily:"'Inter',sans-serif",padding:24,color:"#fff"}}>
+      <div style={{width:"100%",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:themed("#060d1a"),flexDirection:"column",gap:16,fontFamily:"'Inter',sans-serif",padding:24,color:"#fff"}}>
         <OrgMark authUser={authUser} size={screenMark}/>
         {canCreate ? (
           <form onSubmit={function(e){
@@ -767,7 +767,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
 
         {/* ── MOBILE LAYOUT (unchanged) ── */}
         {!desktop.isDesktop && (
-        <div style={{width:"100%",maxWidth:430,margin:"0 auto",height:"100dvh",display:"flex",flexDirection:"column",background:"linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)",boxShadow:"0 0 0 1px rgba(255,255,255,.04)"}}>
+        <div style={{width:"100%",maxWidth:430,margin:"0 auto",height:"100dvh",display:"flex",flexDirection:"column",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)"),boxShadow:"0 0 0 1px rgba(255,255,255,.04)"}}>
 
           {/* Server offline banner */}
           {!serverOk && (
@@ -777,7 +777,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           )}
 
           {/* Top bar — Deck switcher on left, user avatar on right */}
-          <div style={{padding:"10px 14px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)",background:"rgba(8,25,55,.4)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{padding:"10px 14px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.06)",background:themed("rgba(8,25,55,.4)"),display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
             <OrgMark authUser={authUser} size={30}/>
             {/* Deck switcher button */}
@@ -806,7 +806,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           {tabContent}
 
           {/* Tab bar */}
-          <div style={{flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:"rgba(4,10,28,.98)",backdropFilter:"blur(20px)",padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"}}>
+          <div style={{flexShrink:0,borderTop:"1px solid rgba(255,255,255,.07)",background:themed("rgba(4,10,28,.98)"),backdropFilter:"blur(20px)",padding:"8px 4px",paddingBottom:"calc(8px + env(safe-area-inset-bottom,0px))",display:"flex",justifyContent:"space-around"}}>
             {TABS.map(function(t) {
               var active = tab===t.id;
               var accent = t.accent;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext } from "react";
-import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS } from "../lib/constants";
+import { TM, uid, aid, osid, OBJ_COLOR, OBJ_ICONS, themed } from "../lib/constants";
 import { solidBtn, ghostBtn, ghostSm, iconBtn, inputSt, cardBg, badgeSt, labelSt, SHEET_MAX_H, overlayFill } from "../lib/styles";
 import { keyboardIsOpen } from "../lib/useViewport";
 import { TypeBadge, Handle, SectionHdr, IntendedBadge } from "./ui";
@@ -264,7 +264,7 @@ function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }
       {editing && readOnly && (
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}} onClick={function(e){if(e.target===e.currentTarget)setEditing(null);}}>
           <div onClick={function(){setEditing(null);}} style={{flex:1,background:"rgba(0,0,0,.5)",backdropFilter:"blur(8px)"}}/>
-          <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"75vh",overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:"75vh",overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
             <Handle/>
             <div style={{padding:"4px 16px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -374,8 +374,8 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
     ? {display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}
     : overlayFill(250);
   var sheetSt = inline
-    ? {display:"flex",flexDirection:"column",flex:1,background:"#081428",overflow:"hidden"}
-    : {background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
+    ? {display:"flex",flexDirection:"column",flex:1,background:themed("#081428"),overflow:"hidden"}
+    : {background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"};
 
   return (
     <div style={outerSt}>
@@ -787,7 +787,7 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
       {showNew && (
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}>
           <div onClick={function(){setShowNew(false);}} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-          <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",padding:"16px 20px 28px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",padding:"16px 20px 28px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
             <Handle/>
             <div style={{fontSize:18,fontWeight:700,color:"#fff",marginBottom:16,fontFamily:"'Lora',serif"}}>New Objection Stack</div>
             <label style={labelSt()}>Name</label>
@@ -821,7 +821,7 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}
           onClick={function(e){if(e.target===e.currentTarget){setViewCard(null);setViewCardStack(null);}}}>
           <div onClick={function(){setViewCard(null);setViewCardStack(null);}} style={{flex:1,background:"rgba(0,0,0,.5)",backdropFilter:"blur(8px)"}}/>
-          <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:"75vh",overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+          <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(239,83,80,.2)",borderBottom:"none",maxHeight:"75vh",overflow:"auto",padding:"0 0 32px",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
             <Handle/>
             <div style={{padding:"4px 16px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>

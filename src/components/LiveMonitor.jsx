@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext } from "react";
-import { TM, OBJ_COLOR, STYPE } from "../lib/constants";
+import { TM, OBJ_COLOR, STYPE, themed } from "../lib/constants";
 import { apiGet } from "../lib/api";
 import { onLive } from "../lib/live";
 import { iconBtn, solidBtn, SHEET_MAX_H, overlayFill } from "../lib/styles";
@@ -261,7 +261,7 @@ function LiveWatch({ runId, onClose, onOpenSession }) {
   return (
     <div style={overlayFill(330)}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}}/>
-      <div style={{background:"#081428",borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
+      <div style={{background:themed("#081428"),borderRadius:"24px 24px 0 0",border:"1px solid rgba(255,255,255,.1)",borderBottom:"none",maxHeight:SHEET_MAX_H,display:"flex",flexDirection:"column",animation:"sheetUp .3s cubic-bezier(.22,1,.36,1) both"}}>
         <Handle/>
         <div style={{padding:"0 18px 12px",display:"flex",alignItems:"center",gap:10}}>
           <div style={{flex:1,minWidth:0,fontSize:16,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{title}</div>

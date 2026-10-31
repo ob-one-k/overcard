@@ -1,6 +1,6 @@
 # OverCard production runbook
 
-How to move OverCard from the demo deployment to production without losing the current demo data, and how to operate it afterwards.
+How to run OverCard in production: starting from a clean database, moving data, backups and recovery.
 
 ## 1. Before the first production deploy
 
@@ -12,7 +12,7 @@ How to move OverCard from the demo deployment to production without losing the c
 | `CORS_ORIGIN` | Render → Environment | The frontend URL, for example `https://overcard.vercel.app`. |
 | `APP_URL` | Render → Environment | The public app URL, used in owner recovery links. |
 | `MASTER_CODE` | Render → Environment | A long random secret. Only people who have it can create organizations. |
-| `DEMO_MODE` | Render → Environment | Leave it `on` until launch, then see section 5. |
+| `DEMO_MODE` | `render.yaml` | `off` in production — see section 5. |
 | `UV_THREADPOOL_SIZE=8` | `render.yaml` | Keeps a burst of sign-ins fast. |
 
 Syncing the blueprint changes billing. Upgrade the existing free database in place from the Render dashboard (Database → Settings → Instance type). That keeps the data and the connection string.
@@ -48,13 +48,19 @@ done
 - **Manual snapshot:** take one before risky changes with `pg_dump -Fc "$DATABASE_URL" -f overcard-$(date +%F).dump`. Store it somewhere other than the Render account.
 - **Restore drills:** test a restore into a scratch database every quarter, using `pg_restore` as in section 2.
 
-## 5. Turning demo mode off at launch
+## 5. Clean production database (no demo or test data)
 
-1. Create the real organization or organizations: the sign-up screen, then "Create organization" with `MASTER_CODE`.
-2. Set `DEMO_MODE=off` and redeploy. The demo orgs stop being re-seeded, the one-click demo picker disappears, and demo sign-in is disabled. The demo accounts are **locked**: their shared, published password is replaced by a random one, and any open session ends. **No data is deleted**, and real orgs never see demo data, because every query is scoped to the signed-in user's org.
-3. Locking is permanent for password sign-in. If demo mode is turned back on, the picker works again, because it signs in without a password. To remove the demo orgs completely later, ask for a cleanup script.
+`render.yaml` sets `DEMO_MODE=off`, so a production boot never seeds demo orgs and demo sign-in is disabled. To empty a database that already holds demo or test data:
 
-When `DEMO_MODE` is unset, it defaults to **off** if `NODE_ENV=production` and **on** otherwise. `render.yaml` sets it to `on` explicitly while the demo deployment is live.
+1. Take a backup (section 4).
+2. Make sure the deployed service has `DEMO_MODE=off`; the script refuses to run while it is on, because the next boot would re-seed the demo orgs.
+3. Render → overcard-api → Shell: `npm run db-reset`. It prints the database name and the org/user/session counts, and deletes nothing.
+4. Run `npm run db-reset -- --confirm=<database name>`. This empties every table (orgs, users, decks, sessions, recordings, share codes, notifications, demo manifest). The schema and the applied-migrations record are kept.
+5. Restart the web service, then create the first real organization: sign-up screen → "Create organization" with `MASTER_CODE`.
+
+Typical launch: reset → test over the weekend with throwaway orgs → reset again → create the real orgs.
+
+`DEMO_MODE=off` on a database that still has demo data only locks the demo accounts (their published password is replaced by a random one) and deletes nothing. When `DEMO_MODE` is unset, it defaults to **off** if `NODE_ENV=production` and **on** otherwise.
 
 ## 6. Account recovery
 

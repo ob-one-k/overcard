@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { TM, SESS_COLOR, accentA } from "../lib/constants";
+import { TM, SESS_COLOR, accentA, themed } from "../lib/constants";
 import { inputSt } from "../lib/styles";
 
 // ─── TINY COMPONENTS ──────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ export function DarkDatePicker({ value, onChange, style }) {
         <span style={{fontSize:11,opacity:.4,lineHeight:1}}>▾</span>
       </div>
       {open && panelPos && (
-        <div ref={panelRef} style={{position:"fixed",top:panelPos.top,left:panelPos.left,zIndex:600,background:"#081428",border:"1px solid rgba(255,255,255,.14)",borderRadius:14,boxShadow:"0 16px 48px rgba(0,0,0,.75)",padding:"12px",width:240,userSelect:"none"}}>
+        <div ref={panelRef} style={{position:"fixed",top:panelPos.top,left:panelPos.left,zIndex:600,background:themed("#081428"),border:"1px solid rgba(255,255,255,.14)",borderRadius:14,boxShadow:"0 16px 48px rgba(0,0,0,.75)",padding:"12px",width:240,userSelect:"none"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
             <button onClick={prevMo} style={{background:"rgba(255,255,255,.06)",border:"none",color:"rgba(255,255,255,.6)",cursor:"pointer",fontSize:15,padding:"3px 9px",borderRadius:7,fontFamily:"inherit",lineHeight:1}}>‹</button>
             <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>{DP_MONTHS[viewMonth]} {viewYear}</span>
