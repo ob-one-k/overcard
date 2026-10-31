@@ -749,10 +749,10 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:10,marginTop:18}}>
             {[
-              { v:cardCount,              l:"Cards",          c:deck.color },
+              { v:cardCount,              l:"Cards",          c:"#FFFFFF" },
               { v:outline.length,         l:"Intended steps", c:"#66BB6A" },
               { v:deck.objStacks.length,  l:"Objection stacks", c:OBJ_COLOR },
-              { v:deckWin !== null ? deckWin + "%" : "—", l:"Close rate", c:SESS_COLOR },
+              { v:deckWin !== null ? deckWin + "%" : "—", l:"Close rate", c:"#66BB6A" },
             ].map(function(item) {
               return (
                 <div key={item.l} style={{background:"rgba(0,0,0,.22)",borderRadius:12,padding:"12px 14px"}}>

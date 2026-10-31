@@ -176,3 +176,35 @@ export function DarkDatePicker({ value, onChange, style }) {
     </div>
   );
 }
+
+// ─── SMOOTH COLLAPSE ──────────────────────────────────────────────────────────
+// Height animates via grid-template-rows 0fr ↔ 1fr (no measuring), with a fade. Closed
+// content is inert (not focusable, hidden from screen readers). appear: animate open on mount
+// (for content the parent only renders once it's expanded).
+var COLLAPSE_EASE = "cubic-bezier(.22,1,.36,1)";
+export function Collapse({ open, appear, children, ms }) {
+  var d = ms || 300;
+  var [shown, setShown] = useState(open && !appear);
+  useEffect(function() {
+    if (!open) { setShown(false); return; }
+    // Let the closed state paint first, then open — so the transition runs
+    var r1 = requestAnimationFrame(function() { r2 = requestAnimationFrame(function() { setShown(true); }); });
+    var r2 = null;
+    return function() { cancelAnimationFrame(r1); if (r2) cancelAnimationFrame(r2); };
+  }, [open]);
+  return (
+    <div inert={!open ? true : undefined} aria-hidden={!open || undefined}
+      style={{display:"grid",gridTemplateRows:shown ? "1fr" : "0fr",opacity:shown ? 1 : 0,
+        transition:"grid-template-rows " + d + "ms " + COLLAPSE_EASE + ", opacity " + Math.round(d * 0.8) + "ms ease"}}>
+      <div style={{overflow:"hidden",minHeight:0}}>{children}</div>
+    </div>
+  );
+}
+
+// ▼ that turns to ▶ when collapsed (rotates instead of swapping glyphs)
+export function Chevron({ open, size, color }) {
+  return (
+    <span aria-hidden="true" style={{display:"inline-block",fontSize:size || 10,color:color,lineHeight:1,
+      transform:open ? "rotate(0deg)" : "rotate(-90deg)",transition:"transform .28s " + COLLAPSE_EASE}}>▼</span>
+  );
+}

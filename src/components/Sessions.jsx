@@ -1562,10 +1562,10 @@ export function SessionAnalytics({ sessions, deckColor, deckName, deckRootCard, 
           <div style={{marginBottom:14}}>
             <SectionHdr>Live funnel</SectionHdr>
             <div style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"13px 14px"}}>
-              <BarRow label="Contacted"       value={contacted}     denom={live.length}    color={SESS_COLOR}/>
+              <BarRow label="Contacted"       value={contacted}     denom={live.length}    color="#FFFFFF"/>
               <BarRow label="Into discovery"  value={pastIntro}     denom={contacted}      color="#00B4FF"/>
-              <BarRow label="Reached close"   value={reachedClose}  denom={pastIntro}      color="#66BB6A"/>
-              <BarRow label="Sold"            value={sold.length}   denom={reachedClose}   color={SESS_COLOR}/>
+              <BarRow label="Reached close"   value={reachedClose}  denom={pastIntro}      color="#FFD54F"/>
+              <BarRow label="Sold"            value={sold.length}   denom={reachedClose}   color="#66BB6A"/>
             </div>
           </div>
         )}

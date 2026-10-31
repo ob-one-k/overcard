@@ -488,10 +488,10 @@ export function HomeTab({ authUser, decks, orgTeams, orgUsers, onSwitchDeckAndPl
                 <div style={{marginBottom:18}}>
                   <SectionHdr>Live Funnel</SectionHdr>
                   <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"14px 15px"}}>
-                    <BarRow label="Contacted"      value={stats.contacted}     denom={stats.live}          color={SESS_COLOR}/>
+                    <BarRow label="Contacted"      value={stats.contacted}     denom={stats.live}          color="#FFFFFF"/>
                     <BarRow label="Into discovery" value={stats.pastIntro}     denom={stats.contacted}     color="#00B4FF"/>
-                    <BarRow label="Reached close"  value={stats.reachedClose}  denom={stats.pastIntro}     color="#66BB6A"/>
-                    <BarRow label="Sold"           value={stats.sold}          denom={stats.reachedClose}  color={SESS_COLOR}/>
+                    <BarRow label="Reached close"  value={stats.reachedClose}  denom={stats.pastIntro}     color="#FFD54F"/>
+                    <BarRow label="Sold"           value={stats.sold}          denom={stats.reachedClose}  color="#66BB6A"/>
                   </div>
                 </div>
               )}

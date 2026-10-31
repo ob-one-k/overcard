@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { TM } from "../lib/constants";
 import { inputSt } from "../lib/styles";
-import { TypeBadge, SectionHdr } from "./ui";
+import { TypeBadge, SectionHdr, Collapse, Chevron } from "./ui";
 
 // ─── TREE VIEW ────────────────────────────────────────────────────────────────
 var MIN_ZOOM = 0.40, MAX_ZOOM = 1.55;
@@ -12,7 +12,21 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
   var [zoom, setZoom] = useState(1.0);
   var pinchRef = useRef(null);
 
-  function toggleCollapse(id) { setCollapsed(function(p) { return Object.assign({}, p, {[id]:!p[id]}); }); }
+  // Collapsing keeps the branch rendered until its close animation ends (closing); expanding
+  // mounts it closed and animates it open (opened). Branches only render while visible, so a
+  // card's first appearance (vs. "loop back" pills) follows what's actually on screen.
+  var [closing, setClosing] = useState({});
+  var [opened, setOpened] = useState({});
+  function toggleCollapse(id) {
+    var willCollapse = !collapsed[id];
+    setCollapsed(function(p) { return Object.assign({}, p, {[id]:willCollapse}); });
+    if (willCollapse) {
+      setClosing(function(p) { return Object.assign({}, p, {[id]:true}); });
+      setTimeout(function() { setClosing(function(p) { var n = Object.assign({}, p); delete n[id]; return n; }); }, 320);
+    } else {
+      setOpened(function(p) { return Object.assign({}, p, {[id]:true}); });
+    }
+  }
   function getDist(e) { return Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY); }
   function onTouchStart(e) { if (e.touches.length===2) pinchRef.current={dist:getDist(e),zoom}; else pinchRef.current=null; }
   function onTouchMove(e) { if (e.touches.length===2&&pinchRef.current){e.preventDefault();setZoom(Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,pinchRef.current.zoom*getDist(e)/pinchRef.current.dist)));}}
@@ -51,8 +65,9 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
         {ansLabel && depth>0 && <div style={{paddingLeft:depth*20+26,fontSize:10,color:"rgba(255,255,255,.2)",fontStyle:"italic",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ansLabel}</div>}
         <div style={{display:"flex",alignItems:"center",gap:5,paddingLeft:depth*20}}>
           {children.length > 0 ? (
-            <button onClick={function(){toggleCollapse(cardId);}} style={{width:20,height:20,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:5,cursor:"pointer",fontSize:9,color:"rgba(255,255,255,.45)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              {isCollapsed?"▶":"▼"}
+            <button onClick={function(){toggleCollapse(cardId);}} aria-expanded={!isCollapsed} aria-label={isCollapsed ? "Expand" : "Collapse"}
+              style={{width:20,height:20,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:5,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,padding:0}}>
+              <Chevron open={!isCollapsed} size={9} color="rgba(255,255,255,.45)"/>
             </button>
           ) : <div style={{width:20,height:20,flexShrink:0}}/>}
           {/* Rows always use the card type's colour (pitch/discovery/close/objection) — intended
@@ -71,13 +86,15 @@ export function TreeView({ cards, rootCard, onEdit, onSetRoot }) {
             >⬆</button>
           )}
         </div>
-        {children.length>0 && !isCollapsed && (
+        {children.length>0 && (!isCollapsed || closing[cardId]) && (
+          <Collapse open={!isCollapsed} appear={!!opened[cardId]}>
           <div style={{position:"relative",marginLeft:depth*20+10}}>
             <div style={{position:"absolute",left:10,top:0,bottom:6,width:1,background:"rgba(255,255,255,.07)"}}/>
             <div style={{paddingLeft:10}}>
               {children.map(function(ans) { return renderNode(ans.next, depth+1, ans.label); })}
             </div>
           </div>
+          </Collapse>
         )}
       </div>
     );

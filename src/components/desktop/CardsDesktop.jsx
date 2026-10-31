@@ -11,7 +11,7 @@ import { getParents } from "../../lib/cardGraph";
 import DesktopCtx from "../../lib/DesktopCtx";
 import { CardStage, PaneRail } from "../CardStage";
 import { ImportPicker } from "../ImportPicker";
-import { CopyIcon } from "../ui";
+import { CopyIcon, Collapse, Chevron } from "../ui";
 
 // ─── DESKTOP TYPE SCALE ───────────────────────────────────────────────────────
 // body 14–15 · meta 13 · section heading 16–18 · page title 20–24 · badges ≥11
@@ -424,11 +424,11 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
     }
     var healthColor = health === null ? TXT3 : health >= 90 ? GREEN : health >= 70 ? "#FFD54F" : "#EF5350";
     var kpis = [
-      { v: health === null ? "—" : health + "%", l:"Deck health", s: issues.length ? issues.length + " issue" + (issues.length !== 1 ? "s" : "") : "No issues", c:healthColor },
+      { v: allCards.length, l:"Cards", s: typeStats.map(function(t){ return t.count + " " + t.m.label.toLowerCase(); }).join(" · "), c:"#FFFFFF" },
+      { v: perf.adherence === null ? "—" : perf.adherence + "%", l:"On intended path", s:"of card visits", c:GREEN },
       { v: perf.closeRate === null ? "—" : perf.closeRate + "%", l:"Close rate", s: perf.live ? perf.sold + " sold of " + perf.live + " live" : "No live calls yet", c:GREEN },
       { v: fmtDur(perf.avgMs), l:"Avg call", s: n + " session" + (n !== 1 ? "s" : ""), c:"#FFD54F" },
-      { v: perf.adherence === null ? "—" : perf.adherence + "%", l:"On intended path", s:"of card visits", c:"#4DB6AC" },
-      { v: allCards.length, l:"Cards", s: typeStats.map(function(t){ return t.count + " " + t.m.label.toLowerCase(); }).join(" · "), c:"#00B4FF" },
+      { v: health === null ? "—" : health + "%", l:"Deck health", s: issues.length ? issues.length + " issue" + (issues.length !== 1 ? "s" : "") : "No issues", c:healthColor },
     ];
 
     // Funnel along the intended path
@@ -493,7 +493,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
         </div>
 
         {/* KPI strip */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(" + (compact ? 150 : 132) + "px, 1fr))",gap:12,marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:compact ? "repeat(auto-fit, minmax(150px, 1fr))" : "repeat(5, minmax(0, 1fr))",gap:12,marginBottom:16}}>
           {kpis.map(function(k) {
             return (
               <div key={k.l} style={Object.assign({}, panel, {padding:compact?"12px 14px":"14px 16px"})}>
@@ -759,13 +759,14 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
                       <button
                         onClick={function(){ setCollapsed(function(p){ return Object.assign({},p,{[t]:!isColl}); }); }}
                         aria-expanded={!isColl}
-                        style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"none",border:"none",borderBottom:"1px solid "+LINE,padding:"4px 4px 8px",marginBottom:isColl?0:10,cursor:"pointer",fontFamily:"inherit"}}>
+                        style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"none",border:"none",borderBottom:"1px solid "+LINE,padding:"4px 4px 8px",marginBottom:isColl?0:10,cursor:"pointer",fontFamily:"inherit",transition:"margin-bottom .3s cubic-bezier(.22,1,.36,1)"}}>
                         <span style={{fontSize:15}}>{m.icon}</span>
                         <span style={{fontSize:13,fontWeight:800,color:m.color,letterSpacing:1.2,textTransform:"uppercase"}}>{m.label}</span>
                         <span style={{fontSize:13,color:TXT3}}>{group.length}</span>
-                        <span style={{fontSize:12,color:TXT3,marginLeft:"auto"}}>{isColl?"▶":"▼"}</span>
+                        <span style={{marginLeft:"auto"}}><Chevron open={!isColl} size={12} color={TXT3}/></span>
                       </button>
-                      {!isColl && group.map(function(card) {
+                      <Collapse open={!isColl}>
+                      {group.map(function(card) {
                         var sel = editing && editing.id === card.id;
                         var isRoot = card.id === deck.rootCard;
                         var b = validBullets(card);
@@ -802,6 +803,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
                           </button>
                         );
                       })}
+                      </Collapse>
                     </div>
                   );
                 })}

@@ -541,10 +541,10 @@ export function HomeDesktop({ authUser, decks, orgTeams, orgUsers, onSwitchDeckA
           {!isLoading && stats && stats.live > 0 && (
             <div style={{marginBottom:20}}>
               <SubHead>Live call funnel</SubHead>
-              <Bar label="Contacted"      value={stats.contacted}    denom={stats.live}         color={SESS_COLOR}/>
+              <Bar label="Contacted"      value={stats.contacted}    denom={stats.live}         color="#FFFFFF"/>
               <Bar label="Into discovery" value={stats.pastIntro}    denom={stats.contacted}    color="#00B4FF"/>
-              <Bar label="Reached close"  value={stats.reachedClose} denom={stats.pastIntro}    color="#66BB6A"/>
-              <Bar label="Sold"           value={stats.sold}         denom={stats.reachedClose} color={SESS_COLOR}/>
+              <Bar label="Reached close"  value={stats.reachedClose} denom={stats.pastIntro}    color="#FFD54F"/>
+              <Bar label="Sold"           value={stats.sold}         denom={stats.reachedClose} color="#66BB6A"/>
             </div>
           )}
 
