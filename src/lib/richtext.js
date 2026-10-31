@@ -10,8 +10,13 @@ var NAME_RE = /\{\{NAME\}\}/g;
 export function nameText() { return getViewerName() || "NAME"; }
 export function fillName(s) { return (s || "").replace(NAME_RE, nameText()); }
 
+// Markup patterns are quadratic on hostile input: anything far beyond a real script (180
+// visible characters) is shown as plain text instead of being parsed
+var MAX_PARSE = 4000;
+
 export function parseRichText(raw) {
   if (!raw) return [];
+  if (raw.length > MAX_PARSE) return [{ type:"text", content: raw }];
   var segs = [], re = /\{\{NAME\}\}|\*\*(.+?)\*\*|\*(.+?)\*\[([^\]]+)\]|\*(.+?)\*/g, last = 0, m;
   while ((m = re.exec(raw)) !== null) {
     if (m.index > last) segs.push({ type:"text", content: raw.slice(last, m.index) });
@@ -28,12 +33,14 @@ export function parseRichText(raw) {
 // Plain text of a script as the viewer reads it ({{NAME}} → their first name)
 export function stripMarkup(raw) {
   if (!raw) return "";
+  if (raw.length > MAX_PARSE) return raw;
   return fillName(raw.replace(/\*\*(.+?)\*\*/g,"$1").replace(/\*(.+?)\*\[([^\]]+)\]/g,"$1").replace(/\*(.+?)\*/g,"$1"));
 }
 
 // Characters a script counts against its limit: visible text, with each {{NAME}} as "[NAME]"
 export function scriptLength(raw) {
   if (!raw) return 0;
+  if (raw.length > MAX_PARSE) return raw.length;
   return raw.replace(/\*\*(.+?)\*\*/g,"$1").replace(/\*(.+?)\*\[([^\]]+)\]/g,"$1").replace(/\*(.+?)\*/g,"$1").replace(NAME_RE, "[NAME]").length;
 }
 

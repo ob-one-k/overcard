@@ -8,7 +8,7 @@ const { execFile } = require("child_process");
 const {
   getSessionById, canReadSession, getSessionAudioData, findUserById, getDeckById, getHighlight, getOrgUsers,
   createClip, getClip, getMyClips, getClipsSharedWith, renameClip, deleteClip, canPlayClip, getClipAudioRange,
-  createClipShare, getClipShares, deleteClipShare, getClipRecipientIds, createNotification,
+  createClipShare, getClipShares, deleteClipShare, getClipRecipientIds, createNotification, deleteClipNotifications,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
 const { publish } = require("../realtime");
@@ -41,15 +41,19 @@ function secs(ms) { return (ms / 1000).toFixed(3); }
 // Cut [startMs, endMs) out of a recording. MP4/AAC recordings (Safari) stay MP4/AAC, everything
 // else becomes WebM/Opus — the same formats the app already plays. The seek happens after the
 // input is opened so it is exact even for WebM files without cues.
+// The recording is whatever bytes its owner uploaded, so ffmpeg never probes for a format
+// (playlist demuxers like hls/concat could otherwise read other files or URLs): the container
+// is forced from the stored mime type and only the local file protocol is allowed.
 async function cutClip(buf, mimeType, startMs, endMs) {
   if (!ffmpegPath) throw Object.assign(new Error("Clip saving isn't available on this server"), { status: 503 });
   var mp4 = /mp4|aac|m4a/i.test(mimeType || "");
+  var inFormat = mp4 ? "mov" : /ogg/i.test(mimeType || "") ? "ogg" : "matroska";
   var dir = await fs.mkdtemp(path.join(os.tmpdir(), "oc-clip-"));
   var inPath = path.join(dir, "in" + (mp4 ? ".m4a" : ".webm"));
   var outPath = path.join(dir, "out" + (mp4 ? ".m4a" : ".webm"));
   try {
     await fs.writeFile(inPath, buf);
-    var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", inPath, "-ss", secs(startMs), "-to", secs(endMs), "-vn", "-ac", "1"]
+    var args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "file", "-f", inFormat, "-i", inPath, "-ss", secs(startMs), "-to", secs(endMs), "-vn", "-ac", "1"]
       .concat(mp4 ? ["-c:a", "aac", "-b:a", "48k", "-f", "mp4"] : ["-c:a", "libopus", "-b:a", "32k", "-f", "webm"])
       .concat(["-y", outPath]);
     await new Promise(function(resolve, reject) {
@@ -157,18 +161,19 @@ router.post("/", saveLimiter, async function(req, res, next) {
     if (endMs - startMs > MAX_CLIP_MS) return res.status(400).json({ error: "Clips can be up to 10 minutes long" });
     const session = typeof b.sessionId === "string" ? await getSessionById(b.sessionId) : null;
     if (!session || !(await canReadSession(session, req.user))) return res.status(404).json({ error: "Session not found" });
-    const audio = await getSessionAudioData(session.id, session.orgId);
-    if (!audio) return res.status(400).json({ error: "This session has no recording" });
-    var known = audio.durationMs || session.audioDurationMs;
-    if (known && startMs >= known) return res.status(400).json({ error: "That's past the end of the recording" });
-    if (known && endMs > known) endMs = known;
-    if (endMs - startMs < MIN_CLIP_MS) return res.status(400).json({ error: "Clips must be at least 1 second long" });
-
+    // Take a cutting slot before the recording (up to 60 MB) is read into memory
     if (running >= MAX_CUTS) return res.status(503).json({ error: "Busy saving other clips — try again in a moment" });
     running++;
     var cut;
-    try { cut = await cutClip(audio.data, audio.mimeType, startMs, endMs); }
-    finally { running--; }
+    try {
+      const audio = await getSessionAudioData(session.id, session.orgId);
+      if (!audio) return res.status(400).json({ error: "This session has no recording" });
+      var known = audio.durationMs || session.audioDurationMs;
+      if (known && startMs >= known) return res.status(400).json({ error: "That's past the end of the recording" });
+      if (known && endMs > known) endMs = known;
+      if (endMs - startMs < MIN_CLIP_MS) return res.status(400).json({ error: "Clips must be at least 1 second long" });
+      cut = await cutClip(audio.data, audio.mimeType, startMs, endMs);
+    } finally { running--; }
 
     var seg = segmentFor(session, b.segId, startMs);
     var isSegment = b.segId != null && seg && String(seg.segId) === String(b.segId);
@@ -295,6 +300,9 @@ router.delete("/:id/shares/:shareId", async function(req, res, next) {
     if (!mayManage(clip, req.user)) return res.status(403).json({ error: "Access denied" });
     const removed = await deleteClipShare(req.params.shareId, clip.id);
     if (!removed) return res.status(404).json({ error: "Share not found" });
+    // Their "shared a clip with you" notification goes with the share
+    await deleteClipNotifications(clip.id, removed.toUserId);
+    publish({ users: [removed.toUserId] }, "notification.read", { clipId: clip.id });
     notifyClip(clip, "clip.changed", [removed.toUserId]);
     res.json({ ok: true });
   } catch (err) { next(err); }

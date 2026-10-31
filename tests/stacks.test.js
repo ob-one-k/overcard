@@ -31,7 +31,8 @@ test("stacks: creator manages, editors edit, others read or don't see; only the 
     var asEd = find(await editor.get("/decks"), deckId);
     assert.equal(st(asEd, s0).canEdit, false, "deck editors don't edit other people's stacks");
     var renamed = asEd.objStacks.map(function(s) { return Object.assign({}, s, { label: "Hijacked" }); });
-    r = await editor.put("/decks/" + deckId, full(asEd, { objStacks: renamed.concat([stack(s1, "Editor stack")]) }));
+    r = await editor.put("/decks/" + deckId, full(asEd, { objStacks: renamed.concat([stack(s1, "Editor stack"), stack(s1, "Editor stack")]) }));
+    assert.equal(r.body.objStacks.filter(function(s) { return s.id === s1; }).length, 1, "a repeated new id is added once");
     assert.equal(r.status, 200, r.text);
     var ownerView = find(await owner.get("/decks"), deckId);
     assert.equal(st(ownerView, s0).label, "Owner stack", "the owner's stack is unchanged");
@@ -67,6 +68,18 @@ test("stacks: creator manages, editors edit, others read or don't see; only the 
     await owner.put("/decks/" + deckId, full(ownerView, { objStacks: ownerView.objStacks.map(function(s) { return s.id === s1 ? Object.assign({}, s, { editorIds: [] }) : s; }) }));
     var asNone = find(await none.get("/decks"), deckId);
     assert.equal((await none.put("/decks/" + deckId, full(asNone))).status, 403);
+
+    // Archive/restore answer with the same per-person view: a deck editor who can't see the
+    // private stack doesn't get it (or the deck's access list) back from archiving
+    await owner.put("/decks/" + deckId + "/editors", { userIds: [editor.user.id, none.user.id] });
+    var ar = await none.post("/decks/" + deckId + "/archive");
+    assert.equal(ar.status, 200, ar.text);
+    assert.equal(st(ar.body, s1), null, "archive response hides the private stack");
+    assert.equal(ar.body.accessList, undefined, "…and the deck's access list");
+    var rr = await none.post("/decks/" + deckId + "/restore");
+    assert.equal(rr.status, 200, rr.text);
+    assert.equal(st(rr.body, s1), null, "restore response too");
+    await owner.put("/decks/" + deckId + "/editors", { userIds: [editor.user.id] });
 
     // Order: an editor's reorder (and dropped stacks) are ignored; the owner's counts
     ownerView = find(await owner.get("/decks"), deckId);

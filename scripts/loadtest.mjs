@@ -120,6 +120,9 @@ async function setup() {
     if (u.status !== 201) throw new Error("create user failed: " + u.status + " " + JSON.stringify(u.body));
     people.push({ id: u.body.id, email: email, admin: i < admins });
   }
+  // The owner's deck: the load-test admins edit it, so they need an editor grant (deck permissions)
+  var ed = await call(owner.token, "PUT", "/decks/" + deck.body.id + "/editors", { userIds: people.filter(function(p) { return p.admin; }).map(function(p) { return p.id; }) }, "setup");
+  if (ed.status !== 200) throw new Error("grant editors failed: " + ed.status + " " + JSON.stringify(ed.body));
   var team = await call(owner.token, "POST", "/admin/teams", { name: "Load team", adminIds: people.filter(function(p) { return p.admin; }).map(function(p) { return p.id; }),
     memberIds: people.filter(function(p) { return !p.admin; }).map(function(p) { return p.id; }) }, "setup");
   return { owner: owner, deckId: deck.body.id, people: people, teamId: team.body && team.body.id, orgId: owner.orgId };

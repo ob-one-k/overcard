@@ -432,8 +432,6 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var [sessionEvents,  setSessionEvents]  = useState([]);
   // Track whether we're in an active session — must come after activeSession is declared
   var sessionActive = !!activeSession;
-  var activeSessionRef = useRef(null);
-  activeSessionRef.current = activeSession;
   // Admin scope for SessionsTab
   var [viewScope,   setViewScope]   = useState("self");
   // Admin org data
@@ -445,7 +443,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var [hlOverlay, setHlOverlay] = useState(null);
   // The Library sheet (saved clips + highlights), opened from anywhere via lib/library.js
   var [libReq, setLibReq] = useState(null);
-  useEffect(function() { return onOpenLibrary(function(r) { if (!activeSessionRef.current) setLibReq(r); }); }, []);
+  // (also during a call: it's an overlay — opening a session from it is still refused then)
+  useEffect(function() { return onOpenLibrary(function(r) { setLibReq(r); }); }, []);
   // Command palette visibility (desktop only)
   var [showCmdPalette, setShowCmdPalette] = useState(false);
   // A card to open once Cards / Objections show the right deck (from search): { deckId, cardId, stackId?, nonce }

@@ -75,6 +75,9 @@ export function cloneStack(stack, deckIdMap) {
   delete copy.archivedAt;
   // A copy belongs to whoever made it (the server sets the creator); edit grants don't carry over
   delete copy.createdBy; delete copy.editorIds; delete copy.canEdit; delete copy.canManage;
+  // Who a stack is assigned to is only sent to its managers: a private stack copied by someone
+  // else would arrive with nobody assigned (invisible to reps), so it starts org-wide
+  if (copy.visibility === "private" && !(copy.accessList && copy.accessList.length)) { copy.visibility = "public"; copy.accessList = []; }
   return copy;
 }
 

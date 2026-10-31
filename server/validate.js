@@ -102,6 +102,14 @@ function cleanOrg(fields) {
 // is until someone edits it, so autosave of an old deck never starts failing.
 var LIMITS = { cardTitle: 21, script: 180, bullet: 36, deckName: 21, stackLabel: 21, sessionName: 50, clipTitle: 50 };
 
+// Raw size a 180-character script can reasonably reach with its markup. Anything longer is
+// refused before a regex ever runs (the markup patterns are quadratic on hostile input).
+var MAX_PROMPT_RAW = 2000;
+// The delivery cues the editor offers (src/lib/constants.js INFLECTIONS)
+var INFLECTION_LABELS = new Set(["Pause", "Slow Down", "Speed Up", "Raise Tone", "Lower Tone", "Question", "Hushed",
+  "Confident", "Empathetic", "Sincere", "Warm", "Urgent", "Casual", "Cautious", "Emphasize", "Contrast", "Rhetorical",
+  "Joking", "Dry Humor", "Indifferent", "Disarming"]);
+
 function clampText(v, n) { return typeof v === "string" && v.length > n ? v.slice(0, n) : v; }
 
 // Visible characters of a card script ({{NAME}} counts as its "[NAME]" spelling)
@@ -113,11 +121,21 @@ function scriptLength(raw) {
 
 function isObj(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
 
-// Cards that are new or changed get their title and bullets cut to the limits (copies of
-// older cards land here too, so cutting beats rejecting). A script edited past its limit is
-// an error — the editor never sends one — unless it only got shorter.
+
+// Make a script safe to store: only the editor's delivery cues may follow *text* (the label
+// lands in the editor's HTML), and the raw text is capped before any markup regex runs (they
+// are quadratic on hostile input). Linear scans only.
+function cleanPrompt(p) {
+  if (p.length > MAX_PROMPT_RAW) p = p.slice(0, MAX_PROMPT_RAW);
+  return p.replace(/\*\[([^\]]*)\]/g, function(m, label) { return INFLECTION_LABELS.has(label) ? m : "*"; });
+}
+
+// New or changed cards get their title and bullets cut to the limits and their script
+// cleaned. Saves are never refused over text: autosave sends the whole deck, and a copy of an
+// older card or a stale copy from another admin must not make every later save fail. The
+// 180-character script limit is enforced by the editor.
 function limitCards(cards, oldCards) {
-  if (!isObj(cards)) return null;
+  if (!isObj(cards)) return;
   oldCards = isObj(oldCards) ? oldCards : {};
   for (var id in cards) {
     var c = cards[id], old = isObj(oldCards[id]) ? oldCards[id] : null;
@@ -127,41 +145,32 @@ function limitCards(cards, oldCards) {
       var oldOv = old && Array.isArray(old.overview) ? old.overview : [];
       c.overview = c.overview.map(function(b, i) { return typeof b === "string" && oldOv[i] !== b ? clampText(b, LIMITS.bullet) : b; });
     }
-    if (typeof c.prompt === "string" && (!old || old.prompt !== c.prompt)) {
-      var len = scriptLength(c.prompt);
-      if (len > LIMITS.script && (!old || len > scriptLength(old.prompt))) {
-        return "Card scripts can be up to " + LIMITS.script + " characters (\"" + String(c.title || "Untitled").slice(0, 40) + "\")";
-      }
-    }
+    if (typeof c.prompt === "string" && (!old || old.prompt !== c.prompt)) c.prompt = cleanPrompt(c.prompt);
   }
-  return null;
 }
 
-// Applies the limits to a deck payload in place. existing = the stored deck (null when new).
-// Returns an error message, or null.
+// Applies the limits to a deck payload in place (existing = the stored deck, null when new):
+// a new or renamed deck name, card titles, bullets and stack labels are cut; scripts cleaned.
 function limitDeck(body, existing) {
-  var name = typeof body.name === "string" ? body.name.trim() : body.name;
-  if (typeof name === "string" && name.length > LIMITS.deckName && (!existing || (existing.name || "").trim() !== name)) {
-    return "Deck names can be up to " + LIMITS.deckName + " characters";
+  if (typeof body.name === "string") {
+    var name = body.name.trim();
+    if (name.length > LIMITS.deckName && (!existing || (existing.name || "").trim() !== name)) body.name = name.slice(0, LIMITS.deckName);
   }
-  // A brand-new deck's starting cards are a template or a copy — only cut, never reject
-  var err = limitCards(body.cards, existing ? existing.cards : null);
-  if (err && existing) return err;
+  limitCards(body.cards, existing ? existing.cards : null);
   if (Array.isArray(body.objStacks)) {
     var oldStacks = {};
     ((existing && existing.objStacks) || []).forEach(function(st) { if (isObj(st) && st.id) oldStacks[st.id] = st; });
-    for (var i = 0; i < body.objStacks.length; i++) {
-      var st = body.objStacks[i], oldSt = oldStacks[st.id] || null;
+    body.objStacks.forEach(function(st) {
+      if (!isObj(st)) return;
+      var oldSt = oldStacks[st.id] || null;
       if (typeof st.label === "string" && (!oldSt || oldSt.label !== st.label)) st.label = clampText(st.label, LIMITS.stackLabel);
-      var e2 = limitCards(st.cards, oldSt ? oldSt.cards : null);
-      if (e2 && existing) return e2;
-    }
+      limitCards(st.cards, oldSt ? oldSt.cards : null);
+    });
   }
-  return null;
 }
 
 module.exports = {
   validatePassword, validateEmail, validateName, validatePhone,
   validateNewUser, cleanNewUser, validateOrg, cleanOrg,
-  LIMITS, clampText, scriptLength, limitDeck,
+  LIMITS, clampText, scriptLength, limitDeck, cleanPrompt,
 };

@@ -7,6 +7,7 @@ import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 import { NotificationBell } from "./NotificationBell";
 import { LibraryButton } from "./ClipSave";
+import { isLibraryOpen } from "../lib/library";
 import { OrgMark } from "./OrgMark";
 
 // ─── DESKTOP SHELL ────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ export function DesktopShell({
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.target && e.target.isContentEditable) return;
       if (sessionActive) return;
+      if (isLibraryOpen()) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       var idx = parseInt(e.key, 10);
       if (idx >= 1 && idx <= tabs.length) {

@@ -6,6 +6,7 @@ import { getAudioBlob } from "../lib/audioStore";
 import { useUploadStatus, retrySessionAudio } from "../lib/audioUpload";
 import { createNoiseReduction, playbackNoiseReduction, setPlaybackNoiseReduction } from "../lib/noiseReduction";
 import { SaveClipDialog, useSavedSegments, HeartIcon, CLIP_COLOR, clipTint } from "./ClipSave";
+import { isLibraryOpen } from "../lib/library";
 
 // ─── SESSION AUDIO PLAYBACK ───────────────────────────────────────────────────
 // useSessionAudio(session) owns ONE <audio> element per session review, so every tab
@@ -571,6 +572,7 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName, session, ca
       var t = e.target, tag = t && t.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isLibraryOpen() || saveTarget) return;   // a clip player / dialog is on top
       if (e.key === " ") { e.preventDefault(); ctl.toggle(); }
       else if (e.key === "ArrowLeft")  { e.preventDefault(); ctl.skip(-5000); }
       else if (e.key === "ArrowRight") { e.preventDefault(); ctl.skip(5000); }
@@ -717,8 +719,9 @@ export function AudioPlayback({ ctl, size, canDownload, sessionName, session, ca
                       var now = Math.round(ctl.currentMs);
                       setRange(function(r) {
                         var st = r.startMs, en = r.endMs;
-                        if (e[0] === "start") { st = now; if (en - st < MIN_RANGE || en - st > MAX_RANGE) en = Math.min(ctl.durationMs || now + 15000, st + 15000); }
-                        else { en = now; if (en - st < MIN_RANGE || en - st > MAX_RANGE) st = Math.max(0, en - 15000); }
+                        var total = ctl.durationMs || now + 15000;
+                        if (e[0] === "start") { st = Math.min(now, total - MIN_RANGE); if (en - st < MIN_RANGE || en - st > MAX_RANGE) en = Math.min(total, st + 15000); }
+                        else { en = Math.max(now, MIN_RANGE); if (en - st < MIN_RANGE || en - st > MAX_RANGE) st = Math.max(0, en - 15000); }
                         return { startMs: st, endMs: Math.max(en, st + MIN_RANGE) };
                       });
                     }}

@@ -4,6 +4,7 @@ import { solidBtn, ghostBtn, ghostSm, inputSt, labelSt, iconBtn, overlayFill, SH
 import { apiGetBlob, apiPut, apiPost, apiDel } from "../lib/api";
 import { useCachedGet, cachedGet } from "../lib/dataCache";
 import { onLive } from "../lib/live";
+import { setLibraryOpen } from "../lib/library";
 import { markNotificationsReadForClip } from "../lib/notifications";
 import { useNoiseGraph, NoiseToggle } from "./AudioPlayer";
 import { HeartIcon, LibraryIcon, CLIP_COLOR, clipTint } from "./ClipSave";
@@ -230,7 +231,9 @@ function ClipCard({ clip, authUser, onClose, onDeleted, onOpenSession, compact }
   useEffect(function() {
     function onKey(e) {
       var t = e.target, tag = t && t.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || (t && t.isContentEditable)) return;
+      // Space on a focused control activates that control instead
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "BUTTON" || tag === "A" || (t && t.isContentEditable)) return;
+      if (t && t.getAttribute && t.getAttribute("role") === "slider") return;
       if (e.key === " " && !e.metaKey && !e.ctrlKey) { e.preventDefault(); ctl.toggle(); }
     }
     document.addEventListener("keydown", onKey);
@@ -415,6 +418,7 @@ export function LibrarySheet({ authUser, request, onClose, onOpenHighlight, onOp
   var mine = useCachedGet("/clips?view=mine");
   var shared = useCachedGet("/clips?view=shared");
   var highlights = useCachedGet("/sessions/highlights");
+  useEffect(function() { setLibraryOpen(true); return function() { setLibraryOpen(false); }; }, []);
 
   // A request while open (a notification, another save) jumps to it
   useEffect(function() {

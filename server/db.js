@@ -1536,6 +1536,9 @@ async function deleteClipShare(shareId, clipId) {
   const { rows } = await pool.query('DELETE FROM clip_shares WHERE id = $1 AND "clipId" = $2 RETURNING *', [shareId, clipId]);
   return rows[0] || null;
 }
+async function deleteClipNotifications(clipId, userId) {
+  await pool.query('DELETE FROM notifications WHERE "clipId" = $1 AND "userId" = $2', [clipId, userId]);
+}
 async function getClipRecipientIds(clipId) {
   const { rows } = await pool.query('SELECT "toUserId" FROM clip_shares WHERE "clipId" = $1', [clipId]);
   return rows.map(function(r) { return r.toUserId; });
@@ -1688,7 +1691,7 @@ module.exports = {
   getOrgDecks, getDeckById, deckUsableBy, deckPermissions, stackPermsFor, viewDeck,
   getSessionAudioData, canReadSession,
   createClip, getClip, getMyClips, getClipsSharedWith, renameClip, deleteClip, canPlayClip, getClipAudioRange,
-  createClipShare, getClipShares, deleteClipShare, getClipRecipientIds, getClipShareRecord, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
+  createClipShare, getClipShares, deleteClipShare, getClipRecipientIds, getClipShareRecord, deleteClipNotifications, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
   getDeckAccess, setDeckAccess,
   // passwords
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,

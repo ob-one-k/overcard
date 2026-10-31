@@ -122,6 +122,7 @@ test("clips: saving, playing, sharing and who may do what", async function() {
     assert.equal(shares.length, 1);
     assert.equal((await rep.del("/clips/" + clip.id + "/shares/" + shares[0].id)).status, 200);
     assert.equal((await other.get("/clips/" + clip.id)).status, 404);
+    assert.ok(!(await other.get("/notifications")).body.items.some(function(n) { return n.clipId === clip.id; }), "its notification goes too");
 
     // The org owner may delete anyone's clip
     assert.equal((await owner.del("/clips/" + clip.id)).status, 200);

@@ -78,7 +78,10 @@ async function mergeStacks(incoming, stored, user, perms, orgId) {
 
   var result = [];
   if (isOwner) {
+    var seen = {};
     for (var i = 0; i < (incoming || []).length; i++) {
+      if (seen[incoming[i].id]) continue;   // a repeated id is kept once
+      seen[incoming[i].id] = true;
       result.push(await take(incoming[i], storedById[incoming[i].id] || null));
     }
     return result;
@@ -88,9 +91,11 @@ async function mergeStacks(incoming, stored, user, perms, orgId) {
     if (!old || !old.id) continue;
     result.push(incomingById[old.id] ? await take(incomingById[old.id], old) : old);
   }
+  var added = {};
   for (var k = 0; k < (incoming || []).length; k++) {
     var inc = incoming[k];
-    if (storedById[inc.id]) continue;
+    if (storedById[inc.id] || added[inc.id]) continue;   // (a repeated new id is added once)
+    added[inc.id] = true;
     var made = await take(inc, null);
     if (made) result.push(made);
   }
@@ -126,7 +131,7 @@ router.post("/", async function(req, res, next) {
       return res.status(403).json({ error: "Only admins can create decks" });
     }
     const { name, color, icon, visibility, accessList, rootCard, cards, objStacks } = req.body || {};
-    if (!name || !name.trim()) {
+    if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "Deck name is required" });
     }
     // Starting content (template cards or a duplicated deck) is optional
@@ -137,8 +142,7 @@ router.post("/", async function(req, res, next) {
       return res.status(400).json({ error: "objStacks must be an array of stacks" });
     }
     if (visibility !== undefined && VISIBILITY.indexOf(visibility) === -1) return res.status(400).json({ error: "visibility must be public or private" });
-    const limitErr = limitDeck(req.body, null);
-    if (limitErr) return res.status(400).json({ error: limitErr });
+    limitDeck(req.body, null);
     // Validated before anything is written, so a bad list can't leave a half-created deck
     const access = await cleanAccessList(accessList, req.user.orgId);
     if (!access) return res.status(400).json({ error: "Invalid access list" });
@@ -148,7 +152,7 @@ router.post("/", async function(req, res, next) {
     const deck = await createDeck({
       orgId:      req.user.orgId,
       createdBy:  req.user.id,
-      name:       name.trim(),
+      name:       req.body.name.trim(),   // cut to the limit by limitDeck
       color:      color || "#F5A623",
       icon:       icon  || "💼",
       visibility: visibility || "public",
@@ -203,8 +207,7 @@ router.put("/:id", async function(req, res, next) {
       return res.status(400).json({ error: "objStacks must be an array of stacks" });
     }
     if (body.visibility !== undefined && VISIBILITY.indexOf(body.visibility) === -1) return res.status(400).json({ error: "visibility must be public or private" });
-    const limitErr = limitDeck(body, existing);
-    if (limitErr) return res.status(400).json({ error: limitErr });
+    limitDeck(body, existing);
     if (stacksOnly) {
       body = Object.assign({}, body, { name: existing.name, color: existing.color, icon: existing.icon, rootCard: existing.rootCard, cards: existing.cards });
     }
@@ -279,7 +282,10 @@ async function setArchived(req, res, next, archived) {
     const perms = await permsOr404(req, res);
     if (!perms) return;
     if (!perms.edit) return res.status(403).json({ error: "You don't have permission to archive this deck" });
-    res.json(await setDeckArchived(req.params.id, req.user.orgId, archived ? Date.now() : null));
+    const deck = await setDeckArchived(req.params.id, req.user.orgId, archived ? Date.now() : null);
+    // The same per-person view as GET /decks (hidden stacks and manager-only lists stay hidden)
+    deck.editorIds = perms.deck.editorIds;
+    res.json(viewDeck(deck, perms, req.user, perms.teamIds || []));
   } catch (err) { next(err); }
 }
 router.post("/:id/archive", function(req, res, next) { setArchived(req, res, next, true); });

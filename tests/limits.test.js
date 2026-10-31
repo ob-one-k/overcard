@@ -12,18 +12,22 @@ function card(id, changes) {
 }
 function fullDeck(d, changes) { return Object.assign({ name: d.name, color: d.color, icon: d.icon, cards: d.cards, rootCard: d.rootCard, objStacks: d.objStacks, visibility: d.visibility }, changes || {}); }
 
-test("deck names are capped at 21 characters", async function() {
+test("deck names are cut to 21 characters", async function() {
   var owner = await login("apexOwner");
-  var r = await owner.post("/decks", { name: "x".repeat(22), cards: {}, objStacks: [] });
-  assert.equal(r.status, 400, "a 22-character name is refused");
-  r = await owner.post("/decks", { name: "y".repeat(21), cards: {}, objStacks: [] });
+  var r = await owner.post("/decks", { name: "x".repeat(30), cards: {}, objStacks: [] });
   assert.equal(r.status, 201, r.text);
   var d = r.body;
-  assert.equal((await owner.put("/decks/" + d.id, fullDeck(d, { name: "z".repeat(22) }))).status, 400, "renaming past the limit is refused");
-  await owner.del("/decks/" + d.id);
+  try {
+    assert.equal(d.name, "x".repeat(21));
+    r = await owner.put("/decks/" + d.id, fullDeck(d, { name: "z".repeat(30) }));
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.name, "z".repeat(21), "a rename is cut too");
+  } finally {
+    await owner.del("/decks/" + d.id);
+  }
 });
 
-test("card titles, bullets and stack labels are cut; long scripts are refused", async function() {
+test("titles, bullets and labels are cut; scripts are cleaned but never block a save", async function() {
   var owner = await login("apexOwner");
   var r = await owner.post("/decks", { name: tid("L"), cards: { c1: card("c1") }, rootCard: "c1", objStacks: [] });
   assert.equal(r.status, 201, r.text);
@@ -39,12 +43,22 @@ test("card titles, bullets and stack labels are cut; long scripts are refused", 
     assert.equal(r.body.objStacks[0].label.length, 21, "stack label cut to 21");
     assert.equal(r.body.objStacks[0].cards.o1.title.length, 21, "objection card title cut to 21");
 
-    // 180 visible characters: markup doesn't count, {{NAME}} counts as 6
-    var ok = "**" + "a".repeat(170) + "** {{NAME}}";   // 170 + 1 + 6 = 177
-    r = await owner.put("/decks/" + d.id, fullDeck(r.body, { cards: { c1: card("c1", { prompt: ok }) } }));
+    // Only the editor's delivery cues survive; an injected label is dropped
+    var hostile = '*hi*[" onmouseover="alert(1)" x="] and *calm*[Pause] {{NAME}}';
+    r = await owner.put("/decks/" + d.id, fullDeck(r.body, { cards: { c1: card("c1", { prompt: hostile }) } }));
     assert.equal(r.status, 200, r.text);
-    r = await owner.put("/decks/" + d.id, fullDeck(r.body, { cards: { c1: card("c1", { prompt: "a".repeat(181) }) } }));
-    assert.equal(r.status, 400, "a 181-character script is refused");
+    assert.equal(r.body.cards.c1.prompt, "*hi* and *calm*[Pause] {{NAME}}");
+
+    // A huge or pathological script is capped before any markup parsing — and answered fast
+    var t0 = Date.now();
+    r = await owner.put("/decks/" + d.id, fullDeck(r.body, { cards: { c1: card("c1", { prompt: "*a".repeat(200000) }) } }));
+    assert.equal(r.status, 200, r.text);
+    assert.ok(r.body.cards.c1.prompt.length <= 2000, "raw script capped");
+    assert.ok(Date.now() - t0 < 2000, "no regex blow-up (" + (Date.now() - t0) + " ms)");
+
+    // An unchanged older long script (saved before the limits) keeps saving
+    r = await owner.put("/decks/" + d.id, fullDeck(r.body));
+    assert.equal(r.status, 200, r.text);
   } finally {
     await owner.del("/decks/" + d.id);
   }

@@ -53,9 +53,10 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
 
   // SECURITY NOTE: escH() is the XSS-prevention mechanism for the contentEditable
   // rich-text editor. All user content is passed through this function before being
-  // inserted as innerHTML via mdToHtml(). It escapes &, <, and > to their HTML entities.
+  // inserted as innerHTML via mdToHtml(). It escapes &, <, >, " and ' so user content is safe in
+  // text AND inside attribute values (the inflection label goes into data-inf="…").
   // Any change to innerHTML rendering MUST continue to use escH() for all user content.
-  function escH(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function escH(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 
   // The NAME block: a non-editable chip that serializes back to {{NAME}}
   function chipHtml() {
@@ -120,7 +121,7 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
   function loadValue() {
     var el = editorRef.current; if (!el) return;
     el.innerHTML = mdToHtml(value) || "";
-    lastGood.current = { html: el.innerHTML, md: elToMd(el) };
+    lastGood.current = { html: el.innerHTML, md: elToMd(el), text: (el.textContent || "").length };
     setCount(scriptLength(lastGood.current.md));
   }
   useEffect(function() {
@@ -135,33 +136,56 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
     if (!sel || sel.isCollapsed || !el || !el.contains(sel.anchorNode)) return 0;
     return scriptLength(plainOf(sel.getRangeAt(0).cloneContents()));
   }
-  function caretToEnd() {
+  // Caret position as a count of text characters from the start (survives an innerHTML reset)
+  function caretOffset() {
+    var el = editorRef.current, sel = window.getSelection();
+    if (!el || !sel || !sel.rangeCount || !el.contains(sel.anchorNode)) return null;
+    var r = document.createRange(); r.selectNodeContents(el);
+    r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+    return r.toString().length;
+  }
+  function placeCaret(offset) {
     var el = editorRef.current, sel = window.getSelection(); if (!el || !sel) return;
-    var r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    var r = document.createRange();
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), n, left = offset == null ? Infinity : offset, placed = false;
+    while ((n = walker.nextNode())) {
+      if (left <= n.data.length) { r.setStart(n, left); placed = true; break; }
+      left -= n.data.length;
+    }
+    if (!placed) { r.selectNodeContents(el); r.collapse(false); }
+    r.collapse(true);
     sel.removeAllRanges(); sel.addRange(r);
   }
 
+  var composing = useRef(false);
+  var handleInputRef = useRef(null);   // the listener below outlives renders: always call the latest
   function handleInput() {
     var el = editorRef.current; if (!el) return;
+    // Mid-composition (Android keyboards, CJK input) the text isn't final and resetting the DOM
+    // would fight the IME — checked once composition ends
+    if (composing.current) return;
     lastRange.current = null;
     var md = elToMd(el), len = scriptLength(md);
-    // Over the limit (IME / autocorrect input that beforeinput couldn't stop): undo it.
-    // Shortening an older over-limit script is always allowed.
+    // Over the limit (IME / autocorrect input that beforeinput couldn't stop): undo it, keeping
+    // the caret where it was. Shortening an older over-limit script is always allowed.
     if (len > limit && len > scriptLength(lastGood.current.md)) {
+      var at = caretOffset();
+      var over = (el.textContent || "").length - (lastGood.current.text || 0);
       el.innerHTML = lastGood.current.html;
-      caretToEnd();
+      placeCaret(at == null ? null : Math.max(0, at - Math.max(0, over)));
       return;
     }
     // A chip left at the very end (text after it deleted) gets its caret anchor back
     var tail = el.lastChild;
     while (tail && tail.nodeType === 3 && !tail.data.length) { el.removeChild(tail); tail = el.lastChild; }
     if (isChip(tail)) el.appendChild(document.createTextNode(ZWSP));
-    lastGood.current = { html: el.innerHTML, md: md };
+    lastGood.current = { html: el.innerHTML, md: md, text: (el.textContent || "").length };
     setCount(len);
     isInternal.current = true;
     onChange(md);
     requestAnimationFrame(function() { isInternal.current = false; });
   }
+  handleInputRef.current = handleInput;
   // Native beforeinput (React's synthetic one lacks inputType): block line breaks and
   // typing past the limit before it reaches the DOM
   useEffect(function() {
@@ -174,8 +198,16 @@ export function RichPromptEditor({ value, onChange, accentColor, maxLen }) {
         if (add && scriptLength(elToMd(el)) - selectedLen() + add > limit) e.preventDefault();
       }
     }
+    function onCompStart() { composing.current = true; }
+    function onCompEnd() { composing.current = false; handleInputRef.current(); }
     el.addEventListener("beforeinput", onBeforeInput);
-    return function() { el.removeEventListener("beforeinput", onBeforeInput); };
+    el.addEventListener("compositionstart", onCompStart);
+    el.addEventListener("compositionend", onCompEnd);
+    return function() {
+      el.removeEventListener("beforeinput", onBeforeInput);
+      el.removeEventListener("compositionstart", onCompStart);
+      el.removeEventListener("compositionend", onCompEnd);
+    };
   }, [limit]); // eslint-disable-line react-hooks/exhaustive-deps
   function handleKeyDown(e) {
     if (e.key === "Enter") e.preventDefault();
@@ -681,11 +713,14 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
   function delAns(i) { setForm(function(p) { return Object.assign({}, p, {answers:p.answers.filter(function(_,j){return j!==i;})}); }); }
   function validate() {
     var e = {};
+    // Limits apply to what was edited — a card saved before the limits can still have its
+    // answers, links or type changed without trimming every older field first
+    var oldOv = card.overview || [];
     if (!form.title.trim()) e.title = "Required";
-    else if (form.title.trim().length > LIMITS.cardTitle) e.title = "Keep the title to " + LIMITS.cardTitle + " characters";
+    else if (form.title !== (card.title || "") && form.title.trim().length > LIMITS.cardTitle) e.title = "Keep the title to " + LIMITS.cardTitle + " characters";
     if (!form.prompt.trim()) e.prompt = "Required";
-    else if (scriptLength(form.prompt) > LIMITS.script) e.prompt = "Keep the script to " + LIMITS.script + " characters";
-    if ((form.overview || []).some(function(b) { return (b || "").length > LIMITS.bullet; })) e.overview = "Each bullet can be up to " + LIMITS.bullet + " characters";
+    else if (form.prompt !== (card.prompt || "") && scriptLength(form.prompt) > Math.max(LIMITS.script, scriptLength(card.prompt || ""))) e.prompt = "Keep the script to " + LIMITS.script + " characters";
+    if ((form.overview || []).some(function(b, i) { return b !== oldOv[i] && (b || "").length > LIMITS.bullet; })) e.overview = "Each bullet can be up to " + LIMITS.bullet + " characters";
     if (form.answers.some(function(a) { return !a.label.trim(); })) e.answers = "All response labels required";
     setErrs(e);
     return Object.keys(e).length === 0;
@@ -999,6 +1034,11 @@ export function CardEditorSheet({ card, allCards, rootCard, accentColor, lockedT
             })}
           </div>
         </div>
+        {Object.keys(errs).length > 0 && (
+          <div role="alert" style={{padding:"8px 18px 0",fontSize:12,color:"#EF5350",lineHeight:1.5}}>
+            {[errs.title && "Title: " + errs.title, errs.prompt && "Script: " + errs.prompt, errs.overview, errs.answers].filter(Boolean).join(" · ")}
+          </div>
+        )}
         <div style={{padding:buttonPad,borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",gap:10,flexShrink:0}}>
           <button onClick={onClose} style={Object.assign({},ghostBtn(),{flex:1})}>Cancel</button>
           <button onClick={function(){if(validate())onSave(isRootCard?Object.assign({},form,{intendedPath:true}):form);}} style={Object.assign({},solidBtn(ac),{flex:2})}>{isBlank?"Create Card":"Save Changes"}</button>
