@@ -393,9 +393,11 @@ export function LoginScreen({ onLogin, kickReason, onShowSignup }) {
 
   var brand = (
     <div style={{textAlign:split ? "left" : "center",marginBottom:split ? 0 : 16}}>
-      <div style={{display:"inline-block",marginBottom:split ? 18 : 2}}>
+      {/* icon.png's mark ends 1/3 above the image's bottom edge (transparent below), so pull the
+          title up over that empty strip — the remaining gap is the last number */}
+      <div style={{display:"inline-block",marginBottom:split ? 14 - 75 : big ? 8 - 56 : 6 - 73}}>
         <img src="/icon.png" alt="OverCard"
-          style={{width:split ? 340 : big ? 260 : 330,height:split ? 230 : big ? 170 : 220,objectFit:"contain",marginLeft:split ? -70 : 0,filter:"drop-shadow(0 6px 24px rgba(0,180,255,.4))"}}/>
+          style={{display:"block",width:split ? 340 : big ? 260 : 330,height:split ? 230 : big ? 170 : 220,objectFit:"contain",marginLeft:split ? -70 : 0,filter:"drop-shadow(0 6px 24px rgba(0,180,255,.4))"}}/>
       </div>
       <div style={{fontSize:split ? 52 : big ? 34 : 22,fontWeight:700,color:"#fff",fontFamily:"'Lora',serif",marginBottom:split ? 10 : 4,lineHeight:1.1}}>OverCard</div>
       <div style={{fontSize:split ? 20 : big ? 15 : 11,color:split ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.35)",letterSpacing:split ? 0 : .5}}>
