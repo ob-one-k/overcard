@@ -19,6 +19,7 @@ var MIGRATIONS = [
   require("./009_deck_order"),
   require("./010_deck_editors"),
   require("./011_stack_perms"),
+  require("./012_audio_clips"),
 ];
 
 var LOCK_KEY = 72017301; // arbitrary constant shared by every instance

@@ -1424,6 +1424,123 @@ async function getSessionAudioRange(sessionId, orgId, start, length) {
   return rows[0] ? rows[0].chunk : null;
 }
 
+// Whole recording (clip cutting reads it into a temp file)
+async function getSessionAudioData(sessionId, orgId) {
+  const { rows } = await pool.query(
+    'SELECT "mimeType","durationMs",data FROM session_audio WHERE "sessionId" = $1 AND "orgId" = $2', [sessionId, orgId]
+  );
+  return rows[0] || null;
+}
+
+// Read access to a session's review, recording and feedback: an admin/owner of its org, its
+// rep, a share recipient, or anyone a highlight of it is visible to
+async function canReadSession(session, user) {
+  if (!session || !user) return false;
+  if (session.orgId !== user.orgId) return false;
+  if (isAdminRoleName(user.role)) return true;
+  if (session.userId === user.id) return true;
+  if (await getShareRecord(session.id, user.id)) return true;
+  return isHighlightVisibleTo(session.id, user);
+}
+
+// ─── SAVED CLIPS ──────────────────────────────────────────────────────────────
+// A clip is cut from a recording into its own audio (clipRoutes). Who may play one: the
+// person who saved it, people it was shared with, and the org owner.
+var CLIP_COLS = 'c.id,c."orgId",c."userId",c."sessionId",c.title,c.kind,c."segId",c."cardId",c."startMs",c."endMs",c."durationMs",c.meta,c."mimeType",c."sizeBytes",c."createdAt"';
+
+async function createClip(c) {
+  var id = uid("clip_");
+  await pool.query(
+    'INSERT INTO audio_clips (id,"orgId","userId","sessionId",title,kind,"segId","cardId","startMs","endMs","durationMs",meta,"mimeType","sizeBytes",data,"createdAt")' +
+    ' VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)',
+    [id, c.orgId, c.userId, c.sessionId, c.title, c.kind, c.segId || null, c.cardId || null, c.startMs, c.endMs, c.durationMs,
+      JSON.stringify(c.meta || {}), c.mimeType, c.data.length, c.data, Date.now()]
+  );
+  return getClip(id);
+}
+
+// Without the audio; ownerName + shareCount for lists
+async function getClip(id) {
+  const { rows } = await pool.query(
+    'SELECT ' + CLIP_COLS + ', u."displayName" AS "ownerName",' +
+    ' (SELECT COUNT(*)::int FROM clip_shares s WHERE s."clipId" = c.id) AS "shareCount"' +
+    ' FROM audio_clips c LEFT JOIN users u ON u.id = c."userId" WHERE c.id = $1', [id]
+  );
+  return rows[0] || null;
+}
+
+// The clips this person saved, newest first
+async function getMyClips(userId, orgId) {
+  const { rows } = await pool.query(
+    'SELECT ' + CLIP_COLS + ', u."displayName" AS "ownerName",' +
+    ' (SELECT COUNT(*)::int FROM clip_shares s WHERE s."clipId" = c.id) AS "shareCount"' +
+    ' FROM audio_clips c LEFT JOIN users u ON u.id = c."userId"' +
+    ' WHERE c."userId" = $1 AND c."orgId" = $2 ORDER BY c."createdAt" DESC LIMIT 500', [userId, orgId]
+  );
+  return rows;
+}
+
+// Clips shared with this person, newest share first
+async function getClipsSharedWith(userId, orgId) {
+  const { rows } = await pool.query(
+    'SELECT ' + CLIP_COLS + ', u."displayName" AS "ownerName", s.id AS "shareId", s.note AS "shareNote", s."createdAt" AS "sharedAt",' +
+    ' f."displayName" AS "sharedByName"' +
+    ' FROM clip_shares s JOIN audio_clips c ON c.id = s."clipId" LEFT JOIN users u ON u.id = c."userId" LEFT JOIN users f ON f.id = s."fromUserId"' +
+    ' WHERE s."toUserId" = $1 AND c."orgId" = $2 ORDER BY s."createdAt" DESC LIMIT 500', [userId, orgId]
+  );
+  return rows;
+}
+
+async function renameClip(id, title) {
+  await pool.query('UPDATE audio_clips SET title = $2 WHERE id = $1', [id, title]);
+  return getClip(id);
+}
+async function deleteClip(id) {
+  await pool.query('DELETE FROM audio_clips WHERE id = $1', [id]);
+}
+
+async function getClipShareRecord(clipId, userId) {
+  const { rows } = await pool.query('SELECT * FROM clip_shares WHERE "clipId" = $1 AND "toUserId" = $2', [clipId, userId]);
+  return rows[0] || null;
+}
+async function canPlayClip(clip, user) {
+  if (!clip || !user || clip.orgId !== user.orgId) return false;
+  if (clip.userId === user.id || user.role === "owner") return true;
+  return !!(await getClipShareRecord(clip.id, user.id));
+}
+
+async function getClipAudioRange(clipId, start, length) {
+  const { rows } = await pool.query('SELECT substring(data from $2 for $3) AS chunk FROM audio_clips WHERE id = $1', [clipId, start + 1, length]);
+  return rows[0] ? rows[0].chunk : null;
+}
+
+// { share, created } — sharing again with the same person changes nothing
+async function createClipShare(sh) {
+  const { rows } = await pool.query(
+    'INSERT INTO clip_shares (id,"clipId","orgId","fromUserId","toUserId",note,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7)' +
+    ' ON CONFLICT ("clipId","toUserId") DO NOTHING RETURNING *',
+    [uid("csh_"), sh.clipId, sh.orgId, sh.fromUserId, sh.toUserId, sh.note || null, Date.now()]
+  );
+  if (rows[0]) return { share: rows[0], created: true };
+  return { share: await getClipShareRecord(sh.clipId, sh.toUserId), created: false };
+}
+async function getClipShares(clipId) {
+  const { rows } = await pool.query(
+    'SELECT s.id, s."toUserId", s."fromUserId", s.note, s."createdAt", u."displayName" AS "toName"' +
+    ' FROM clip_shares s LEFT JOIN users u ON u.id = s."toUserId" WHERE s."clipId" = $1 ORDER BY s."createdAt" ASC', [clipId]
+  );
+  return rows;
+}
+// Returns the removed share (its recipient is told), or null
+async function deleteClipShare(shareId, clipId) {
+  const { rows } = await pool.query('DELETE FROM clip_shares WHERE id = $1 AND "clipId" = $2 RETURNING *', [shareId, clipId]);
+  return rows[0] || null;
+}
+async function getClipRecipientIds(clipId) {
+  const { rows } = await pool.query('SELECT "toUserId" FROM clip_shares WHERE "clipId" = $1', [clipId]);
+  return rows.map(function(r) { return r.toUserId; });
+}
+
 // ─── REFERENCE SESSIONS ───────────────────────────────────────────────────────
 // Completed sessions any org member may pick as a reference for a live call
 async function getReferenceOptions(orgId, deckId, q) {
@@ -1445,14 +1562,15 @@ async function getReferenceOptions(orgId, deckId, q) {
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
 async function createNotification(n) {
   await pool.query(
-    'INSERT INTO notifications (id,"userId","orgId",type,"sessionId","actorId","actorName",text,"createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-    [uid("ntf_"), n.userId, n.orgId, n.type, n.sessionId || null, n.actorId || null, n.actorName || null, n.text || null, Date.now()]
+    'INSERT INTO notifications (id,"userId","orgId",type,"sessionId","actorId","actorName",text,"createdAt","clipId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+    [uid("ntf_"), n.userId, n.orgId, n.type, n.sessionId || null, n.actorId || null, n.actorName || null, n.text || null, Date.now(), n.clipId || null]
   );
 }
 
 async function getNotifications(userId, limit) {
   const { rows } = await pool.query(
-    'SELECT n.*, s.name AS "sessionName", s."deckId" AS "deckId" FROM notifications n LEFT JOIN sessions s ON s.id = n."sessionId"' +
+    'SELECT n.*, s.name AS "sessionName", s."deckId" AS "deckId", c.title AS "clipTitle" FROM notifications n' +
+    ' LEFT JOIN sessions s ON s.id = n."sessionId" LEFT JOIN audio_clips c ON c.id = n."clipId"' +
     ' WHERE n."userId" = $1 ORDER BY n."createdAt" DESC LIMIT $2',
     [userId, limit || 30]
   );
@@ -1567,7 +1685,10 @@ module.exports = {
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,
   // decks
   getTeamNames,
-  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, stackPermsFor, viewDeck, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
+  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, stackPermsFor, viewDeck,
+  getSessionAudioData, canReadSession,
+  createClip, getClip, getMyClips, getClipsSharedWith, renameClip, deleteClip, canPlayClip, getClipAudioRange,
+  createClipShare, getClipShares, deleteClipShare, getClipRecipientIds, getClipShareRecord, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
   getDeckAccess, setDeckAccess,
   // passwords
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,

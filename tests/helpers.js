@@ -216,4 +216,20 @@ async function openStream(token) {
 
 function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 
-module.exports = { BASE, ACCOUNTS, PASSWORD, fixtures, login, client, openStream, tid, sleep };
+// Upload a small real recording (tests/fixtures/tone.webm, 20 s) as a session's audio
+async function putAudio(c, sessionId, durationMs) {
+  var buf = require("fs").readFileSync(require("path").join(__dirname, "fixtures", "tone.webm"));
+  var r = await fetch(BASE + "/sessions/" + sessionId + "/audio?durationMs=" + (durationMs || 20000), {
+    method: "PUT", headers: { Authorization: "Bearer " + c.token, "Content-Type": "audio/webm" }, body: buf,
+  });
+  return { status: r.status, text: await r.text() };
+}
+
+// GET returning bytes (audio endpoints)
+async function getBytes(c, path, headers) {
+  var r = await fetch(BASE + path, { headers: Object.assign({ Authorization: "Bearer " + c.token }, headers || {}) });
+  var buf = Buffer.from(await r.arrayBuffer());
+  return { status: r.status, headers: r.headers, body: buf };
+}
+
+module.exports = { BASE, ACCOUNTS, PASSWORD, fixtures, login, client, openStream, tid, sleep, putAudio, getBytes };

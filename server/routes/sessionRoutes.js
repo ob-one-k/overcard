@@ -9,6 +9,7 @@ const {
   createNotification, getShareRecipientIds, getDeckById, deckUsableBy,
   startLiveSession, beatLiveSession, getLiveSessions, countActiveRuns,
   getHighlights, getHighlight, isHighlightVisibleTo, getMemberOrAdminTeamIds, setHighlight, clearHighlight, getTeamById,
+  canReadSession,
 } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
 const { LIMITS, clampText } = require("../validate");
@@ -407,15 +408,8 @@ router.get("/:id/audio", async function(req, res, next) {
 // Read access to a session's feedback and recording: owner, org admin, share recipient,
 // or anyone a highlight of it is visible to (read-only — writing feedback is checked
 // separately in POST /:id/feedback)
-async function canAccessFeedback(session, user) {
-  if (!session) return false;
-  if (isAdminRole(user.role) && session.orgId === user.orgId) return true;
-  if (session.orgId !== user.orgId) return false;
-  if (session.userId === user.id) return true;
-  const share = await getShareRecord(session.id, user.id);
-  if (share) return true;
-  return isHighlightVisibleTo(session.id, user);
-}
+// (db.canReadSession — clips use the same rule for who may save a piece of a recording)
+var canAccessFeedback = canReadSession;
 
 // GET /api/sessions/:id/feedback
 router.get("/:id/feedback", async function(req, res, next) {

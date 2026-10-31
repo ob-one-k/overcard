@@ -13,6 +13,7 @@ const sessionRoutes = require("./routes/sessionRoutes");
 const adminRoutes   = require("./routes/adminRoutes");
 const orgRoutes     = require("./routes/orgRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const clipRoutes = require("./routes/clipRoutes");
 const { requireAuth } = require("./auth");
 const realtime      = require("./realtime");
 const { apiLimiter, streamLimiter } = require("./limits");
@@ -59,6 +60,7 @@ app.use("/api/sessions", sessionRoutes);
 app.use("/api/admin",    adminRoutes);
 app.use("/api/org",      orgRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/clips",    clipRoutes);
 
 // Liveness only — no counts or other data (it is public)
 app.get("/api/health", async function(req, res) {

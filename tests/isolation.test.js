@@ -3,7 +3,7 @@
 // live event streams.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { login, tid, sleep, BASE, fixtures } = require("./helpers");
+const { login, tid, sleep, BASE, fixtures, putAudio, getBytes } = require("./helpers");
 
 var F;   // fixture ids (tests/helpers.js)
 test.before(async function() { F = await fixtures(); });
@@ -32,6 +32,10 @@ test("cross-org access is refused everywhere", async function() {
   assert.equal((await merUser.post("/sessions/" + merLive + "/start", { deckId: MER_DECK, name: "Mer live" })).status, 200);
   await merUser.post("/sessions/" + merLive + "/beat", { events: [], live: { cardId: "x" } });
   var merInvite = (await merAdmin.post("/admin/invites", { label: "mer" })).body;
+  // A Meridian recording and a saved clip of it
+  assert.equal((await putAudio(merUser, merSid, 20000)).status, 200);
+  var merClip = (await merUser.post("/clips", { sessionId: merSid, startMs: 0, endMs: 3000, title: "Mer clip" })).body;
+  assert.ok(merClip && merClip.id, "Meridian clip saved");
   var merNotes = (await merUser.get("/notifications")).body.items.map(function(n) { return n.id; });
   var createdDeck = null;
 
@@ -65,6 +69,19 @@ test("cross-org access is refused everywhere", async function() {
       denied(await c.get("/sessions/" + merSid + "/audio"), w + "GET audio");
       denied(await c.get("/sessions/" + merSid + "/audio/meta"), w + "GET audio meta");
       denied(await c.get("/sessions/" + merSid + "/reference"), w + "GET reference");
+
+      // Clips
+      denied(await c.post("/clips", { sessionId: merSid, startMs: 0, endMs: 2000, title: "x" }), w + "clip their session");
+      denied(await c.get("/clips/" + merClip.id), w + "GET clip");
+      denied(await getBytes(c, "/clips/" + merClip.id + "/audio").then(function(r) { return { status: r.status, text: "" }; }), w + "GET clip audio");
+      denied(await c.put("/clips/" + merClip.id, { title: "x" }), w + "rename clip");
+      denied(await c.del("/clips/" + merClip.id), w + "DELETE clip");
+      denied(await c.post("/clips/" + merClip.id + "/share", { toUserId: c.user.id }), w + "share their clip");
+      denied(await c.get("/clips/" + merClip.id + "/shares"), w + "GET clip shares");
+      denied(await c.del("/clips/" + merClip.id + "/shares/x"), w + "revoke clip share");
+      for (var view of ["mine", "shared"]) {
+        assert.ok(!(await c.get("/clips?view=" + view)).body.some(function(x) { return x.orgId !== c.user.orgId; }), w + "clips " + view);
+      }
       denied(await c.put("/sessions/" + merSid + "/highlight", { scope: "org" }), w + "PUT highlight");
       denied(await c.del("/sessions/" + merSid + "/highlight"), w + "DELETE highlight");
       assert.ok(!(await c.get("/sessions/highlights")).body.some(function(x) { return x.id === merSid || x.orgId !== c.user.orgId; }), w + "highlights list");
@@ -145,6 +162,7 @@ test("cross-org access is refused everywhere", async function() {
     if (createdDeck) await aOwner.del("/decks/" + createdDeck);
     await merUser.post("/sessions", { id: merLive, deckId: MER_DECK, name: "Mer live", startTs: Date.now() - 1000, endTs: Date.now(), events: [] });
     await merUser.del("/sessions/" + merLive);
+    if (merClip && merClip.id) await merUser.del("/clips/" + merClip.id);
     await merUser.del("/sessions/" + merSid);
     await merAdmin.del("/admin/invites/" + merInvite.id);
     aStream.close(); oStream.close();
