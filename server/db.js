@@ -795,6 +795,51 @@ function deckPermsFor(deck, user, teamIds) {
   return { see: see, edit: edit, manage: admin && creator };
 }
 
+// ─── OBJECTION STACK PERMISSIONS ─────────────────────────────────────────────
+// Stacks follow the deck rules one level down. Each stack (JSON inside decks."objStacks")
+// carries createdBy, visibility ("public"|"private"), accessList and editorIds.
+//   See:    whoever sees the deck, when the stack is org-wide or assigned to them/their team
+//           (archived stacks only for those who may edit them).
+//   Edit:   the owner; an admin who created the stack or is one of its editors. Deck editors
+//           don't edit other people's stacks — they may add new stacks of their own.
+//   Manage: (visibility / assignees / editors) the owner and the stack's creator.
+function stackPermsFor(stack, deckPerms, user, teamIds) {
+  if (user.role === "owner") return { see: true, edit: true, manage: true };
+  if (!deckPerms || !deckPerms.see) return { see: false, edit: false, manage: false };
+  var admin = isAdminRoleName(user.role);
+  var creator = !!stack.createdBy && stack.createdBy === user.id;
+  var edit = admin && (creator || (stack.editorIds || []).indexOf(user.id) > -1);
+  var assigned = stack.visibility !== "private" || (stack.accessList || []).some(function(a) {
+    return (a.entityType === "user" && a.entityId === user.id) || (a.entityType === "team" && teamIds.indexOf(a.entityId) > -1);
+  });
+  return { see: edit || (!stack.archivedAt && assigned), edit: edit, manage: admin && creator };
+}
+
+// The stacks of a deck as this user receives them: hidden ones dropped, canEdit/canManage
+// attached, assignees and editors only for the stack's managers
+function viewStacks(stacks, deckPerms, user, teamIds) {
+  var out = [];
+  (stacks || []).forEach(function(st) {
+    if (!st || typeof st !== "object") return;
+    var p = stackPermsFor(st, deckPerms, user, teamIds);
+    if (!p.see) return;
+    var v = Object.assign({}, st, { canEdit: p.edit, canManage: p.manage });
+    if (!p.manage) { delete v.accessList; delete v.editorIds; }
+    out.push(v);
+  });
+  return out;
+}
+
+// A deck shaped for this user (stack filtering + flags; deck access lists for managers only)
+function viewDeck(deck, perms, user, teamIds) {
+  var d = Object.assign({}, deck);
+  d.canEdit = perms.edit;
+  d.canManage = perms.manage;
+  d.objStacks = viewStacks(deck.objStacks, perms, user, teamIds);
+  if (!perms.manage) { delete d.accessList; delete d.editorIds; }
+  return d;
+}
+
 // The decks this user may see, in the org's order, each with canEdit / canManage
 async function getOrgDecks(orgId, user) {
   // The owner's order (Deck switcher / Home drag-to-reorder); name breaks ties
@@ -813,12 +858,9 @@ async function getOrgDecks(orgId, user) {
     if (!user) { out.push(deck); return; }
     var p = deckPermsFor(deck, user, teamIds);
     if (!p.see) return;
-    deck.canEdit = p.edit;
-    deck.canManage = p.manage;
     // Who a deck is assigned to and who may edit it is for its managers (same rule as
-    // GET /decks/:id/access)
-    if (!p.manage) { delete deck.accessList; delete deck.editorIds; }
-    out.push(deck);
+    // GET /decks/:id/access); stacks are filtered the same way one level down
+    out.push(viewDeck(deck, p, user, teamIds));
   });
   return out;
 }
@@ -830,7 +872,7 @@ async function deckPermissions(deckId, user) {
   var loaded = await Promise.all([getDeckEditorsMap([deck.id]), user.role === "owner" ? Promise.resolve([]) : viewerTeamIds(user)]);
   deck.editorIds = loaded[0][deck.id];
   var teamIds = loaded[1];
-  return Object.assign({ deck: deck }, deckPermsFor(deck, user, teamIds));
+  return Object.assign({ deck: deck, teamIds: teamIds }, deckPermsFor(deck, user, teamIds));
 }
 
 // May this user run a session on this deck? The same "see" rule (archived decks only with
@@ -1525,7 +1567,7 @@ module.exports = {
   getUserTeams, setUserTeams, getAdminTeamIds, setActiveToken, clearActiveTokenIfMatches, hashSid,
   // decks
   getTeamNames,
-  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
+  getOrgDecks, getDeckById, deckUsableBy, deckPermissions, stackPermsFor, viewDeck, setDeckEditors, removeDeckEditorEverywhere, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder,
   getDeckAccess, setDeckAccess,
   // passwords
   createPasswordReset, findPasswordReset, usePasswordReset, setPasswordHash, expirePasswordResets,

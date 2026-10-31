@@ -265,7 +265,7 @@ export function PlayDesktop({ deck, activeId, onPortalToReview, onSwitchDeck,
   function emitVisit(c, dur) {
     var audioEnd   = rec.offsetMs();
     var audioStart = audioEnd !== null ? Math.max(0, audioEnd - dur) : null;
-    var ev = { type:"visit", cardId:c.id, cardTitle:c.title, cardType:c.type, isObjCard:inObj, stackLabel:inObj&&objMode?objMode.stack.label:null, intendedPath:!!c.intendedPath, ts:Date.now(), durationMs:dur, audioStartMs:audioStart, audioEndMs:audioEnd };
+    var ev = { type:"visit", cardId:c.id, cardTitle:c.title, cardType:c.type, isObjCard:inObj, stackId:inObj&&objMode?objMode.stack.id:null, stackLabel:inObj&&objMode?objMode.stack.label:null, intendedPath:!!c.intendedPath, ts:Date.now(), durationMs:dur, audioStartMs:audioStart, audioEndMs:audioEnd };
     handleEvent(ev);
     return ev;
   }

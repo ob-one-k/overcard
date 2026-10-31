@@ -1,7 +1,7 @@
 const express = require("express");
 const router  = express.Router();
 const { getOrgDecks, getDeckById, createDeck, updateDeck, deleteDeck, setDeckArchived, setDeckOrder, uid, getDeckAccess, setDeckAccess, idsInOrg,
-  deckPermissions, setDeckEditors, getOrgUsers } = require("../db");
+  deckPermissions, setDeckEditors, getOrgUsers, stackPermsFor, viewDeck } = require("../db");
 const { requireAuth, isAdminRole } = require("../auth");
 const { limitDeck } = require("../validate");
 
@@ -33,6 +33,73 @@ async function cleanAccessList(list, orgId) {
   return out.filter(function(a) { return (a.entityType === "user" ? okUsers : okTeams).has(a.entityId); });
 }
 var VISIBILITY = ["public", "private"];
+
+// The permission fields a stack's manager sets (visibility, assignees, editors), cleaned:
+// assignees must be this org's users/teams, editors this org's admins other than the creator.
+async function cleanStackPerms(st, orgId, adminIds) {
+  var access = await cleanAccessList(st.accessList, orgId);
+  var editors = Array.isArray(st.editorIds) ? st.editorIds.filter(function(id, i, a) {
+    return typeof id === "string" && adminIds.has(id) && id !== st.createdBy && a.indexOf(id) === i;
+  }) : [];
+  return {
+    visibility: VISIBILITY.indexOf(st.visibility) > -1 ? st.visibility : "public",
+    accessList: access || [],
+    editorIds: editors,
+  };
+}
+function stackPermFields(st) {
+  return { createdBy: st.createdBy || null, visibility: st.visibility || "public", accessList: st.accessList || [], editorIds: st.editorIds || [] };
+}
+
+// Merge a save's objection stacks into the stored ones, stack by stack (rules: db.js
+// "OBJECTION STACK PERMISSIONS"):
+//  - a stored stack this user can't edit (or can't see) stays exactly as stored
+//  - one they edit but don't manage keeps its stored creator / visibility / assignees / editors
+//  - a new stack (unknown id) needs deck edit rights and is created by this user
+//  - only the owner deletes stacks (omitted ones are kept) and only the owner's order counts —
+//    everyone else's save keeps the stored order, new stacks appended
+async function mergeStacks(incoming, stored, user, perms, orgId) {
+  var isOwner = user.role === "owner";
+  var admins = new Set((await getOrgUsers(orgId)).filter(function(u) { return u.role === "admin"; }).map(function(u) { return u.id; }));
+  var storedById = {}, incomingById = {};
+  (stored || []).forEach(function(st) { if (st && st.id) storedById[st.id] = st; });
+  (incoming || []).forEach(function(st) { incomingById[st.id] = st; });
+
+  async function take(inc, old) {
+    var p = old ? stackPermsFor(old, perms, user, perms.teamIds || []) : { see: true, edit: perms.edit, manage: perms.edit };
+    if (!p.edit) return old;            // can't edit (or create) it: stored copy wins
+    var out = Object.assign({}, inc);
+    delete out.canEdit; delete out.canManage;
+    out.createdBy = old ? (old.createdBy || null) : user.id;
+    if (p.manage) Object.assign(out, await cleanStackPerms(out, orgId, admins));
+    else Object.assign(out, stackPermFields(old));
+    return out;
+  }
+
+  var result = [];
+  if (isOwner) {
+    for (var i = 0; i < (incoming || []).length; i++) {
+      result.push(await take(incoming[i], storedById[incoming[i].id] || null));
+    }
+    return result;
+  }
+  for (var j = 0; j < (stored || []).length; j++) {
+    var old = stored[j];
+    if (!old || !old.id) continue;
+    result.push(incomingById[old.id] ? await take(incomingById[old.id], old) : old);
+  }
+  for (var k = 0; k < (incoming || []).length; k++) {
+    var inc = incoming[k];
+    if (storedById[inc.id]) continue;
+    var made = await take(inc, null);
+    if (made) result.push(made);
+  }
+  return result;
+}
+// May this user change any stack of the deck? (lets a stack editor save without deck rights)
+function editsAnyStack(deck, perms, user) {
+  return (deck.objStacks || []).some(function(st) { return st && stackPermsFor(st, perms, user, perms.teamIds || []).edit; });
+}
 
 router.use(requireAuth);
 
@@ -76,6 +143,8 @@ router.post("/", async function(req, res, next) {
     const access = await cleanAccessList(accessList, req.user.orgId);
     if (!access) return res.status(400).json({ error: "Invalid access list" });
     var startCards = cards || {};
+    // Starting stacks (a duplicated deck) belong to whoever made the copy
+    var startStacks = await mergeStacks(objStacks || [], [], req.user, { see: true, edit: true, manage: true, teamIds: [] }, req.user.orgId);
     const deck = await createDeck({
       orgId:      req.user.orgId,
       createdBy:  req.user.id,
@@ -85,7 +154,7 @@ router.post("/", async function(req, res, next) {
       visibility: visibility || "public",
       rootCard:   typeof rootCard === "string" && Object.prototype.hasOwnProperty.call(startCards, rootCard) ? rootCard : null,
       cards:      startCards,
-      objStacks:  objStacks || [],
+      objStacks:  startStacks,
     });
     if (access.length > 0) {
       await setDeckAccess(deck.id, access);
@@ -93,9 +162,7 @@ router.post("/", async function(req, res, next) {
     }
     // The creator edits and manages their deck
     deck.editorIds = [];
-    deck.canEdit = true;
-    deck.canManage = true;
-    res.status(201).json(deck);
+    res.status(201).json(viewDeck(deck, { see: true, edit: true, manage: true }, req.user, []));
   } catch (err) { next(err); }
 });
 
@@ -122,8 +189,10 @@ router.put("/:id", async function(req, res, next) {
     }
     const perms = await permsOr404(req, res);
     if (!perms) return;
-    if (!perms.edit) return res.status(403).json({ error: "You don't have permission to edit this deck" });
     const existing = perms.deck;
+    // A stack editor without deck rights may still save — only their stacks change
+    var stacksOnly = !perms.edit;
+    if (stacksOnly && !editsAnyStack(existing, perms, req.user)) return res.status(403).json({ error: "You don't have permission to edit this deck" });
 
     var body = req.body || {};
     // updateDeck replaces the whole row — reject partial payloads that would wipe cards
@@ -136,6 +205,9 @@ router.put("/:id", async function(req, res, next) {
     if (body.visibility !== undefined && VISIBILITY.indexOf(body.visibility) === -1) return res.status(400).json({ error: "visibility must be public or private" });
     const limitErr = limitDeck(body, existing);
     if (limitErr) return res.status(400).json({ error: limitErr });
+    if (stacksOnly) {
+      body = Object.assign({}, body, { name: existing.name, color: existing.color, icon: existing.icon, rootCard: existing.rootCard, cards: existing.cards });
+    }
     var access = null;
     if (!perms.manage) {
       body = Object.assign({}, body, { visibility: existing.visibility });
@@ -143,19 +215,16 @@ router.put("/:id", async function(req, res, next) {
       access = await cleanAccessList(body.accessList, req.user.orgId);
       if (!access) return res.status(400).json({ error: "Invalid access list" });
     }
-    // Only the owner may delete objection stacks — admins archive them instead. A stored stack
-    // missing from a non-owner's save is kept (appended back) rather than rejected: the usual
-    // cause is a stale copy from before another admin added it, and a 403 there would make
-    // autosave fail forever and lose that admin's edits.
-    if (req.user.role !== "owner") {
-      var incoming = {};
-      (body.objStacks || []).forEach(function(st) { incoming[st.id] = true; });
-      var kept = (existing.objStacks || []).filter(function(st) { return st && st.id && !incoming[st.id]; });
-      if (kept.length) body = Object.assign({}, body, { objStacks: (body.objStacks || []).concat(kept) });
-    }
+    // Stacks merge one by one (mergeStacks). Only the owner may delete objection stacks —
+    // admins archive them instead. A stored stack missing from a non-owner's save is kept
+    // rather than rejected: the usual cause is a stale copy from before another admin added
+    // it (or a stack hidden from them), and a 403 there would make autosave fail forever.
+    var stacksIn = body.objStacks !== undefined ? body.objStacks : (existing.objStacks || []);
+    body = Object.assign({}, body, { objStacks: await mergeStacks(stacksIn, existing.objStacks || [], req.user, perms, req.user.orgId) });
     const deck = await updateDeck(req.params.id, req.user.orgId, body);
     if (access) await setDeckAccess(req.params.id, access);
-    res.json(deck);
+    deck.editorIds = existing.editorIds;
+    res.json(viewDeck(deck, perms, req.user, perms.teamIds || []));
   } catch (err) { next(err); }
 });
 

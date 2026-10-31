@@ -13,7 +13,9 @@ import { CardsDesktop } from "./desktop/CardsDesktop";
 import { ObjectionsDesktop } from "./desktop/ObjectionsDesktop";
 import { CardStage } from "./CardStage";
 import { ImportPicker } from "./ImportPicker";
-import { liveStacks, archivedStacks, confirmStackDelete } from "../lib/deckOps";
+import { liveStacks, archivedStacks, confirmStackDelete, canEditStack, canManageStack, reorderStacks } from "../lib/deckOps";
+import { AccessFields, accessSummary } from "./AccessFields";
+import { ReorderList } from "./Reorder";
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
 // Desktop and mobile layouts are separate components so switching across the
@@ -332,7 +334,8 @@ function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly, 
 
 // ─── OBJECTIONS TAB ───────────────────────────────────────────────────────────
 // decks/deckId (optional) enable "Copy cards" — objection cards from any deck's stacks
-export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, initialEditCard, deckCards, inline, decks, deckId }) {
+// canManage (+ orgUsers/orgTeams) shows who-can-use / who-can-edit in the stack details
+export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, initialEditCard, deckCards, inline, decks, deckId, canManage, orgUsers, orgTeams }) {
   var [form, setForm]         = useState(Object.assign({}, stack, { cards:Object.assign({}, stack.cards || {}) }));
   var [editCard, setEditCard] = useState(initialEditCard || null);
   var [editNavDir, setEditNavDir] = useState(null);
@@ -428,6 +431,12 @@ export function ObjStackEditor({ stack, onSave, onDelete, onArchive, onClose, in
                   style={{background:form.icon===ic?"rgba(255,255,255,.15)":"rgba(255,255,255,.05)",border:"1.5px solid "+(form.icon===ic?"rgba(255,255,255,.4)":"rgba(255,255,255,.08)"),borderRadius:9,width:38,height:38,cursor:"pointer",fontSize:18}}>{ic}</button>;
               })}
             </div>
+            {canManage ? (
+              <AccessFields value={form} onChange={function(v){ setForm(function(p){ return Object.assign({}, p, { visibility:v.visibility, accessList:v.accessList, editorIds:v.editorIds }); }); }}
+                orgUsers={orgUsers} orgTeams={orgTeams} creatorId={stack.createdBy} noun="stack"/>
+            ) : (
+              <div style={{fontSize:11,color:"rgba(255,255,255,.35)",marginBottom:10,lineHeight:1.5}}>{accessSummary(form)}</div>
+            )}
             <button onClick={function(){setEditMeta(false);}} style={Object.assign({},solidBtn(OBJ_COLOR),{width:"100%"})}>Done</button>
           </div>
         )}
@@ -615,10 +624,11 @@ export function ObjectionsTab(props) {
 }
 
 // focus (from search): { cardId, stackId?, nonce } — open that card once, then onFocusDone()
-function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus, onFocusDone }) {
+function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, orgUsers, orgTeams, focus, onFocusDone }) {
   var desktop = useContext(DesktopCtx);
   var stacks   = liveStacks(deck);
-  var archived = readOnly ? [] : archivedStacks(deck);
+  var archived = archivedStacks(deck).filter(function(s) { return canEditStack(s, readOnly); });
+  function canEdit(st) { return canEditStack(st, readOnly); }
   var [showArchived, setShowArchived] = useState(false);
   var [showImport, setShowImport] = useState(false);
   function importStacks(res) {
@@ -670,7 +680,7 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
     setEditing(stack);
   }
   function onStackClick(stack) {
-    if (readOnly) {
+    if (!canEdit(stack)) {
       setExpandedStackId(function(prev){ return prev === stack.id ? null : stack.id; });
       return;
     }
@@ -717,11 +727,17 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {stacks.length===0 && <div style={{textAlign:"center",color:"rgba(255,255,255,.25)",padding:"40px 0",fontSize:14,lineHeight:1.7}}>No stacks yet.<br/>Create one to handle objections from anywhere in your pitch.</div>}
-            {stacks.map(function(stack) {
-              var isExpanded = readOnly && expandedStackId === stack.id;
+            {isOwner && stacks.length > 1 && <div style={{fontSize:11,color:"rgba(255,255,255,.35)",marginTop:-2}}>Drag ⠿ to set the order reps see in Play.</div>}
+            <ReorderList items={stacks} getId={function(st){ return st.id; }} gap={10} label="Objection stack order" enabled={!!isOwner}
+              onReorder={function(ids){ onUpdateDeck(deck.id, function(d){ return Object.assign({}, d, { objStacks: reorderStacks(d.objStacks, ids) }); }); }}
+              renderItem={function(stack, handle) {
+              var ro = !canEdit(stack);
+              var isExpanded = ro && expandedStackId === stack.id;
               var stackCards = Object.values(stack.cards || {});
               return (
-                <div key={stack.id} style={{background:"rgba(239,83,80,.05)",border:"1.5px solid "+(isExpanded?"rgba(239,83,80,.3)":"rgba(239,83,80,.15)"),borderRadius:16,overflow:"hidden",transition:"border-color .15s"}}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:6}}>
+                {handle && <div style={{paddingTop:14}}>{handle}</div>}
+                <div style={{flex:1,minWidth:0,background:"rgba(239,83,80,.05)",border:"1.5px solid "+(isExpanded?"rgba(239,83,80,.3)":"rgba(239,83,80,.15)"),borderRadius:16,overflow:"hidden",transition:"border-color .15s"}}>
                   <button onClick={function(){onStackClick(stack);}}
                     style={{width:"100%",background:"transparent",border:"none",padding:"15px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
                     <div style={{display:"flex",alignItems:"center",gap:13}}>
@@ -731,9 +747,11 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
                         <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
                           <span style={{fontSize:11,color:"rgba(239,83,80,.7)",background:"rgba(239,83,80,.1)",padding:"2px 8px",borderRadius:99}}>{Object.keys(stack.cards).length} cards</span>
                           <span style={{fontSize:11,color:"rgba(255,255,255,.25)",background:"rgba(255,255,255,.05)",padding:"2px 8px",borderRadius:99}}>{stack.rootCard?"Has entry":"No entry card"}</span>
+                          {stack.visibility === "private" && <span style={{fontSize:11,color:"#00B4FF",background:"rgba(0,180,255,.1)",padding:"2px 8px",borderRadius:99}}>🔒 Assigned</span>}
+                          {ro && !readOnly && <span style={{fontSize:11,color:"rgba(255,255,255,.45)",background:"rgba(255,255,255,.06)",padding:"2px 8px",borderRadius:99}}>View only</span>}
                         </div>
                       </div>
-                      <span style={{color:"rgba(239,83,80,.5)",fontSize:readOnly?11:18,flexShrink:0}}>{readOnly?(isExpanded?"▼":"▶"):"›"}</span>
+                      <span style={{color:"rgba(239,83,80,.5)",fontSize:ro?11:18,flexShrink:0}}>{ro?(isExpanded?"▼":"▶"):"›"}</span>
                     </div>
                   </button>
                   {isExpanded && (
@@ -766,8 +784,9 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
                     </div>
                   )}
                 </div>
+                </div>
               );
-            })}
+            }}/>
           </div>
           {archived.length > 0 && (
             <div style={{marginTop:18}}>
@@ -825,14 +844,14 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
                         <div style={{fontSize:12,fontWeight:700,color:"#fff"}}>{activeStack.label}</div>
                         <div style={{fontSize:9,color:"rgba(239,83,80,.6)"}}>{cardCount} card{cardCount!==1?"s":""}{activeStack.rootCard?" · entry set":" · no entry"}</div>
                       </div>
-                      {!readOnly && <button onClick={function(){openStackCard(activeStack, null);}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)",fontSize:11})}>Edit</button>}
+                      {canEdit(activeStack) && <button onClick={function(){openStackCard(activeStack, null);}} style={ghostSm({color:OBJ_COLOR,borderColor:"rgba(239,83,80,.3)",fontSize:11})}>Edit</button>}
                     </div>
                     {cardCount > 0 ? (
                       <TreeView
                         cards={activeStack.cards}
                         rootCard={activeStack.rootCard}
-                        onEdit={readOnly ? function(card){setViewCard(card); setViewCardStack(activeStack);} : function(card){openStackCard(activeStack, card);}}
-                        onSetRoot={readOnly ? null : function(cardId){setStackRoot(activeStack.id, cardId);}}
+                        onEdit={!canEdit(activeStack) ? function(card){setViewCard(card); setViewCardStack(activeStack);} : function(card){openStackCard(activeStack, card);}}
+                        onSetRoot={!canEdit(activeStack) ? null : function(cardId){setStackRoot(activeStack.id, cardId);}}
                       />
                     ) : (
                       <div style={{padding:"8px 14px 14px",fontSize:11,color:"rgba(255,255,255,.2)"}}>No cards — open editor to add some.</div>
@@ -880,9 +899,12 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus,
           deckCards={deck.cards}
           decks={decks}
           deckId={deck.id}
+          canManage={canManageStack(editing, readOnly)}
+          orgUsers={orgUsers}
+          orgTeams={orgTeams}
         />
       )}
-      {viewCard && readOnly && (
+      {viewCard && (
         <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",flexDirection:"column"}}
           onClick={function(e){if(e.target===e.currentTarget){setViewCard(null);setViewCardStack(null);}}}>
           <div onClick={function(){setViewCard(null);setViewCardStack(null);}} style={{flex:1,background:"rgba(0,0,0,.5)",backdropFilter:"blur(8px)"}}/>

@@ -7,7 +7,10 @@ import { TreeView } from "../Viewer";
 import { DesktopModal } from "../DesktopModal";
 import { ImportPicker } from "../ImportPicker";
 import { CopyIcon } from "../ui";
-import { liveStacks, archivedStacks, upsertStackCard, deleteStackCard, confirmStackDelete } from "../../lib/deckOps";
+import { liveStacks, archivedStacks, upsertStackCard, deleteStackCard, confirmStackDelete, canEditStack, canManageStack, reorderStacks } from "../../lib/deckOps";
+import { StackStats } from "./StackStats";
+import { AccessFields, accessSummary } from "../AccessFields";
+import { ReorderList } from "../Reorder";
 import { stripMarkup } from "../../lib/richtext";
 import { CardReadView } from "./CardsDesktop";
 import { CardStage, PaneRail } from "../CardStage";
@@ -55,9 +58,10 @@ function StackIcon({ icon, size }) {
 // ─── READ-ONLY STACK VIEW (non-admin users) ───────────────────────────────────
 // Card list (left) + CardReadView on the CardStage (right) inside the detail
 // pane. Tablet: the list fills the pane until a card is opened (back pill returns).
-function StackReadView({ stack, deckCards, isTablet }) {
+// renderEmpty() fills the stage while no card is open (the stack's stats).
+function StackReadView({ stack, deckCards, isTablet, renderEmpty }) {
   var list = orderedStackCards(stack);
-  var [cardId, setCardId] = useState(!isTablet && list.length ? list[0].id : null);
+  var [cardId, setCardId] = useState(renderEmpty || isTablet || !list.length ? null : list[0].id);
   var [navDir, setNavDir] = useState(null);
   function openCard(c, dir) { setNavDir(dir || null); setCardId(c.id); }
   var card = cardId && stack.cards[cardId] ? stack.cards[cardId] : null;
@@ -77,7 +81,7 @@ function StackReadView({ stack, deckCards, isTablet }) {
         <span style={{fontSize:13,color:TXT2,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,padding:"5px 12px",flexShrink:0}}>View only</span>
       </div>
       <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
-        {!(isTablet && card) && <div style={{width:isTablet?"100%":300,flexShrink:0,overflowY:"auto",borderRight:"1px solid "+LINE,padding:"12px"}}>
+        {!(isTablet && card) && <div style={{width:isTablet && !renderEmpty?"100%":300,flexShrink:0,overflowY:"auto",borderRight:"1px solid "+LINE,padding:"12px"}}>
           {list.length === 0 && <div style={{fontSize:14,color:TXT3,padding:"20px 6px"}}>No cards in this stack.</div>}
           {list.map(function(c) {
             var sel = c.id === cardId;
@@ -110,6 +114,8 @@ function StackReadView({ stack, deckCards, isTablet }) {
                 onOpen={function(t){ openCard(t, "forward"); }}/>;
             }}
           />
+        ) : renderEmpty ? (
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>{renderEmpty()}</div>
         ) : (!isTablet &&
           <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:TXT3,fontSize:15}}>Select a card</div>
         )}
@@ -127,7 +133,9 @@ function StackReadView({ stack, deckCards, isTablet }) {
 //    Every edit saves straight to the deck (autosave) — there is no Save Stack step.
 //  • Read-only users get StackReadView for the open stack.
 // focus (from search): { cardId, stackId?, nonce } — open that card once, then onFocusDone()
-export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner, focus, onFocusDone }) {
+// readOnly = can't edit the deck (no new stacks); each stack also carries its own canEdit /
+// canManage (deck-style stack permissions). isAdmin widens the stats to the org.
+export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner, isAdmin, orgUsers, orgTeams, onOpenSession, focus, onFocusDone }) {
   var desktop = useContext(DesktopCtx);
   var isTablet = !!desktop.isTablet;
   var [selectedId, setSelectedIdSt] = useState(null);
@@ -146,13 +154,23 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
   var [showImport, setShowImport] = useState(false);
   var [showCardImport, setShowCardImport] = useState(false);   // copy cards into the open stack
   var [showMeta,   setShowMeta]   = useState(false);
-  var [meta,       setMeta]       = useState({ label:"", icon:"😐" });
+  var [meta,       setMeta]       = useState({ label:"", icon:"😐", visibility:"public", accessList:[], editorIds:[] });
   var [showSwitch, setShowSwitch] = useState(false);
   var [showArchived, setShowArchived] = useState(false);
 
+  var SEL_KEY = "overcard_obj_sel_" + deck.id;
   function selectStack(id) {
     setSelectedIdSt(id); setEditing(null); setNavDir(null); setCardSearch(""); setShowSwitch(false);
+    if (id) lsSet(SEL_KEY, id);
   }
+  // Like the Cards tab, the tab opens on content: the last stack opened on this deck, else the first
+  useEffect(function() {
+    if (focus) return;
+    var live = liveStacks(deck);
+    if (!live.length) return;
+    var last = lsGet(SEL_KEY);
+    selectStack(live.some(function(x) { return x.id === last; }) ? last : live[0].id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(function() {
     if (!focus) return;
     var st = (deck.objStacks || []).find(function(x) { return x.id === focus.stackId; });
@@ -204,8 +222,9 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
 
   // ── Stack operations (all saved through the deck autosave) ────────────────────
   var stacks   = liveStacks(deck);
-  var archived = readOnly ? [] : archivedStacks(deck);
+  var archived = archivedStacks(deck).filter(function(s) { return canEditStack(s, readOnly); });
   var selectedStack = selectedId ? stacks.find(function(s){ return s.id === selectedId; }) : null;
+  var selectedEditable = !!selectedStack && canEditStack(selectedStack, readOnly);
   var q = search.toLowerCase();
   var visibleStacks = stacks.filter(function(s) {
     if (!q) return true;
@@ -239,10 +258,23 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
     onUpdateDeck(deck.id, function(d) { return Object.assign({},d,{objStacks:d.objStacks.filter(function(x){ return x.id !== st.id; })}); });
     if (st.id === selectedId) selectStack(null);
   }
+  function openMeta(stack) {
+    setMeta({ label:stack.label, icon:stack.icon, visibility:stack.visibility || "public", accessList:stack.accessList || [], editorIds:stack.editorIds || [] });
+    setShowMeta(true);
+  }
   function saveMeta() {
     if (!selectedStack || !meta.label.trim()) return;
-    updateStack(selectedStack.id, function(st){ return Object.assign({}, st, { label:meta.label.trim(), icon:meta.icon }); });
+    var manage = canManageStack(selectedStack, readOnly);
+    updateStack(selectedStack.id, function(st){
+      var next = Object.assign({}, st, { label:meta.label.trim(), icon:meta.icon });
+      // Who uses / edits it: the stack's managers only (the server keeps it as is for anyone else)
+      if (manage) Object.assign(next, { visibility:meta.visibility || "public", accessList:meta.accessList || [], editorIds:meta.editorIds || [] });
+      return next;
+    });
     setShowMeta(false);
+  }
+  function reorder(ids) {
+    onUpdateDeck(deck.id, function(d) { return Object.assign({}, d, { objStacks: reorderStacks(d.objStacks, ids) }); });
   }
   function setTarget(id) {
     if (!selectedStack) return;
@@ -384,28 +416,36 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
           {stacks.length === 0 && (
             <div style={{textAlign:"center",color:TXT3,padding:"40px 16px",fontSize:15,lineHeight:1.7}}>No stacks yet.{!readOnly && <><br/>Create one to handle objections.</>}</div>
           )}
-          {visibleStacks.map(function(stack) {
+          {/* The owner drags stacks into the order every list (and Play) shows */}
+          {isOwner && !q && stacks.length > 1 && <div style={{fontSize:12,color:TXT3,margin:"0 2px 8px"}}>Drag ⠿ to set the order reps see in Play.</div>}
+          <ReorderList items={visibleStacks} getId={function(st){ return st.id; }} gap={6} label="Objection stack order"
+            enabled={!!isOwner && !q} onReorder={reorder}
+            renderItem={function(stack, handle) {
             var cardCount = Object.keys(stack.cards || {}).length;
             var h = stackHealth(stack);
             return (
-              <button key={stack.id} data-row="1" onClick={function(){ selectStack(stack.id); }}
-                style={{display:"flex",alignItems:"center",gap:12,width:"100%",textAlign:"left",background:"rgba(255,255,255,.03)",
-                  borderTop:"1px solid "+LINE,borderRight:"1px solid "+LINE,borderBottom:"1px solid "+LINE,borderLeft:"4px solid rgba(239,83,80,.4)",
-                  borderRadius:10,padding:"11px 12px",marginBottom:6,cursor:"pointer",fontFamily:"inherit"}}>
-                <StackIcon icon={stack.icon} size={40}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:15,fontWeight:700,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stack.label}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:TXT3,marginTop:3}}>
-                    <span>{cardCount} card{cardCount!==1?"s":""}</span>
-                    <span style={{display:"inline-flex",alignItems:"center",gap:5,color:h.color}}>
-                      <span style={{width:7,height:7,borderRadius:"50%",background:h.color}}/>{h.text}
-                    </span>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                {handle}
+                <button data-row="1" onClick={function(){ selectStack(stack.id); }}
+                  style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:12,textAlign:"left",background:"rgba(255,255,255,.03)",
+                    borderTop:"1px solid "+LINE,borderRight:"1px solid "+LINE,borderBottom:"1px solid "+LINE,borderLeft:"4px solid rgba(239,83,80,.4)",
+                    borderRadius:10,padding:"11px 12px",cursor:"pointer",fontFamily:"inherit"}}>
+                  <StackIcon icon={stack.icon} size={40}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:15,fontWeight:700,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stack.label}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:TXT3,marginTop:3,flexWrap:"wrap"}}>
+                      <span>{cardCount} card{cardCount!==1?"s":""}</span>
+                      <span style={{display:"inline-flex",alignItems:"center",gap:5,color:h.color}}>
+                        <span style={{width:7,height:7,borderRadius:"50%",background:h.color}}/>{h.text}
+                      </span>
+                      <StackBadges stack={stack} readOnly={readOnly}/>
+                    </div>
                   </div>
-                </div>
-                <span style={{color:"rgba(239,83,80,.55)",fontSize:18,flexShrink:0}}>›</span>
-              </button>
+                  <span style={{color:"rgba(239,83,80,.55)",fontSize:18,flexShrink:0}}>›</span>
+                </button>
+              </div>
             );
-          })}
+          }}/>
           {stacks.length > 0 && visibleStacks.length === 0 && <div style={{textAlign:"center",color:TXT3,padding:"30px 0",fontSize:15}}>No matches</div>}
 
           {archived.length > 0 && (
@@ -484,51 +524,35 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
     );
   }
 
-  // ── Open stack: summary when no card is on the stage ─────────────────────────
-  function renderStackSummary(stack) {
+  // ── Open stack: stats when no card is on the stage (like the Cards tab overview) ──
+  function renderStackStats(stack, editable) {
     var list = orderedStackCards(stack);
     var h = stackHealth(stack);
     var target = stack.targetCard && deck.cards[stack.targetCard];
-    return (
-      <div style={{flex:1,overflowY:"auto",padding:isTablet?"18px 18px 24px":"24px 30px 30px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
-          <StackIcon icon={stack.icon} size={isTablet?46:54}/>
+    var header = (
+      <>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <StackIcon icon={stack.icon} size={isTablet?44:50}/>
           <div style={{minWidth:0}}>
-            <div style={{fontSize:isTablet?20:24,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{stack.label}</div>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:isTablet?20:22,fontWeight:700,color:TXT,fontFamily:"'Lora',serif"}}>{stack.label}</span>
+              <StackBadges stack={stack} readOnly={readOnly}/>
+            </div>
             <div style={{fontSize:14,color:TXT3,marginTop:3}}>{list.length} card{list.length!==1?"s":""} · <span style={{color:h.color}}>{h.text}</span> · {target ? "then → " + (target.title || "target card") : "returns to the current card"}</div>
           </div>
         </div>
-        {list.length === 0 ? (
-          <div style={{background:"rgba(239,83,80,.06)",border:"1px dashed rgba(239,83,80,.3)",borderRadius:14,padding:"30px 24px",textAlign:"center",color:TXT2,fontSize:15,lineHeight:1.6}}>
+        {editable && list.length === 0 && (
+          <div style={{marginTop:14,background:"rgba(239,83,80,.06)",border:"1px dashed rgba(239,83,80,.3)",borderRadius:12,padding:"14px 16px",color:TXT2,fontSize:14,lineHeight:1.6,maxWidth:620}}>
             This stack has no cards yet. The first card you add becomes the entry card — what the rep says when the objection comes up.
-            <div><button onClick={newCard} style={Object.assign({},solidBtn(OBJ_COLOR),{marginTop:14,fontSize:14})}>+ Create the entry card</button></div>
-          </div>
-        ) : (
-          <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:760}}>
-            {list.map(function(c, i) {
-              var answers = (c.answers || []).filter(function(a){ return a && a.label; });
-              return (
-                <button key={c.id} onClick={function(){ openCard(c, null); }}
-                  style={{display:"flex",gap:12,alignItems:"flex-start",textAlign:"left",background:"rgba(239,83,80,.045)",border:"1px solid rgba(239,83,80,.16)",borderRadius:12,padding:"12px 14px",cursor:"pointer",fontFamily:"inherit"}}>
-                  <StepDot n={i+1}/>
-                  <span style={{flex:1,minWidth:0}}>
-                    <span style={{display:"block",fontSize:15,fontWeight:700,color:TXT}}>{c.title || "Untitled"}{c.id === stack.rootCard && <span style={{fontSize:11,fontWeight:700,color:OBJ_COLOR,marginLeft:8}}>ENTRY</span>}</span>
-                    {c.prompt && <span style={{display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",fontSize:14,color:TXT2,lineHeight:1.5,marginTop:3}}>{stripMarkup(c.prompt)}</span>}
-                    {answers.length > 0 && (
-                      <span style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
-                        {answers.map(function(a) {
-                          var nx = a.next && stack.cards[a.next];
-                          return <span key={a.id} style={{fontSize:12,color:TXT3,background:"rgba(255,255,255,.05)",border:"1px solid "+LINE,borderRadius:99,padding:"3px 10px"}}>“{a.label}” → {nx ? nx.title || "Untitled" : (target ? target.title : "resolves")}</span>;
-                        })}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
+            <div><button onClick={newCard} style={Object.assign({},solidBtn(OBJ_COLOR),{marginTop:10,fontSize:14})}>+ Create the entry card</button></div>
           </div>
         )}
-      </div>
+      </>
+    );
+    return (
+      <StackStats key={stack.id} deck={deck} stack={stack} orderedCards={list} canOrg={!!isAdmin} header={header}
+        onOpenCard={editable ? function(c){ openCard(c, null); } : null}
+        onOpenSession={onOpenSession}/>
     );
   }
 
@@ -616,7 +640,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
           <div style={{flex:1}}/>
           <SmallBtn tall={isTablet} onClick={function(){ setShowCardImport(true); }} title="Copy objection cards from any stack into this one"><CopyIcon size={14}/>{isTablet ? "" : " Copy cards"}</SmallBtn>
           <button onClick={newCard} style={Object.assign({},solidBtn(OBJ_COLOR),{height:tb,padding:"0 16px",fontSize:14,borderRadius:10,flexShrink:0})}>+ Card</button>
-          <SmallBtn tall={isTablet} onClick={function(){ setMeta({ label:stack.label, icon:stack.icon }); setShowMeta(true); }} title="Rename or change icon">✎{isTablet ? "" : " Edit"}</SmallBtn>
+          <SmallBtn tall={isTablet} onClick={function(){ openMeta(stack); }} title="Rename, change icon, or choose who uses and edits it">✎{isTablet ? "" : " Edit"}</SmallBtn>
           <SmallBtn tall={isTablet} warn onClick={function(){ archiveStack(stack.id); }} title="Hide from Play — restorable">🗄{isTablet ? "" : " Archive"}</SmallBtn>
           {isOwner && <SmallBtn tall={isTablet} danger onClick={function(){ deleteStack(stack); }} title="Delete permanently">🗑{isTablet ? "" : " Delete"}</SmallBtn>}
         </div>
@@ -664,7 +688,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
                   style={Object.assign({},resizeHandle(),{background:isDragging?"rgba(255,255,255,.1)":"transparent"})}/>
               </>}
               <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
-                {editing ? renderEditor(stack, true) : renderStackSummary(stack)}
+                {editing ? renderEditor(stack, true) : renderStackStats(stack, true)}
               </div>
             </>
           )}
@@ -711,17 +735,23 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
 
   return (
     <div style={{display:"flex",height:"100%",overflow:"hidden",userSelect:isDragging?"none":"auto"}}>
-      {selectedStack && !readOnly && renderStackWorkspace(selectedStack)}
+      {selectedStack && selectedEditable && renderStackWorkspace(selectedStack)}
 
-      {selectedStack && readOnly && (
+      {selectedStack && !selectedEditable && (
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
           <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:"1px solid "+LINE,background:themed("rgba(4,12,32,.45)")}}>
             <button onClick={function(){ selectStack(null); }}
               style={{display:"flex",alignItems:"center",gap:6,minHeight:40,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,color:TXT,fontSize:14,fontWeight:600,padding:"0 16px 0 12px",cursor:"pointer",fontFamily:"inherit"}}>
               <span style={{fontSize:17,lineHeight:1}}>‹</span>All stacks
             </button>
+            {/* Switch stacks without going back to the list */}
+            <select value={selectedStack.id} onChange={function(e){ selectStack(e.target.value); }} aria-label="Objection stack"
+              style={Object.assign({}, inputSt({height:40,fontSize:14,marginBottom:0,padding:"0 10px"}), {width:"auto",maxWidth:280,appearance:"auto"})}>
+              {stacks.map(function(st){ return <option key={st.id} value={st.id}>{st.icon} {st.label}</option>; })}
+            </select>
           </div>
-          <StackReadView key={selectedStack.id} stack={selectedStack} deckCards={deck.cards} isTablet={isTablet}/>
+          <StackReadView key={selectedStack.id} stack={selectedStack} deckCards={deck.cards} isTablet={isTablet}
+            renderEmpty={!isTablet || desktop.splitPanes ? function(){ return renderStackStats(selectedStack, false); } : null}/>
         </div>
       )}
 
@@ -741,18 +771,37 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
         <ImportPicker mode="stacks" decks={decks} currentDeckId={deck.id} onImport={importStacks} onClose={function(){ setShowImport(false); }}/>
       )}
       {showMeta && selectedStack && (
-        <DesktopModal title="Stack details" width={460} onClose={function(){ setShowMeta(false); }}>
-          <div style={{padding:"16px 20px 20px"}}>
+        <DesktopModal title="Stack details" width={480} onClose={function(){ setShowMeta(false); }}>
+          <div style={{padding:"16px 20px 20px",maxHeight:"calc(var(--vvh, 100vh) - 160px)",overflowY:"auto"}}>
             <label style={Object.assign({}, labelSt(), {fontSize:12})}>Stack name</label>
             <input value={meta.label} onChange={function(e){ setMeta(function(p){ return Object.assign({},p,{label:e.target.value}); }); }} maxLength={LIMITS.stackLabel}
               onKeyDown={function(e){ if (e.key === "Enter") saveMeta(); }} style={inputSt({marginBottom:12,fontSize:15})}/>
             <label style={Object.assign({}, labelSt(), {fontSize:12})}>Icon</label>
             <IconGrid value={meta.icon} onPick={function(ic){ setMeta(function(p){ return Object.assign({},p,{icon:ic}); }); }}/>
+            {canManageStack(selectedStack, readOnly) ? (
+              <AccessFields value={meta} onChange={function(v){ setMeta(function(p){ return Object.assign({}, p, { visibility:v.visibility, accessList:v.accessList, editorIds:v.editorIds }); }); }}
+                orgUsers={orgUsers} orgTeams={orgTeams} creatorId={selectedStack.createdBy} noun="stack"/>
+            ) : (
+              <div style={{fontSize:12,color:TXT3,marginBottom:12,lineHeight:1.5}}>{accessSummary(selectedStack)}</div>
+            )}
             <button onClick={saveMeta} disabled={!meta.label.trim()} style={Object.assign({},solidBtn(OBJ_COLOR),{width:"100%",fontSize:15,opacity:meta.label.trim()?1:.5})}>Save</button>
           </div>
         </DesktopModal>
       )}
     </div>
+  );
+}
+
+// 🔒 for a stack assigned to teams/people; "View only" for one this person can't edit
+function StackBadges({ stack, readOnly }) {
+  var priv = stack.visibility === "private";
+  var view = !canEditStack(stack, readOnly);
+  if (!priv && !view) return null;
+  return (
+    <>
+      {priv && <span title="Assigned to teams/people" style={{fontSize:11,fontWeight:700,color:"#00B4FF",background:"rgba(0,180,255,.12)",border:"1px solid rgba(0,180,255,.3)",borderRadius:99,padding:"1px 8px"}}>🔒 Assigned</span>}
+      {view && <span style={{fontSize:11,fontWeight:600,color:TXT2,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:99,padding:"1px 8px"}}>View only</span>}
+    </>
   );
 }
 

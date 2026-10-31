@@ -73,6 +73,8 @@ export function cloneStack(stack, deckIdMap) {
     targetCard: stack.targetCard && deckIdMap && deckIdMap[stack.targetCard] ? deckIdMap[stack.targetCard] : null,
   });
   delete copy.archivedAt;
+  // A copy belongs to whoever made it (the server sets the creator); edit grants don't carry over
+  delete copy.createdBy; delete copy.editorIds; delete copy.canEdit; delete copy.canManage;
   return copy;
 }
 
@@ -99,6 +101,29 @@ export function duplicateDeck(deck) {
 export function activeDecks(decks)  { return (decks || []).filter(function(d) { return !d.archivedAt; }); }
 export function liveStacks(deck)    { return ((deck && deck.objStacks) || []).filter(function(s) { return !s.archivedAt; }); }
 export function archivedStacks(deck){ return ((deck && deck.objStacks) || []).filter(function(s) { return !!s.archivedAt; }); }
+
+// ─── STACK PERMISSIONS (server: db.js "OBJECTION STACK PERMISSIONS") ─────────
+// The server sends canEdit / canManage per stack. A stack made on this device and not yet
+// reloaded has neither — whoever made it may edit and manage it.
+export function canEditStack(stack, deckReadOnly) {
+  return !!stack && (stack.canEdit === true || (stack.canEdit === undefined && !deckReadOnly));
+}
+export function canManageStack(stack, deckReadOnly) {
+  return !!stack && (stack.canManage === true || (stack.canManage === undefined && !deckReadOnly));
+}
+
+// The owner's stack order: live stacks in the given id order, archived ones after (kept in place)
+export function reorderStacks(objStacks, ids) {
+  var all = objStacks || [];
+  var byId = {};
+  all.forEach(function(s) { byId[s.id] = s; });
+  var live = ids.map(function(id) { return byId[id]; }).filter(function(s) { return s && !s.archivedAt; });
+  var seen = {};
+  live.forEach(function(s) { seen[s.id] = true; });
+  // Live stacks the list didn't include (e.g. filtered out) keep their relative order after
+  var rest = all.filter(function(s) { return !seen[s.id] && !s.archivedAt; });
+  return live.concat(rest).concat(all.filter(function(s) { return !!s.archivedAt; }));
+}
 
 // Confirm for the owner-only permanent delete of an objection stack
 export function confirmStackDelete(stack) {

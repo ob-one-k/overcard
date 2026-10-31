@@ -135,7 +135,7 @@ export function Navigator({ deck, sessionMode, onEvent, onNavigationChange, getA
     if (!sessionMode || !onEvent) return null;
     var audioEnd   = getAudioOffset ? getAudioOffset() : null;
     var audioStart = audioEnd !== null ? Math.max(0, audioEnd - dur) : null;
-    var ev = { type:"visit", cardId:c.id, cardTitle:c.title, cardType:c.type, isObjCard:inObj, stackLabel:inObj&&objMode?objMode.stack.label:null, intendedPath:!!c.intendedPath, ts:Date.now(), durationMs:dur, audioStartMs:audioStart, audioEndMs:audioEnd };
+    var ev = { type:"visit", cardId:c.id, cardTitle:c.title, cardType:c.type, isObjCard:inObj, stackId:inObj&&objMode?objMode.stack.id:null, stackLabel:inObj&&objMode?objMode.stack.label:null, intendedPath:!!c.intendedPath, ts:Date.now(), durationMs:dur, audioStartMs:audioStart, audioEndMs:audioEnd };
     onEvent(ev);
     return ev;
   }

@@ -964,6 +964,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
           onUpdateDeck={updateDeck}
           readOnly={!deck.canEdit}
           isOwner={authUser.role === "owner"}
+          isAdmin={isAdminRole(authUser.role)}
+          orgUsers={orgUsers}
+          orgTeams={orgTeams}
+          onOpenSession={function(s){ openFromSearch({ type:"session", session:s }); }}
         />
         </Suspense>
         </TabPane>

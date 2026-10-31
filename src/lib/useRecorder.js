@@ -363,7 +363,7 @@ export function buildAudioSegments(events, durationMs) {
     if (e - s < 50) return;   // sub-50ms blips (instant double-taps) aren't worth a segment
     segs.push({
       segId: ev.ts, cardId: ev.cardId, cardTitle: ev.cardTitle, cardType: ev.cardType,
-      isObjCard: !!ev.isObjCard, stackLabel: ev.stackLabel || null, startMs: s, endMs: e,
+      isObjCard: !!ev.isObjCard, stackId: ev.stackId || null, stackLabel: ev.stackLabel || null, startMs: s, endMs: e,
     });
   });
   segs.sort(function(a, b) { return a.startMs - b.startMs; });
