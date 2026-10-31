@@ -297,7 +297,7 @@ export function DesktopSidebar({
             <nav aria-label="Main navigation (expanded)" role="dialog" aria-modal="true"
               style={Object.assign({}, navBase, {
                 position:"absolute", top:0, left:0, bottom:0,
-                width:288, maxWidth:"85vw",
+                width:360, maxWidth:"88vw",
                 boxShadow:"12px 0 48px rgba(0,0,0,.6)",
                 animation:"drawerIn .2s cubic-bezier(.22,1,.36,1) both"
               })}>
@@ -311,7 +311,7 @@ export function DesktopSidebar({
   }
 
   // ── Desktop: collapsible sidebar ────────────────────────────────────────────
-  var sidebarW = collapsed ? 72 : 256;
+  var sidebarW = collapsed ? 72 : 320;   // expanded: a quarter wider than the original 256
   return (
     <nav aria-label="Main navigation" style={Object.assign({}, navBase, {
       width: sidebarW,

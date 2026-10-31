@@ -61,7 +61,7 @@ var ResetPasswordScreen = lazyNamed("reset", "ResetPasswordScreen");
 var CommandPalette = lazyNamed("palette", "CommandPalette");
 var SessionReview  = lazyNamed("sessions", "SessionReview");
 function prefetchChunks(isAdmin, isDesktop) {
-  var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home"].concat(isAdmin ? ["admin"] : []).concat(isDesktop ? ["palette"] : []);
+  var keys = ["sessions", "cards", isDesktop ? "homeDesk" : "home", "palette"].concat(isAdmin ? ["admin"] : []);
   var idle = window.requestIdleCallback || function(fn) { return setTimeout(fn, 1200); };
   // Prefetch fills the module cache on success only — a failed prefetch (flaky network)
   // must not count as the tab's failure; opening the tab tries again on its own
@@ -89,7 +89,7 @@ import { useDesktop } from "./lib/useDesktop";
 import { PRESS_CSS } from "./lib/pressFeedback";
 import { useSlidingIndicator } from "./lib/useSlidingIndicator";
 import { useKeyboardOpen } from "./lib/useViewport";
-import { TabIcon } from "./components/TabIcons";
+import { TabIcon, SearchIcon } from "./components/TabIcons";
 import { newDeckTemplate, duplicateDeck as duplicateDeckData, activeDecks, liveStacks } from "./lib/deckOps";
 import DesktopCtx from "./lib/DesktopCtx";
 import { DesktopShell } from "./components/DesktopShell";
@@ -350,7 +350,7 @@ function MobileTabBar({ tabs, tab, onTabClick }) {
 // rail: the deck switcher on top, the tabs (same sliding org-accent indicator as the
 // tab bar) in the middle, notifications + profile at the bottom. Tab labels drop out
 // on very short screens.
-function LandscapeRail({ tabs, tab, onTabClick, deck, decksCount, authUser, onOpenDeck, onOpenProfile, onOpenSession }) {
+function LandscapeRail({ tabs, tab, onTabClick, deck, decksCount, authUser, onOpenDeck, onOpenProfile, onOpenSession, onOpenSearch }) {
   var listRef = useRef(null);
   var ind = useSlidingIndicator(listRef, tab, [tabs.length]);
   var admin = isAdminRole(authUser.role);
@@ -362,6 +362,10 @@ function LandscapeRail({ tabs, tab, onTabClick, deck, decksCount, authUser, onOp
         style={{width:48,height:44,borderRadius:13,background:deck.color+"22",border:"1.5px solid "+deck.color+"77",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",fontFamily:"inherit",flexShrink:0,gap:0,padding:0}}>
         <span style={{fontSize:18,lineHeight:1}}>{deck.icon}</span>
         <span aria-hidden="true" style={{fontSize:8,color:"rgba(255,255,255,.45)",lineHeight:1,marginTop:2}}>⇅</span>
+      </button>
+      <button onClick={onOpenSearch} aria-label="Search decks, cards and sessions" title="Search"
+        style={{width:44,height:30,borderRadius:10,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(255,255,255,.75)",padding:0,flexShrink:0,fontFamily:"inherit"}}>
+        <SearchIcon size={15}/>
       </button>
       <div ref={listRef} style={{position:"relative",flex:1,minHeight:0,width:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
         {ind.style && <div aria-hidden="true" style={Object.assign({}, ind.style, {borderRadius:12,background:accentA(.13),border:"1.5px solid "+accentA(.6),boxSizing:"border-box"})}/>}
@@ -429,6 +433,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
   var [hlOverlay, setHlOverlay] = useState(null);
   // Command palette visibility (desktop only)
   var [showCmdPalette, setShowCmdPalette] = useState(false);
+  // A card to open once Cards / Objections show the right deck (from search): { deckId, cardId, stackId?, nonce }
+  var [focusRequest, setFocusRequest] = useState(null);
   // Dirty deck tracking for per-deck autosave
   var dirtyIds = useRef(new Set());
   // Tab transition direction: +1 when moving to a tab further along the nav, -1 back
@@ -714,6 +720,30 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
     else setHlOverlay(s);
   }
 
+  // Search results → where they live. The palette has already confirmed any deck switch.
+  function openFromSearch(item) {
+    if (item.type === "deck") { switchDeckWithDissolve(item.id); return; }
+    if (item.type === "card") {
+      var go = function() {
+        setFocusRequest({ deckId:item.deckId, cardId:item.cardId, stackId:item.stackId || null, nonce:Date.now() });
+        switchTab(item.stackId ? "objections" : "cards");
+      };
+      if (item.deckId !== activeId) switchDeckWithDissolve(item.deckId, go); else go();
+      return;
+    }
+    if (item.type === "session") {
+      var s = item.session;
+      // A session on a deck this person can't open here is reviewed read-only in the overlay
+      if (!liveDecks.some(function(d) { return d.id === s.deckId; })) { setHlOverlay(s); return; }
+      var open = function() {
+        // Another rep's session: an admin's Sessions list must cover the org to show it
+        if (isAdminRole(authUser.role) && s.userId !== authUser.id && !s._shared && !s._highlight) setViewScope("org");
+        setPendingReview(s.id); switchTab("sessions");
+      };
+      if (s.deckId !== activeId) switchDeckWithDissolve(s.deckId, open); else open();
+    }
+  }
+
   // ── Tab switching ─────────────────────────────────────────────────────────────
   function handleTabClick(tabId) {
     if (tabId !== "sessions") setPendingReview(null); // clear portal on manual nav
@@ -907,6 +937,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         <Suspense fallback={<TabFallback/>}>
         <CardsTab
           key={deck.id+"-cards"}
+          focus={focusRequest && focusRequest.deckId === deck.id && !focusRequest.stackId ? focusRequest : null}
+          onFocusDone={function(){ setFocusRequest(null); }}
           deck={deck}
           decks={liveDecks}
           onUpsert={upsertCard}
@@ -922,6 +954,8 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         <Suspense fallback={<TabFallback/>}>
         <ObjectionsTab
           key={deck.id+"-obj"}
+          focus={focusRequest && focusRequest.deckId === deck.id && focusRequest.stackId ? focusRequest : null}
+          onFocusDone={function(){ setFocusRequest(null); }}
           deck={deck}
           decks={liveDecks}
           onUpdateDeck={updateDeck}
@@ -1027,7 +1061,7 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
         <div style={{position:"fixed",left:0,right:0,top:"var(--vvt, 0px)",height:"var(--vvh, 100dvh)",display:"flex",background:themed("linear-gradient(180deg, #060d1a 0%, #071025 50%, #060d1a 100%)")}}>
           <LandscapeRail tabs={TABS} tab={tab} onTabClick={handleTabClick} deck={deck} decksCount={liveDecks.length}
             authUser={authUser} onOpenDeck={function(){setShowDS(true);}} onOpenProfile={function(){ setShowProfile(true); }}
-            onOpenSession={openSessionFromNotification}/>
+            onOpenSession={openSessionFromNotification} onOpenSearch={function(){ setShowCmdPalette(true); }}/>
           <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             {!serverOk && (
               <div style={{background:"rgba(239,83,80,.14)",borderBottom:"1px solid rgba(239,83,80,.28)",padding:"4px 16px",fontSize:10,color:"#EF5350",textAlign:"center",flexShrink:0}}>
@@ -1068,6 +1102,10 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
             </div>
 
             <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button onClick={function(){ setShowCmdPalette(true); }} aria-label="Search decks, cards and sessions"
+                style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(255,255,255,.82)",padding:0,fontFamily:"inherit"}}>
+                <SearchIcon size={16}/>
+              </button>
               <NotificationBell onOpenSession={openSessionFromNotification}/>
               <button onClick={function(){ setShowProfile(true); }}
                 style={{width:34,height:34,borderRadius:"50%",background:isAdminRole(authUser.role)?accentA(.12):"rgba(255,255,255,.06)",border:"1px solid "+(isAdminRole(authUser.role)?accentA(.3):"rgba(255,255,255,.12)"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,cursor:"pointer",color:isAdminRole(authUser.role)?SESS_COLOR:"rgba(255,255,255,.82)",fontFamily:"inherit",fontWeight:700}}
@@ -1124,13 +1162,16 @@ function MainApp({ authUser, onLogout, onOrgUpdated }) {
             onClose={function(){ setShowProfile(false); }}
           />
         )}
-        {desktop.isDesktop && showCmdPalette && (
+        {showCmdPalette && (
           <Suspense fallback={null}>
           <CommandPalette
             tabs={TABS}
             decks={liveDecks}
+            activeDeckId={activeId}
+            authUser={authUser}
+            sessionActive={sessionActive}
             onNavigateTab={function(tabId){ handleTabClick(tabId); }}
-            onSwitchDeck={switchDeck}
+            onOpen={openFromSearch}
             onClose={function(){ setShowCmdPalette(false); }}
           />
           </Suspense>

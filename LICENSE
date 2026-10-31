@@ -1,21 +1,85 @@
-MIT License
+OverCard Proprietary Software License
 
-Copyright (c) 2026 Jay Cub Lever
+Copyright (c) 2026 Jay Cub Lever. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software, including its source code, object code, documentation, designs and
+all related materials (the "Software"), is proprietary to Jay Cub Lever (the
+"Licensor") and is protected by copyright and other intellectual property laws.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. NO LICENSE WITHOUT AGREEMENT
+   No right to use, copy, modify, host or distribute the Software is granted by this
+   file or by access to it. The Software may be used only by a customer that has
+   entered into a written license, subscription or order agreement with the Licensor
+   (an "Agreement"), only for the term, number of users, organizations and purposes
+   stated in that Agreement, and only while all fees under it are paid.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. LICENSE GRANT UNDER AN AGREEMENT
+   Subject to an Agreement and this license, the Licensor grants the customer a
+   limited, non-exclusive, non-transferable, non-sublicensable, revocable right to
+   access and use the Software for the customer's internal business purposes during
+   the Agreement's term. If an Agreement conflicts with this license, the Agreement
+   controls.
+
+3. RESTRICTIONS
+   Except as expressly allowed by an Agreement, no one may:
+   (a) copy, modify, translate or create derivative works of the Software;
+   (b) sell, resell, rent, lease, lend, sublicense, distribute or otherwise make the
+       Software available to any third party, including as a hosted, managed or
+       "software as a service" offering;
+   (c) reverse engineer, decompile or disassemble the Software, or try to derive its
+       source code, except to the extent applicable law expressly allows despite this
+       restriction;
+   (d) remove, alter or obscure any copyright, trademark or other proprietary notice;
+   (e) bypass or interfere with any license key, usage limit, access control or
+       security feature of the Software;
+   (f) use the Software to build a competing product or service, or for benchmarking
+       intended for publication, without the Licensor's prior written consent.
+
+4. OWNERSHIP
+   The Software is licensed, not sold. The Licensor and its licensors keep all right,
+   title and interest in and to the Software, including all copies, updates,
+   modifications and derivative works, and all intellectual property rights in them.
+   All rights not expressly granted are reserved. Feedback a customer gives about the
+   Software may be used by the Licensor freely and without obligation.
+
+5. CUSTOMER DATA
+   Data a customer enters into the Software remains the customer's. Its handling is
+   governed by the Agreement and any applicable data processing terms.
+
+6. CONFIDENTIALITY
+   The Software, including its source code and any non-public documentation, is the
+   Licensor's confidential information. Anyone with access to it must protect it with
+   at least reasonable care and use it only as an Agreement allows.
+
+7. TERMINATION
+   Any right to use the Software ends automatically when the Agreement expires or is
+   terminated, or upon any breach of this license. On termination, all use must stop
+   and all copies of the Software in the customer's possession must be deleted or
+   returned. Sections 3 through 10 survive termination.
+
+8. THIRD-PARTY COMPONENTS
+   The Software includes open-source components that are licensed under their own
+   terms, which apply to those components. Nothing in this license limits rights
+   granted by those open-source licenses.
+
+9. DISCLAIMER OF WARRANTIES
+   EXCEPT AS EXPRESSLY STATED IN AN AGREEMENT, THE SOFTWARE IS PROVIDED "AS IS" AND
+   "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING ANY
+   WARRANTY OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE OR
+   NON-INFRINGEMENT.
+
+10. LIMITATION OF LIABILITY
+    TO THE MAXIMUM EXTENT PERMITTED BY LAW, AND EXCEPT AS EXPRESSLY STATED IN AN
+    AGREEMENT, THE LICENSOR WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+    CONSEQUENTIAL OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA OR
+    GOODWILL, ARISING OUT OF OR RELATED TO THE SOFTWARE. THE LICENSOR'S TOTAL LIABILITY
+    WILL NOT EXCEED THE FEES PAID FOR THE SOFTWARE IN THE TWELVE MONTHS BEFORE THE
+    EVENT GIVING RISE TO THE CLAIM.
+
+11. GENERAL
+    This license is governed by the laws of the jurisdiction named in the Agreement or,
+    if none is named, the laws of the Licensor's principal place of business, without
+    regard to conflict-of-laws rules. If any provision is held unenforceable, the rest
+    remains in effect. No waiver is effective unless in writing.
+
+For licensing, pricing or permissions, contact the Licensor.

@@ -2,6 +2,7 @@
   "name": "overcard",
   "version": "2.1.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "server": "NODE_ENV=development PORT=3001 node server/index.js",
     "client": "vite",

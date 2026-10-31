@@ -23,7 +23,8 @@ export function CardsTab(props) {
   return desktop.isDesktop ? <CardsDesktop {...props}/> : <CardsMobile {...props}/>;
 }
 
-function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+// focus (from search): { cardId, stackId?, nonce } — open that card once, then onFocusDone()
+function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly, focus, onFocusDone }) {
   var desktop = useContext(DesktopCtx);
   var [showImport, setShowImport] = useState(false);
   function importCards(res) {
@@ -34,6 +35,12 @@ function CardsMobile({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }
 
   var [viewMode,        setViewMode]        = useState("list");
   var [editing,         setEditing]         = useState(null);
+  useEffect(function() {
+    if (!focus) return;
+    var c = deck.cards[focus.cardId];
+    if (c) setEditing(c);
+    if (onFocusDone) onFocusDone();
+  }, [focus && focus.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   var [navDir,          setNavDir]          = useState(null);
   var [search,          setSearch]          = useState("");
   var [collapsedGroups, setCollapsedGroups] = useState({});
@@ -607,7 +614,8 @@ export function ObjectionsTab(props) {
   return desktop.isDesktop ? <ObjectionsDesktop {...props}/> : <ObjectionsMobile {...props}/>;
 }
 
-function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
+// focus (from search): { cardId, stackId?, nonce } — open that card once, then onFocusDone()
+function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner, focus, onFocusDone }) {
   var desktop = useContext(DesktopCtx);
   var stacks   = liveStacks(deck);
   var archived = readOnly ? [] : archivedStacks(deck);
@@ -619,6 +627,12 @@ function ObjectionsMobile({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
 
   var [editing, setEditing]       = useState(null);
   var [pendingCard, setPendingCard] = useState(null);
+  useEffect(function() {
+    if (!focus) return;
+    var st = (deck.objStacks || []).find(function(x) { return x.id === focus.stackId; });
+    if (st) { setPendingCard((st.cards || {})[focus.cardId] || null); setEditing(st); }
+    if (onFocusDone) onFocusDone();
+  }, [focus && focus.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   var [showNew, setShowNew]       = useState(false);
   var [viewMode, setViewMode]     = useState("list");
   var [selectedStackId, setSelectedStackId] = useState(null);

@@ -126,7 +126,8 @@ function StackReadView({ stack, deckCards, isTablet }) {
 //    beside a CardStage editor; Tree mode = editor docked left of the stack tree.
 //    Every edit saves straight to the deck (autosave) — there is no Save Stack step.
 //  • Read-only users get StackReadView for the open stack.
-export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner }) {
+// focus (from search): { cardId, stackId?, nonce } — open that card once, then onFocusDone()
+export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner, focus, onFocusDone }) {
   var desktop = useContext(DesktopCtx);
   var isTablet = !!desktop.isTablet;
   var [selectedId, setSelectedIdSt] = useState(null);
@@ -152,6 +153,13 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
   function selectStack(id) {
     setSelectedIdSt(id); setEditing(null); setNavDir(null); setCardSearch(""); setShowSwitch(false);
   }
+  useEffect(function() {
+    if (!focus) return;
+    var st = (deck.objStacks || []).find(function(x) { return x.id === focus.stackId; });
+    var c = st && (st.cards || {})[focus.cardId];
+    if (st) { selectStack(st.id); if (c) { setNavDir(null); setEditing(c); } }
+    if (onFocusDone) onFocusDone();
+  }, [focus && focus.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Resizable left pane ──────────────────────────────────────────────────────
   var [leftW, setLeftW] = useState(function() {

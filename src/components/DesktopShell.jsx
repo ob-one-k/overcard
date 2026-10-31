@@ -2,7 +2,7 @@ import { useState, useEffect, useContext } from "react";
 import { DesktopSidebar } from "./DesktopSidebar";
 import DesktopCtx from "../lib/DesktopCtx";
 import { isAdminRole, roleMeta, SESS_COLOR, accentA, themed } from "../lib/constants";
-import { TabIcon } from "./TabIcons";
+import { TabIcon, SearchIcon } from "./TabIcons";
 import { lsGet, lsSet } from "../lib/api";
 import { dividerV } from "../lib/styles";
 import { NotificationBell } from "./NotificationBell";
@@ -219,28 +219,29 @@ export function DesktopShell({
             </div>
           )}
 
-          {/* ⌘K command palette trigger — icon-only 44px button on tablet */}
+          {/* Search (⌘K palette) — a compact pill on tablet, a wider field-like button on desktop */}
           {onOpenCommandPalette && compact && (
             <button
               onClick={onOpenCommandPalette}
-              title="Search tabs, cards and sessions"
-              aria-label="Search tabs, cards and sessions"
+              title="Search decks, cards and sessions"
+              aria-label="Search decks, cards and sessions"
               style={{
-                width:44, height:44, flexShrink:0,
+                height:44, flexShrink:0, padding:"0 16px 0 13px",
                 background:"rgba(255,255,255,.06)",
                 border:"1px solid rgba(255,255,255,.1)",
                 borderRadius:12, cursor:"pointer",
-                color:"rgba(255,255,255,.7)", fontSize:18,
-                display:"flex", alignItems:"center", justifyContent:"center",
+                color:"rgba(255,255,255,.7)", fontSize:14,
+                display:"flex", alignItems:"center", gap:8,
                 fontFamily:"inherit"
               }}>
-              <span aria-hidden="true">⌕</span>
+              <SearchIcon size={17}/>
+              <span>Search</span>
             </button>
           )}
           {onOpenCommandPalette && !compact && (
             <button
               onClick={onOpenCommandPalette}
-              title="Search tabs, cards and sessions"
+              title="Search decks, cards and sessions"
               style={{
                 background:"rgba(255,255,255,.06)",
                 border:"1px solid rgba(255,255,255,.1)",
@@ -250,7 +251,7 @@ export function DesktopShell({
                 display:"flex", alignItems:"center", gap:10, minWidth:220,
                 fontFamily:"inherit", flexShrink:0
               }}>
-              <span aria-hidden="true" style={{fontSize:14}}>⌕</span>
+              <SearchIcon size={15}/>
               <span style={{flex:1,textAlign:"left"}}>Search…</span>
               <span style={{fontSize:11,fontWeight:600,border:"1px solid rgba(255,255,255,.16)",borderRadius:6,padding:"2px 7px",color:"rgba(255,255,255,.55)"}}>{cmdLabel}</span>
             </button>

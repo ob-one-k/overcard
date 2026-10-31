@@ -137,8 +137,10 @@ export function CardReadView({ card, cards, rootCard, onOpen, onClose, accent, s
 //             Detail pane: editor (admin) / read-only view (user) for the
 //             selected card, or a deck overview (intended path, type mix,
 //             cards needing attention) when nothing is selected.
-// TREE mode — summary rail (260px) + TreeView + editor/read view side panel.
-export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly }) {
+// TREE mode — summary rail (260px) + TreeView; opening a card works like LIST mode
+//             (tree folds into a rail / resizable pane, the card goes on the stage).
+// focus (from search): { cardId, stackId?, nonce } — open that card once, then onFocusDone()
+export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, readOnly, focus, onFocusDone }) {
   var desktop = useContext(DesktopCtx);
   var isTablet = !!desktop.isTablet;
   var [viewMode,  setViewMode]  = useState("list");
@@ -162,9 +164,10 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
   var dragStartW = useRef(380);
   var leftWRef   = useRef(leftW);
   var [isDragging, setIsDragging] = useState(false);
-  // Tree mode: the card editor docks on the LEFT of the tree and can be folded to a slim rail
-  var [treeEdCollapsed, setTreeEdCollapsedSt] = useState(function(){ return lsGet("overcard_tree_editorCollapsed") === "1"; });
-  function setTreeEdCollapsed(v) { setTreeEdCollapsedSt(v); lsSet("overcard_tree_editorCollapsed", v ? "1" : "0"); }
+  // Tree mode, card open: like List mode — the tree folds into a "Tree" rail (or a resizable
+  // pane with ‹ Collapse) and the card opens on the stage. Desktop preference, persisted.
+  var [treeRail, setTreeRailSt] = useState(function(){ return lsGet("overcard_cards_treeRail") !== "0"; });
+  function setTreeRail(v) { setTreeRailSt(v); lsSet("overcard_cards_treeRail", v ? "1" : "0"); }
   // Overview performance data — sessions run on this deck (whole org for admins, own for users)
   var [perfScope, setPerfScope] = useState(readOnly ? "self" : "org");
   var [perfMode,  setPerfMode]  = useState("all");       // all | live | practice
@@ -243,6 +246,12 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
     setEditing({ id:uid(), title:"", type:"pitch", overview:[], intendedPath:false, prompt:"", answers:[{id:aid(),label:"",next:null}] });
   }
   function openCard(card) { setNavDir(null); setEditing(card); }
+  useEffect(function() {
+    if (!focus) return;
+    var c = deck.cards[focus.cardId];
+    if (c) openCard(c);
+    if (onFocusDone) onFocusDone();
+  }, [focus && focus.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   // Cards copied from another deck in the org (fresh ids, off the intended path)
   function importCards(res) {
     onUpdateDeck(deck.id, function(d) {
@@ -348,65 +357,44 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
   // ── Detail panel (editor for admins, read view for users) ───────────────────
   // staged=true (list mode) → wrapped in CardStage; tree mode keeps the plain panel.
   function closeCard() { setEditing(null); setNavDir(null); }
-  function renderDetail(staged) {
+  // The open card on the stage (List and Tree modes)
+  function renderDetail() {
     if (!editing) return null;
-    if (staged) {
-      var stageCard = readOnly ? (deck.cards[editing.id] || editing) : editing;
-      return (
-        <CardStage
-          card={stageCard}
-          cards={deck.cards}
-          rootCard={deck.rootCard}
-          navDir={navDir}
-          onNavigate={function(target, dir){ setNavDir(dir||null); setEditing(target); }}
-          onBack={isTablet ? closeCard : null}
-          backLabel="All cards"
-          renderCenter={function(c, api) {
-            if (readOnly) {
-              return <CardReadView key={c.id} card={c} cards={deck.cards} rootCard={deck.rootCard} staged={true}
-                onOpen={function(t){ setNavDir("forward"); setEditing(t); }} onClose={closeCard}/>;
-            }
-            return (
-              <CardEditorSheet
-                key={c.id}
-                card={c}
-                allCards={deck.cards}
-                rootCard={deck.rootCard}
-                accentColor={TM[c.type] ? TM[c.type].color : "#00B4FF"}
-                navDir={null}
-                staged={true}
-                navRef={api.navRef}
-                onFormChange={api.onFormChange}
-                onSave={function(card){ safeUpsert(deck.id, card); closeCard(); }}
-                onDelete={function(id){ onDelete(deck.id, id); closeCard(); }}
-                onClose={closeCard}
-                onNavigateTo={function(targetCard, dir){ setNavDir(dir||null); setEditing(targetCard); }}
-                onSaveAndNavigateTo={function(form, targetCard, dir){ safeUpsert(deck.id, form); setNavDir(dir||null); setEditing(targetCard); }}
-                inline={true}
-              />
-            );
-          }}
-        />
-      );
-    }
-    if (readOnly) {
-      var live = deck.cards[editing.id] || editing;
-      return <CardReadView card={live} cards={deck.cards} rootCard={deck.rootCard} onOpen={openCard} onClose={function(){ setEditing(null); }}/>;
-    }
+    var stageCard = readOnly ? (deck.cards[editing.id] || editing) : editing;
     return (
-      <CardEditorSheet
-        key={editing.id}
-        card={editing}
-        allCards={deck.cards}
+      <CardStage
+        card={stageCard}
+        cards={deck.cards}
         rootCard={deck.rootCard}
-        accentColor={TM[editing.type] ? TM[editing.type].color : "#00B4FF"}
         navDir={navDir}
-        onSave={function(card){ safeUpsert(deck.id, card); setEditing(null); setNavDir(null); }}
-        onDelete={readOnly ? null : function(id){ onDelete(deck.id, id); setEditing(null); setNavDir(null); }}
-        onClose={function(){ setEditing(null); setNavDir(null); }}
-        onNavigateTo={function(targetCard, dir){ setNavDir(dir||null); setEditing(targetCard); }}
-        onSaveAndNavigateTo={function(form, targetCard, dir){ safeUpsert(deck.id, form); setNavDir(dir||null); setEditing(targetCard); }}
-        inline={true}
+        onNavigate={function(target, dir){ setNavDir(dir||null); setEditing(target); }}
+        onBack={isTablet ? closeCard : null}
+        backLabel={viewMode === "tree" ? "Tree" : "All cards"}
+        renderCenter={function(c, api) {
+          if (readOnly) {
+            return <CardReadView key={c.id} card={c} cards={deck.cards} rootCard={deck.rootCard} staged={true}
+              onOpen={function(t){ setNavDir("forward"); setEditing(t); }} onClose={closeCard}/>;
+          }
+          return (
+            <CardEditorSheet
+              key={c.id}
+              card={c}
+              allCards={deck.cards}
+              rootCard={deck.rootCard}
+              accentColor={TM[c.type] ? TM[c.type].color : "#00B4FF"}
+              navDir={null}
+              staged={true}
+              navRef={api.navRef}
+              onFormChange={api.onFormChange}
+              onSave={function(card){ safeUpsert(deck.id, card); closeCard(); }}
+              onDelete={function(id){ onDelete(deck.id, id); closeCard(); }}
+              onClose={closeCard}
+              onNavigateTo={function(targetCard, dir){ setNavDir(dir||null); setEditing(targetCard); }}
+              onSaveAndNavigateTo={function(form, targetCard, dir){ safeUpsert(deck.id, form); setNavDir(dir||null); setEditing(targetCard); }}
+              inline={true}
+            />
+          );
+        }}
       />
     );
   }
@@ -839,7 +827,7 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
 
             {/* Right pane: card stage (editor / read view) or overview */}
             <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
-              {editing ? renderDetail(true) : renderOverview()}
+              {editing ? renderDetail() : renderOverview()}
             </div>
           </>
         )}
@@ -881,42 +869,41 @@ export function CardsDesktop({ deck, decks, onUpsert, onDelete, onUpdateDeck, re
               </div>
             </div>}
 
-            {/* Left: card editor / read view — collapsible so the tree can take the full width.
-                One element for both states: collapsing only hides the editor (display:none), so it stays
-                mounted and unsaved edits survive collapse → expand. A full-height grab bar on the panel's
-                right edge toggles it, so the control never sits on top of editor content. */}
-            {editing && (
-              <div style={{width:treeEdCollapsed ? 44 : (isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)"),flexShrink:0,display:"flex",overflow:"hidden",
-                borderRight:"1px solid rgba(255,255,255,.1)",background:themed("rgba(8,20,50,.85)"),transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
-                <div style={{flex:1,minWidth:0,display:treeEdCollapsed ? "none" : "flex",flexDirection:"column",overflow:"hidden"}}>
-                  {renderDetail(false)}
-                </div>
-                <button onClick={function(){ setTreeEdCollapsed(!treeEdCollapsed); }}
-                  title={treeEdCollapsed ? "Show card editor" : "Collapse card editor"}
-                  aria-label={treeEdCollapsed ? "Show editor for " + (editing.title || "card") : "Collapse card editor"}
-                  aria-expanded={!treeEdCollapsed}
-                  style={{width:treeEdCollapsed ? 44 : (isTablet ? 28 : 18),flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:treeEdCollapsed ? "flex-start" : "center",gap:12,
-                    padding:treeEdCollapsed ? "14px 0" : 0,background:treeEdCollapsed ? "transparent" : "rgba(255,255,255,.03)",border:"none",
-                    borderLeft:treeEdCollapsed ? "none" : "1px solid rgba(255,255,255,.07)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
-                  <span style={{fontSize:treeEdCollapsed ? 16 : 13,color:TXT}}>{treeEdCollapsed ? "›" : "‹"}</span>
-                  {treeEdCollapsed && (
-                    <span style={{writingMode:"vertical-rl",transform:"rotate(180deg)",fontSize:13,fontWeight:700,letterSpacing:.5,color:(TM[editing.type] || TM.pitch).color,whiteSpace:"nowrap",overflow:"hidden",maxHeight:"70vh"}}>
-                      {readOnly ? "View" : "Edit"} · {editing.title || "New card"}
-                    </span>
-                  )}
-                </button>
-              </div>
-            )}
+            {/* Card open: the tree folds into a rail on desktop (same as the Cards list) */}
+            {editing && !isTablet && treeRail && <PaneRail label="Tree" color={deck.color} onExpand={function(){ setTreeRail(false); }}/>}
 
-            {/* Center: full tree view */}
-            <div style={{flex:1,overflow:"hidden",position:"relative",minWidth:0}}>
+            {/* The tree: full width with nothing open; a resizable pane beside the stage when
+                expanded; hidden on tablets while a card is on the stage (its back pill returns) */}
+            {(!editing || (!isTablet && !treeRail)) && <>
+            <div style={editing
+              ? {width:leftW,minWidth:leftW,flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",background:themed("rgba(4,12,32,.35)")}
+              : {flex:1,overflow:"hidden",position:"relative",minWidth:0,display:"flex",flexDirection:"column"}}>
+              {editing && (
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:"1px solid "+LINE,flexShrink:0}}>
+                  <span style={{fontSize:13,fontWeight:700,color:TXT3,letterSpacing:1,textTransform:"uppercase",flex:1}}>Tree</span>
+                  <button onClick={function(){ setTreeRail(true); }} title="Collapse the tree to give the card stage more room"
+                    style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT2,fontSize:13,padding:"4px 10px",cursor:"pointer",fontFamily:"inherit"}}>‹ Collapse</button>
+                </div>
+              )}
               <TreeView
                 cards={deck.cards}
                 rootCard={deck.rootCard}
-                onEdit={function(c){ setTreeEdCollapsed(false); openCard(c); }}
+                onEdit={function(c){ openCard(c); }}
                 onSetRoot={readOnly ? null : function(id){ onUpdateDeck(deck.id, function(d){ return Object.assign({},d,{rootCard:id}); }); }}
               />
             </div>
+            {editing && (
+              <div onMouseDown={startDrag} title="Drag to resize"
+                style={Object.assign({},resizeHandle(),{background:isDragging?"rgba(255,255,255,.1)":"transparent"})}/>
+            )}
+            </>}
+
+            {/* The open card on the stage (editor / read view) */}
+            {editing && (
+              <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
+                {renderDetail()}
+              </div>
+            )}
           </>
         )}
 
