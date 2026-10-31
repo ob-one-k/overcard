@@ -145,8 +145,10 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
   // While a card is on the stage the stack's card list folds into a rail (desktop, persisted)
   var [listRail, setListRailSt] = useState(function(){ return lsGet("overcard_obj_listRail") !== "0"; });
   function setListRail(v) { setListRailSt(v); lsSet("overcard_obj_listRail", v ? "1" : "0"); }
-  var [treeEdCollapsed, setTreeEdCollapsedSt] = useState(function(){ return lsGet("overcard_obj_treeEdCollapsed") === "1"; });
-  function setTreeEdCollapsed(v) { setTreeEdCollapsedSt(v); lsSet("overcard_obj_treeEdCollapsed", v ? "1" : "0"); }
+  // Tree mode, card open: like the Cards tab — the tree folds into a "Tree" rail (or a resizable
+  // pane with ‹ Collapse) and the card opens on the stage. Desktop preference, persisted.
+  var [treeRail, setTreeRailSt] = useState(function(){ return lsGet("overcard_obj_treeRail") !== "0"; });
+  function setTreeRail(v) { setTreeRailSt(v); lsSet("overcard_obj_treeRail", v ? "1" : "0"); }
   var [showNew,    setShowNew]    = useState(false);
   var [nf,         setNf]         = useState({ label:"", icon:"😐" });
   var [search,     setSearch]     = useState("");
@@ -584,7 +586,7 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
         endLabel={endLabel}
         onNavigate={function(c, dir){ openCard(c, dir); }}
         onBack={isTablet ? closeCard : null}
-        backLabel="Stack cards"
+        backLabel={viewMode === "tree" ? "Tree" : "Stack cards"}
         renderCenter={editorFor}
       />
     );
@@ -695,38 +697,43 @@ export function ObjectionsDesktop({ deck, decks, onUpdateDeck, readOnly, isOwner
           )}
           {viewMode === "tree" && (
             <>
+              {/* Card open: the tree folds into a rail on desktop (same as the Cards tab) */}
+              {editing && !isTablet && treeRail && <PaneRail label="Tree" color={OBJ_COLOR} onExpand={function(){ setTreeRail(false); }}/>}
+              {/* The tree: full width with nothing open; a resizable pane beside the stage when
+                  expanded; hidden on tablets while a card is on the stage (its back pill returns) */}
+              {(!editing || (!isTablet && !treeRail)) && <>
+                <div style={editing
+                  ? {width:leftW,minWidth:leftW,flexShrink:0,display:"flex",flexDirection:"column",overflow:"hidden",background:themed("rgba(4,12,32,.35)")}
+                  : {flex:1,overflow:"hidden",position:"relative",minWidth:0,display:"flex",flexDirection:"column"}}>
+                  {editing && (
+                    <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:"1px solid "+LINE,flexShrink:0}}>
+                      <span style={{fontSize:13,fontWeight:700,color:TXT3,letterSpacing:1,textTransform:"uppercase",flex:1}}>Tree</span>
+                      <button onClick={function(){ setTreeRail(true); }} title="Collapse the tree to give the card stage more room"
+                        style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,color:TXT2,fontSize:13,padding:"4px 10px",cursor:"pointer",fontFamily:"inherit"}}>‹ Collapse</button>
+                    </div>
+                  )}
+                  {Object.keys(stack.cards || {}).length ? (
+                    <TreeView cards={stack.cards} rootCard={stack.rootCard}
+                      onEdit={function(c){ openCard(c, null); }}
+                      onSetRoot={function(id){ updateStack(stack.id, function(st){ return Object.assign({}, st, { rootCard:id }); }); }}/>
+                  ) : (
+                    <div style={{margin:"auto",textAlign:"center",color:TXT3,fontSize:15,lineHeight:1.7}}>
+                      No cards in this stack yet.<br/>
+                      <button onClick={newCard} style={Object.assign({},solidBtn(OBJ_COLOR),{marginTop:12,fontSize:14})}>+ Create the entry card</button>
+                    </div>
+                  )}
+                </div>
+                {editing && (
+                  <div onMouseDown={startDrag} title="Drag to resize"
+                    style={Object.assign({},resizeHandle(),{background:isDragging?"rgba(255,255,255,.1)":"transparent"})}/>
+                )}
+              </>}
+              {/* The open card on the stage */}
               {editing && (
-                <div style={{width:treeEdCollapsed ? 44 : (isTablet ? "clamp(360px, 46%, 500px)" : "clamp(420px, 36%, 560px)"),flexShrink:0,display:"flex",overflow:"hidden",
-                  borderRight:"1px solid rgba(255,255,255,.1)",background:themed("rgba(8,20,50,.85)"),transition:"width .22s cubic-bezier(.22,1,.36,1)"}}>
-                  <div style={{flex:1,minWidth:0,display:treeEdCollapsed ? "none" : "flex",flexDirection:"column",overflow:"hidden"}}>
-                    {renderEditor(stack, false)}
-                  </div>
-                  <button onClick={function(){ setTreeEdCollapsed(!treeEdCollapsed); }}
-                    title={treeEdCollapsed ? "Show card editor" : "Collapse card editor"} aria-expanded={!treeEdCollapsed}
-                    style={{width:treeEdCollapsed ? 44 : (isTablet ? 28 : 18),flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:treeEdCollapsed ? "flex-start" : "center",gap:12,
-                      padding:treeEdCollapsed ? "14px 0" : 0,background:treeEdCollapsed ? "transparent" : "rgba(255,255,255,.03)",border:"none",
-                      borderLeft:treeEdCollapsed ? "none" : "1px solid rgba(255,255,255,.07)",cursor:"pointer",fontFamily:"inherit",color:TXT2}}>
-                    <span style={{fontSize:treeEdCollapsed ? 16 : 13,color:TXT}}>{treeEdCollapsed ? "›" : "‹"}</span>
-                    {treeEdCollapsed && (
-                      <span style={{writingMode:"vertical-rl",transform:"rotate(180deg)",fontSize:13,fontWeight:700,letterSpacing:.5,color:OBJ_COLOR,whiteSpace:"nowrap",overflow:"hidden",maxHeight:"70vh"}}>
-                        Edit · {editing.title || "New card"}
-                      </span>
-                    )}
-                  </button>
+                <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0,background:themed("rgba(8,20,50,.2)")}}>
+                  {renderEditor(stack, true)}
                 </div>
               )}
-              <div style={{flex:1,overflow:"hidden",position:"relative",minWidth:0,display:"flex",flexDirection:"column"}}>
-                {Object.keys(stack.cards || {}).length ? (
-                  <TreeView cards={stack.cards} rootCard={stack.rootCard}
-                    onEdit={function(c){ setTreeEdCollapsed(false); openCard(c, null); }}
-                    onSetRoot={function(id){ updateStack(stack.id, function(st){ return Object.assign({}, st, { rootCard:id }); }); }}/>
-                ) : (
-                  <div style={{margin:"auto",textAlign:"center",color:TXT3,fontSize:15,lineHeight:1.7}}>
-                    No cards in this stack yet.<br/>
-                    <button onClick={newCard} style={Object.assign({},solidBtn(OBJ_COLOR),{marginTop:12,fontSize:14})}>+ Create the entry card</button>
-                  </div>
-                )}
-              </div>
             </>
           )}
         </div>

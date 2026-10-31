@@ -48,18 +48,6 @@ export function DesktopSidebar({
   }, [drawerOpen]);
   useEffect(function() { if (!compact) setDrawerOpen(false); }, [compact]);
 
-  var saveColor = !serverOk
-    ? "#EF5350"
-    : saveStatus === "saving"
-    ? "#FFD54F"
-    : saveStatus === "error"
-    ? "#EF5350"
-    : "rgba(102,187,106,.9)";
-
-  var saveDot = saveStatus === "saving"
-    ? { animation:"savePulse 1s ease infinite" }
-    : {};
-
   var role     = authUser.role;
   var rm       = roleMeta(role);
   var isAdmin  = isAdminRole(role);
@@ -143,13 +131,7 @@ export function DesktopSidebar({
             )}
           </button>
 
-          {/* Save status */}
-          {!isCollapsed && (
-            <div role="status" style={{display:"flex",alignItems:"center",gap:7,marginTop:11,paddingLeft:2}}>
-              <div style={Object.assign({},{width:7,height:7,borderRadius:"50%",background:saveColor,flexShrink:0},saveDot)}/>
-              <span style={{fontSize:12,color:"rgba(255,255,255,.5)"}}>{serverOk ? saveLabel : "Server offline"}</span>
-            </div>
-          )}
+          {/* (Save status lives in the top bar, next to the profile button) */}
         </div>
 
         {/* ── Section B: Tab navigation ── */}
